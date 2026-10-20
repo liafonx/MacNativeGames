@@ -330,8 +330,13 @@ static unsigned excl_acquire(uint8_t *code, size_t n) {
 }
 void runtime_game_patches(Module *m) {
     fprintf(stderr, "[botw] %s game-code patches\n", TOTK_GAME_VERSION);
+#ifdef GAME_BOTW160
     if (realtime_enabled()) patch_realtime(m);
     else fprintf(stderr, "[botw] real-time frame step off (TOTK_REALTIME=0): the game advances by its present interval\n");
+#else   /* the 1.9.0 sites come with the real-time step for 1.9.0 */
+    if (realtime_enabled() && 0) patch_realtime(m);
+    fprintf(stderr, "[botw] real-time frame step not yet on %s: the game advances by its present interval\n", TOTK_GAME_VERSION);
+#endif
     { const char *a = getenv("TOTK_EXCL_ACQUIRE");
       if (!a || strcmp(a, "0")) {
           unsigned t = excl_acquire(m->base, m->text_end), p = excl_acquire(m->base + m->patch_off, m->file_size - m->patch_off);
