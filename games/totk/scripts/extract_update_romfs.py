@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import tempfile
 from extract_exefs import (load_keys, container_entries, common_tickets, nca_inventory,
-                           program_nca, record_offset, require)
+                           program_nca, record_offset, require, TOTK_TITLE)
 from extract_romfs import index_romfs
 
 # Lockpick_RCM writes these as 17 bytes: the 16-byte source plus a trailing NUL.
@@ -57,7 +57,7 @@ def hactool_prod_keys(source, target):
         f.write('\n'.join(lines) + ('\n' if lines else ''))
 
 
-def merge(base, update, keys_path, hactool, output, *, base_romfs=None):
+def merge(base, update, keys_path, hactool, output, *, base_romfs=None, title=TOTK_TITLE):
     require(not output.exists(), 'Output exists')
     keys = load_keys(keys_path)
     inputs = []
@@ -71,7 +71,7 @@ def merge(base, update, keys_path, hactool, output, *, base_romfs=None):
             for rights, key in found.items():
                 require(rights not in tickets or tickets[rights] == key, 'Conflicting common tickets')
                 tickets[rights] = key
-            record, header = program_nca(nca_inventory(f, entries, keys), update=is_update)
+            record, header = program_nca(nca_inventory(f, entries, keys), update=is_update, title=title)
             rights = header[0x230:0x240]
             require(rights == bytes(16) or rights in tickets, 'Missing common ticket')
             inputs.append((source, record, header))
@@ -136,6 +136,8 @@ if __name__ == '__main__':
     parser.add_argument('--keys', required=True, type=Path)
     parser.add_argument('--hactool', required=True, type=Path)
     parser.add_argument('--base-romfs', type=Path, help='full decrypted base IVFC section, including hash levels (not a raw RomFS image)')
+    parser.add_argument('--title', default=TOTK_TITLE, help='16-hex-digit title ID of the game (default: Tears of the Kingdom)')
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
-    merge(args.base, args.update, args.keys, args.hactool, args.output, base_romfs=args.base_romfs)
+    require(re.fullmatch(r'[0-9A-Fa-f]{16}', args.title), '--title must be 16 hex digits')
+    merge(args.base, args.update, args.keys, args.hactool, args.output, base_romfs=args.base_romfs, title=args.title.upper())

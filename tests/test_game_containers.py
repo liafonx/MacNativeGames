@@ -28,6 +28,7 @@ TITLEKEK = bytes(range(48, 64))
 CONTENT = bytes(range(64, 80))
 RIGHTS = bytes.fromhex('0100f2c0115b60000000000000000001')
 TITLE = 0x0100F2C0115B6000
+BOTW_TITLE = 0x01007EF00011E000
 
 
 def encrypt(key, mode, data):
@@ -75,7 +76,7 @@ def ivfc(image):
     return fs, section
 
 
-def nca(managed=False, title=TITLE, content=0):
+def nca(managed=False, title=TITLE, content=0, bktr=False):
     pfs = partition([('main', b'synthetic main'), ('main.npdm', b'synthetic metadata')])
     fs = bytearray(512)
     fs[2:5] = bytes([1, 2, 3])
@@ -84,6 +85,8 @@ def nca(managed=False, title=TITLE, content=0):
     struct.pack_into('<IIQQQQ', fs, 0x28, 4096, 2, 0, len(hashes), 512, len(pfs))
     exefs = hashes.ljust(512, b'\0') + pfs.ljust(512, b'\0')
     romfs_header, image = ivfc(romfs())
+    if bktr:
+        romfs_header[4] = 4
     sections = [(fs, exefs), (romfs_header, image)] if content == 0 else [(romfs_header, image)]
     hdr = bytearray(0xc00)
     hdr[0x200:0x204] = b'NCA3'
@@ -197,6 +200,41 @@ class Containers(unittest.TestCase):
             game.write_bytes(game_image('nsp', title=title))
             _, result = self.extract(game, success=False)
             self.assertIn('Expected Tears of the Kingdom base game', result.stderr)
+
+    def test_title_argument_selects_botw(self):
+        game = self.path / 'botw.nsp'
+        game.write_bytes(game_image('nsp', title=BOTW_TITLE))
+        _, result = self.extract(game, success=False)
+        self.assertIn('Expected Tears of the Kingdom base game', result.stderr)
+        out = self.path / 'botw-out' / 'exefs'
+        p = subprocess.run([sys.executable, SCRIPTS / 'extract_exefs.py', game, '--keys', self.keys, '--output', out,
+                            '--title', '01007ef00011e000'], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual((out / 'main').read_bytes(), b'synthetic main')
+        # A Tears of the Kingdom package is another game for a Breath of the Wild build
+        game.write_bytes(game_image('nsp'))
+        p = subprocess.run([sys.executable, SCRIPTS / 'extract_exefs.py', game, '--keys', self.keys,
+                            '--output', self.path / 'other' / 'exefs', '--title', '01007EF00011E000'],
+                           capture_output=True, text=True)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn('Expected the base game 01007EF00011E000', p.stderr)
+        p = subprocess.run([sys.executable, SCRIPTS / 'extract_exefs.py', game, '--keys', self.keys,
+                            '--output', self.path / 'bad' / 'exefs', '--title', 'botw'], capture_output=True, text=True)
+        self.assertIn('--title must be 16 hex digits', p.stderr)
+
+    def test_update_merge_takes_title(self):
+        import extract_update_romfs
+        base, update = self.path / 'base.nsp', self.path / 'update.nsp'
+        base.write_bytes(partition([('program.nca', nca(title=BOTW_TITLE))]))
+        update.write_bytes(partition([('program.nca', nca(title=BOTW_TITLE, bktr=True))]))
+        merge = lambda out, **kwargs: extract_update_romfs.merge(base, update, self.keys, Path('/usr/bin/false'),
+                                                                 self.path / out, **kwargs)
+        with self.assertRaisesRegex(ValueError, 'Expected Tears of the Kingdom base game'):
+            merge('without-title')
+        # With the title, the merge gets past program_nca and stops at the (failing) hactool
+        with patch('shutil.disk_usage', return_value=type('Usage', (), {'free': 1 << 50})()):
+            with self.assertRaisesRegex(ValueError, 'BKTR verification failed'):
+                merge('with-title', title='01007EF00011E000')
 
     def test_update_metadata_with_base_program_id(self):
         for metadata in ([('update.cnmt.nca', nca(title=TITLE + 0x800, content=1))],
