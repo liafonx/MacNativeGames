@@ -1915,7 +1915,7 @@ uint64_t mtl_sub_commit(void) {
     rp_flush();
     usnap_finish();   // TOTK: the helper threads must be done with the copies (they are, long before this)
     g_nusnap = 0;   // TOTK: the replay is done; the uniform copies stay in this submission's arena until it completes
-    upd_flush();   // TOTK: renamed uniform updates reach memory here, after every draw that read them through private copies
+    upd_flush(); BOTW_WB_STAGE()   // TOTK: renamed uniform updates reach memory here, after every draw that read them through private copies
     if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     rs_sub_end();   // TOTK: encode stage drained before the command buffer is ended
     up_flush();
@@ -2283,7 +2283,7 @@ static void pkg_owned_locked(uint64_t k) { id o = hm_get_id(&g_by_serial, &k); i
    so the result outlives a temporary texture object finalized before the submission runs); an invalidate over its
    memory waits for the GPU and writes every level back in the NVN layout, unless the CPU has written the memory since
    the rendering (then the CPU's bytes are newer). Runtime switch: TOTK_INPUT_FILE "flag writeback 0|1" (default 1). */
-typedef struct { tex_t t; uint64_t stamp; void *obj; } wb_ent;
+typedef struct { tex_t t; uint64_t stamp; void *obj; BOTW_WB_ENT_FIELDS } wb_ent;
 static nvn_hmap g_wb = {.klen = 8};   // serial -> wb_ent * (g_smu): rendered since the last write-back
 static _Atomic int g_wb_on = 1;
 /* TOTK: fill the driver segment c0 for vertex and compute shaders (thread-group counts, uniform / storage address tables,
@@ -2386,7 +2386,7 @@ static int tilelog_match(const tex_t *t) {
     return on && t && t->d.width == w && t->d.height == h;
 }
 #define TILELOG(t, fmt, ...) do { BOTW_TILELOG_NOTE(t) if (tilelog_match(t)) MLOG("[tile] f%llu ser=%llu mem=%p nvnfmt=%#x lv%u " fmt, (unsigned long long)atomic_load(&g_cur_frame), (unsigned long long)(t)->serial, (void *)(t)->mem, (t)->d.format, (t)->d.levels, ##__VA_ARGS__); } while (0)
-static void wb_ent_free(wb_ent *e) { if (!e) return; if (e->obj) { defer_obj_release((__bridge id)e->obj); CFRelease(e->obj); } free(e); }
+static void wb_ent_free(wb_ent *e) { if (!e) return; if (e->obj) { defer_obj_release((__bridge id)e->obj); CFRelease(e->obj); } BOTW_WB_STAGE_FREE(e) free(e); }
 static void wb_note(const tex_t *t) {
     TILELOG(t, "GPU render (owned %d)", gpu_owned(t->serial));
     if (!atomic_load(&g_wb_on) || !t->mem || !t->L.size) return;
@@ -2397,9 +2397,9 @@ static void wb_note(const tex_t *t) {
     nvn_dirty_protect(t->mem, t->L.size);
     pthread_mutex_lock(&g_smu);
     wb_ent *e = nvn_hm_get(&g_wb, &k);
-    if (e) { e->stamp = stamp; e->t = *t; pthread_mutex_unlock(&g_smu); return; }
+    if (e) { e->stamp = stamp; e->t = *t; BOTW_WB_NOTED(e, k) pthread_mutex_unlock(&g_smu); return; }
     e = calloc(1, sizeof *e); if (!e) MDIE("write-back record");
-    e->t = *t; e->stamp = stamp; e->obj = (void *)CFBridgingRetain(o);
+    e->t = *t; e->stamp = stamp; e->obj = (void *)CFBridgingRetain(o); BOTW_WB_NOTED(e, k)
     nvn_hm_put(&g_wb, &k, e);
     pthread_mutex_unlock(&g_smu);
 }
@@ -2457,7 +2457,7 @@ void mtl_pool_invalidate(const pool_t *p, uint64_t off, uint64_t n) {
 static void wb_write_list(wb_ent **list, int nl, int force) {
     if (!nl) return;
     { extern void nvn_x_drain(void) __attribute__((weak)); if (nvn_x_drain) nvn_x_drain(); }   // translation thread: nothing queued overtakes this read-back (as for ReadTexels)
-    mtl_finish_gpu();
+    WB_WAIT_GPU(list, nl)
     /* Freshness is decided for every entry before anything is written back (a write-back marks its pages written), and
        of several renderings of the same memory (texture objects over it) only the newest is written back. */
     int fresh[512];
@@ -2492,7 +2492,7 @@ static void wb_write_list(wb_ent **list, int nl, int force) {
            with a neighbour counted as written, and the neighbour's own write-back was skipped as "CPU wrote since") */
         void *tok = nvn_dirty_tracked(t->mem, t->L.size) ? nvn_dirty_gpu_write_begin(t->mem, t->L.size) : NULL;
         if (!tok) dm_guest_write_prepare(t->mem, t->L.size);
-        unsigned layers = t->L.layers ? t->L.layers : 1, ok = 1;
+        unsigned layers = t->L.layers ? t->L.layers : 1, ok = 1; BOTW_WB_FROM_STAGE(e, ok, layers)
         for (unsigned l = 0; l < t->d.levels && ok; l++) for (unsigned y = 0; y < layers && ok; y++) ok = wb_level_back(t, mt, l, y);
         nvn_dirty_gpu_write_end(tok);
         if (ok) { uint64_t d = ++g_wb_done; if (d <= 8 || d % 500 == 0) MLOG("[writeback] ser=%llu %ux%u nvnfmt=%#x lv%u：GPU 渲染结果写回内存（累计 %llu 张 / %llu MB，CPU 已改写而跳过 %llu 张）", (unsigned long long)t->serial, t->d.width, t->d.height, t->d.format, t->d.levels, (unsigned long long)d, (unsigned long long)(g_wb_bytes >> 20), (unsigned long long)g_wb_skip_cpu); }
@@ -13967,5 +13967,80 @@ void botw_serial_note(uint64_t serial, const char *what) {
     int c = atomic_load(np);
     if (!what) { for (int i = 0; i < c; i++) if (seen[i] == serial) return; if (c < 64) { seen[c] = serial; atomic_store(np, c + 1); } return; }
     for (int i = 0; i < c; i++) if (seen[i] == serial) { MLOG("[tile] f%llu ser=%llu %s", (unsigned long long)atomic_load(&g_cur_frame), (unsigned long long)serial, what); return; }
+}
+#endif
+#ifdef GAME_BOTW
+/* Write-back staging (BOTW_WB_* in nvn_obj.h; botw.md). Serials rendered in this submission are noted on the submit
+   thread; at the submission's end each small one (WB_STAGE_MAX) is copied into its stage buffer in the same command
+   buffer, so the invalidate waits for that fence only and swizzles from the stage without a read-back blit. */
+#define WB_STAGE_MAX (256u << 10)   /* larger textures keep the read-back blit at the invalidate */
+static uint64_t g_wb_sub[64]; static int g_wb_nsub;   /* submit thread: serials noted in this submission */
+static uint64_t g_wb_staged, g_wb_from_stage;
+void botw_wb_sub_note(uint64_t k) {
+    for (int i = 0; i < g_wb_nsub; i++) if (g_wb_sub[i] == k) return;
+    if (g_wb_nsub < 64) g_wb_sub[g_wb_nsub++] = k;
+}
+/* Level `level` of a written-back texture in the NVN-linear rows nvn_swizzle reads: its size, pitch and extent. */
+static size_t wb_level_size(const tex_t *t, unsigned level, size_t *pitch, uint32_t *w, uint32_t *h) {
+    int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
+    uint32_t lw = MAX(t->d.width >> level, 1u), lh = MAX(t->d.height >> level, 1u);
+    size_t lp = (size_t)((lw + bw - 1) / bw) * bpb, lr = (lh + bh - 1) / bh;
+    if (pitch) *pitch = lp; if (w) *w = lw; if (h) *h = lh;
+    return lp * lr;
+}
+static int wb_stageable(const tex_t *t, size_t *total) {
+    uint32_t upf; int ubpp;
+    if (bc_unpack(t->d.format, &upf, &ubpp) || t->d.target == 2 || t->d.samples > 1 || fmt_depth(t->d.format)) return 0;
+    unsigned layers = t->L.layers ? t->L.layers : 1; size_t n = 0;
+    for (unsigned l = 0; l < t->d.levels; l++) n += wb_level_size(t, l, NULL, NULL, NULL) * layers;
+    *total = n;
+    return n && n <= WB_STAGE_MAX;
+}
+/* mtl_sub_commit, before the copy encoder closes: this submission's fence is g_fence + 1 */
+void botw_wb_stage_encode(void) {
+    uint64_t fence = g_fence + 1;
+    for (int i = 0; i < g_wb_nsub; i++) {
+        uint64_t k = g_wb_sub[i]; size_t total = 0;
+        pthread_mutex_lock(&g_smu);
+        wb_ent *e = nvn_hm_get(&g_wb, &k);
+        if (!e || !wb_stageable(&e->t, &total)) { pthread_mutex_unlock(&g_smu); continue; }
+        id o = (__bridge id)e->obj; id<MTLTexture> mt = [o isKindOfClass:[NvPkg class]] ? ((NvPkg *)o)->tex : o;
+        id<MTLBuffer> buf = e->stage ? (__bridge id<MTLBuffer>)e->stage : nil;
+        int fresh_buf = 0;
+        if (mt && (!buf || buf.length < total)) {
+            if (e->stage) { defer_obj_release((__bridge id)e->stage); CFRelease(e->stage); e->stage = NULL; }
+            buf = [g_dev newBufferWithLength:total options:MTLResourceStorageModeShared];
+            if (buf) { e->stage = (void *)CFBridgingRetain(buf); fresh_buf = 1; }
+        }
+        tex_t t = e->t; void *stage = e->stage;
+        pthread_mutex_unlock(&g_smu);
+        if (!mt || !buf) continue;
+        if (fresh_buf) res_add(buf);
+        unsigned layers = t.L.layers ? t.L.layers : 1; size_t off = 0;
+        for (unsigned l = 0; l < t.d.levels; l++) for (unsigned y = 0; y < layers; y++) {
+            size_t lp; uint32_t lw, lh; size_t n = wb_level_size(&t, l, &lp, &lw, &lh);
+            enc_b_copy_texture_buffer(blit(), mt, y, l, MTLOriginMake(0, 0, 0), MTLSizeMake(lw, lh, 1), buf, off, lp, n);
+            off += n;
+        }
+        pthread_mutex_lock(&g_smu);
+        e = nvn_hm_get(&g_wb, &k);
+        if (e && e->stage == stage) e->stage_fence = fence;
+        pthread_mutex_unlock(&g_smu);
+        g_wb_staged++;
+    }
+    g_wb_nsub = 0;
+}
+/* wb_write_list: an entry staged after its last rendering is swizzled from its stage (the caller waited for the fence) */
+int botw_wb_from_stage(void *ev) {
+    wb_ent *e = ev; const tex_t *t = &e->t;
+    if (!e->stage || e->stage_fence < e->fence) return -1;
+    const uint8_t *src = (const uint8_t *)((__bridge id<MTLBuffer>)e->stage).contents; size_t off = 0;
+    unsigned layers = t->L.layers ? t->L.layers : 1; int ok = 1;
+    for (unsigned l = 0; l < t->d.levels && ok; l++) for (unsigned y = 0; y < layers && ok; y++) {
+        size_t lp; size_t n = wb_level_size(t, l, &lp, NULL, NULL);
+        ok = !nvn_swizzle(&t->d, l, y, src + off, lp, t->mem); off += n; g_wb_bytes += n;
+    }
+    if (++g_wb_from_stage == 1 || g_wb_from_stage % 5000 == 0) MLOG("[writeback] %llu written back from the submission's own copy (%llu copies staged)", (unsigned long long)g_wb_from_stage, (unsigned long long)g_wb_staged);
+    return ok;
 }
 #endif

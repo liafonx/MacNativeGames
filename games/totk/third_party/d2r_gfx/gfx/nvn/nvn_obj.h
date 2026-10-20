@@ -195,6 +195,22 @@ void botw_mfx_frame_reset(void);
 #define BOTW_MFX_FRAME_RESET() botw_mfx_frame_reset();
 #define MFX_CAM_SLOT 0
 #define MFX_CAM_SIZE 2336
+/* Write-back staging (botw.md; end of nvn_mtl.m). Breath of the Wild invalidates 1x1 and 3x3 GPU-written textures every
+   frame. The write-back waited for all GPU work (mtl_finish_gpu) and made one blit round trip per texture on the game
+   thread: Kakariko ran at 49 FPS, 59 with "flag writeback 0". Now the submission that renders such a texture copies it
+   into a shared stage buffer at its end (botw_wb_stage_encode); the invalidate waits only for the fences of the listed
+   renderings and swizzles a staged texture from its stage. fence: the submission that rendered it last; stage_fence:
+   the submission whose end copied it into stage. */
+#define BOTW_WB_ENT_FIELDS uint64_t fence; void *stage; uint64_t stage_fence;
+void botw_wb_sub_note(uint64_t serial);
+#define BOTW_WB_NOTED(e, k) (e)->fence = g_fence + 1; botw_wb_sub_note(k);
+#define BOTW_WB_STAGE_FREE(e) if ((e)->stage) { defer_obj_release((__bridge id)(e)->stage); CFRelease((e)->stage); }
+void botw_wb_stage_encode(void);
+#define BOTW_WB_STAGE() botw_wb_stage_encode();
+#define WB_WAIT_GPU(list, nl) { uint64_t need_ = 0; for (int i_ = 0; i_ < (nl); i_++) { if ((list)[i_]->fence > need_) need_ = (list)[i_]->fence; \
+        if ((list)[i_]->stage_fence > need_) need_ = (list)[i_]->stage_fence; } if (need_) mtl_wait(need_, UINT64_MAX); while (atomic_load(&g_up_pending)) usleep(1000); }
+int botw_wb_from_stage(void *e);   /* 1 written back from the stage, 0 failed, -1 not staged */
+#define BOTW_WB_FROM_STAGE(e, ok, layers) { int s_ = botw_wb_from_stage(e); if (s_ >= 0) { (ok) = s_; (layers) = 0; } }
 #else
 #define MFX_CANVAS_FMT_OK(f) pf_is_float(f)
 #define MFX_UI_DRAW(pr) mfx_ui_vs(pr->sh[0]->key)
@@ -213,6 +229,12 @@ void botw_mfx_frame_reset(void);
 #define BOTW_DEAD_KEEP(k)
 #define BOTW_TEX_RELEASE_KEEP(k)
 #define BOTW_DEAD_FORGET(s, n)
+#define BOTW_WB_ENT_FIELDS
+#define BOTW_WB_NOTED(e, k)
+#define BOTW_WB_STAGE_FREE(e)
+#define BOTW_WB_STAGE()
+#define WB_WAIT_GPU(list, nl) mtl_finish_gpu();
+#define BOTW_WB_FROM_STAGE(e, ok, layers)
 #define UNCAPPED_INTERVAL_FROM_ENV(e) e && atoi(e)
 #define BOTW_RT_DUP_CLEARS()
 #define BOTW_RT_DUP_SKIP(i)
