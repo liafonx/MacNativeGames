@@ -178,7 +178,14 @@ void botw_dead_forget(const uint64_t *serials, size_t n);
    sharpening of the sampled colour; no dynamic resolution, so the valid region is the whole source). MetalFX replaces the
    whole draw (mfxup_dock; botw.md). */
 void botw_mfx_scene_ready(void);   /* the upscale draw happened (or MetalFX replaced it): the canvas holds the scene */
-#define BOTW_MFXUP_DOCK_KEY(fs) int botw_ = !strncmp((fs)->key, "0af88d51bb12a2346b03bb2586d131def5a631271df192779b701efba6eb7f70-", 65); if (botw_) botw_mfx_scene_ready();
+/* 1.9.0's upscale draw is bd7ffdd4 (nine texel reads; same canvas, source, mask and full-canvas draw), found by its
+   1600x900 source and 1920x1080 target on the Kakariko route. */
+#ifdef GAME_BOTW190
+#define BOTW_MFXUP_KEY "bd7ffdd435c6c3bc997653d5fb9a0cc7f2f411dd51ce88c3cafe6574c8624908-"
+#else
+#define BOTW_MFXUP_KEY "0af88d51bb12a2346b03bb2586d131def5a631271df192779b701efba6eb7f70-"
+#endif
+#define BOTW_MFXUP_DOCK_KEY(fs) int botw_ = !strncmp((fs)->key, BOTW_MFXUP_KEY, 65); if (botw_) botw_mfx_scene_ready();
 #define BOTW_AND_NOT_DOCK && !botw_
 #define BOTW_MFXUP_DOCK_REGION(cw, ch, src) if (botw_ && !why) { (cw) = (src).width; (ch) = (src).height; }
 /* Breath of the Wild's upscale draw writes RGB only (mask 0x7): the canvas keeps its cleared alpha, which nothing reads
