@@ -67,7 +67,7 @@ class GameSelectionTests(unittest.TestCase):
             build_app.check_package(package(self.root, 'u.nsp', BOTW_UPDATE), 'botw', 'base')
         with self.assertRaisesRegex(build_app.BuildError, 'pass it as the game file'):
             build_app.check_package(package(self.root, 'b.nsp', BOTW_BASE), 'botw', 'update')
-        with self.assertRaisesRegex(build_app.BuildError, 'no add-on content'):
+        with self.assertRaisesRegex(build_app.BuildError, 'pass it as --dlc'):
             build_app.check_package(package(self.root, 'd.nsp', BOTW_DLC), 'botw', 'base')
         build_app.check_package(package(self.root, 'b2.nsp', BOTW_BASE), 'botw', 'base')
         build_app.check_package(package(self.root, 'u2.nsp', BOTW_UPDATE), 'botw', 'update')
@@ -91,7 +91,7 @@ class GameSelectionTests(unittest.TestCase):
         for key in ('exefs_sha256', 'rewritten_sha256', 'shared_fonts_sha256'):
             self.assertEqual(list(pins[key]), list(card[key]))
         self.assertEqual(sorted(pins['romfs']), ['files', 'sha256', 'size'])
-        self.assertNotIn('aoc', pins)   # add-on content comes with --dlc, a later change
+        self.assertEqual(pins['aoc'], card['aoc'])   # the same two RomFS images, from the --dlc NSPs
         self.assertNotEqual(pins['exefs_sha256']['main'], card['exefs_sha256']['main'])
 
     def test_font_pins_come_from_the_version(self):
@@ -127,7 +127,7 @@ class GameSelectionTests(unittest.TestCase):
             self.assertEqual(commands[0][1:3], ['scripts/extract_update_romfs.py', 'base.nsp'])
             self.assertIn('update.nsp', commands[0])
             self.assertEqual(commands[0][-2:], ['--title', '01007EF00011E000'])
-            self.assertEqual(commands[1][1], 'scripts/extract_shared_fonts.py')   # no add-on content for 1.9.0 yet
+            self.assertEqual(commands[1][1], 'scripts/extract_shared_fonts.py')   # no --dlc given: no add-on content
             self.assertEqual(len(commands), 2)
             self.assertEqual(validate.call_args_list[1][0][1]['display_version'], '1.9.0')   # checked against the 1.9.0 font pins
             # without a font source an NSP build stops with the NSP wording

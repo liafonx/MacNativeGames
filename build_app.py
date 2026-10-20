@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """MacNativeGames: turn your own XCI or NSP into a native Mac app or iPhone/iPad IPA.
 
-    python3 build_app.py <game.xci|game.nsp> -k <prod.keys> [--update <update.nsp>] [--platform macos|ios] [-o <output>] [--work <folder>]
+    python3 build_app.py <game.xci|game.nsp> -k <prod.keys> [--update <update.nsp>] [--dlc <dlc.nsp> ...] [--platform macos|ios] [-o <output>] [--work <folder>]
 
 Supported: TOTK base 1.0.0 (0100F2C0115B6000), XCI or NSP; optional --update with a supported cumulative update.
 Also Breath of the Wild (01007EF00011E000, games/botw), in two forms: 1.6.0 as one card image holding the base game, the update
 and the add-on content, which needs --shared-fonts (the six .bfttf files a Tears of the Kingdom build extracted into its work
 folder, extracted/firmware/shared-fonts); or 1.9.0 as a base NSP with --update <the 1.9.0 update NSP> and fonts from --firmware
-or --shared-fonts as for a Tears of the Kingdom NSP. Its startup shaders come from its game data and its own shared shader list
+or --shared-fonts as for a Tears of the Kingdom NSP; its add-on content (DLC) comes from --dlc <pack.nsp>, repeated for the
+two packs (01007EF00011F001, 01007EF00011F002), each one optional and checked against its pin. Its startup shaders come from its game data and its own shared shader list
 (games/botw/assets/shader_list.tsv). The game is recognised by the title IDs in the file, never by the file name.
 NSPs need common tickets (unless rights-free) and a separate shared-font source. iOS builds are unsigned IPAs for sideloading and require Xcode 26+, xcodegen, CMake, and network access to build device libraries.
 Nothing from the game is in this repository; everything is made from your files on your Mac. Key values are never printed.
@@ -808,7 +809,9 @@ def step_app(tree, out, logs, *, version="v0", game='totk'):
     files = ['build/spirv-cross/spirv-cross', f'rewritten/{version}/main.patched.bin', f'rewritten/{version}/sdk.patched.bin',
              f'rewritten/{version}/subsdk0.patched.bin', f'extracted/{version}/romfs/romfs.bin', f'extracted/{version}/romfs/runtime-index.bin']
     files += ['build/pso_manifest.tsv', 'build/pso_title.tsv']   # exported from the game's shared shader list (games/totk/Makefile)
-    for index in expected.get('aoc', {}):   # Breath of the Wild: the add-on content volumes (runtime/aoc_romfs.c)
+    for index in expected.get('aoc', {}):   # Breath of the Wild: the add-on content volumes (runtime/aoc_romfs.c); 1.9.0 has the given packs only
+        if not (tree / f'extracted/{version}/aoc/{index}/romfs.bin').is_file():
+            continue
         files += [f'extracted/{version}/aoc/{index}/romfs.bin', f'extracted/{version}/aoc/{index}/runtime-index.bin']
     for rel in files:
         clone(tree / rel, res / rel)
@@ -961,6 +964,13 @@ def identify_game(tree, game, keys, logs):
     if not report:
         raise BuildError(f'could not read the game file (see {log})')
     found = sorted({TITLES[t] for t in report['titles'] if t in TITLES})
+    if not found:
+        for title_id in ticket_title_ids(game):
+            application, kind = title_kind(title_id)
+            if kind == 'dlc' and application in TITLES:
+                raise BuildError(f'{game.name} is {APPS[TITLES[application]][0]} add-on content (DLC), not the game' +
+                                 (': pass the base NSP as the game file with --update <update.nsp>, and this file with --dlc'
+                                  if TITLES[application] == 'botw' else ', which this build does not support'))
     if len(found) != 1:
         raise BuildError(f'the game file holds {report["titles"]}: expected Tears of the Kingdom (0100F2C0115B6000) or '
                          f'Breath of the Wild (01007EF00011E000)')
@@ -1021,7 +1031,7 @@ def title_kind(title_id):
 def check_package(path, game, role):
     """Stop early when a ticketed package is of the other game or of another kind than its role ('base' or 'update').
     An XCI, a rights-free package and a title of no known game pass: the NCA checks of the extraction scripts follow."""
-    flags = {'base': 'the game file', 'update': '--update'}   # where each kind belongs on the command line
+    flags = {'base': 'the game file', 'update': '--update', 'dlc': '--dlc'}   # where each kind belongs on the command line
     for title_id in ticket_title_ids(path):
         application, kind = title_kind(title_id)
         owner = TITLES.get(application)
@@ -1032,6 +1042,67 @@ def check_package(path, game, role):
         if kind != role:
             raise BuildError(f'{path.name} is {APPS[game][0]} {kind} content, not the {role}: ' +
                              (f'pass it as {flags[kind]}' if kind in flags else 'this build takes no add-on content'))
+
+
+def check_dlc(paths, expected):
+    """Stop early when a --dlc package is not an add-on pack this version pins, or when two files are the same pack."""
+    pins = {pack['title_id']: i for i, pack in expected['aoc'].items()}
+    owner = {}
+    for path in paths:
+        check_package(path, 'botw', 'dlc')
+        for title_id in ticket_title_ids(path):
+            if title_id not in pins:
+                raise BuildError(f'{path.name} is add-on content {title_id}, but the packs of this version are {", ".join(pins)}')
+            if owner.setdefault(title_id, path) != path:
+                raise BuildError(f'{owner[title_id].name} and {path.name} are the same DLC pack ({title_id}): pass one of them')
+
+
+def dlc_pack_valid(folder, pin):
+    try:
+        report = json.loads((folder / 'index.json').read_text())
+        return (report.get('status') == 'pass' and report['romfs_sha256'] == pin['sha256'] and (folder / 'runtime-index.bin').is_file()
+                and (folder / 'romfs.bin').stat().st_size == pin['size'])
+    except (OSError, ValueError, KeyError):
+        return False
+
+
+def step_dlc_botw(tree, botw, dlc, keys, logs, pins, aoc):
+    """1.9.0 add-on content: import each --dlc NSP (games/botw/scripts/extract_dlc.py) into aoc/<index> and check it against its
+    pin. A valid pack from an earlier run is reused; a pack that is not given this time is removed, so the app holds the given
+    packs only (the runtime takes the packs it finds: AOC_PRESENT_MASK)."""
+    titles = {pack['title_id']: i for i, pack in pins.items()}
+    staging = aoc.with_name('aoc-import')
+    keep = set()
+    for nsp in dlc:
+        index = next((titles[t] for t in ticket_title_ids(nsp) if t in titles), None)
+        if index is not None and index in keep:
+            raise BuildError(f'{nsp.name} is the same DLC pack as another --dlc file (index {index})')
+        if index is not None and dlc_pack_valid(aoc / index, pins[index]):
+            keep.add(index)
+            continue
+        say(f'2/4 data: importing the add-on content {nsp.name}')
+        shutil.rmtree(staging, ignore_errors=True)
+        try:
+            run([tree / '.venv/bin/python', botw / 'scripts/extract_dlc.py', nsp, '--keys', keys, '--output', staging], logs / f'botw-dlc-{nsp.stem}.log', cwd=tree)
+            (pack,) = list(staging.iterdir())
+            report = json.loads((pack / 'index.json').read_text())
+            index = str(report['index'])
+            if index in keep:
+                raise BuildError(f'{nsp.name} is the same DLC pack as another --dlc file (index {index})')
+            check(f'add-on content {index}', report['romfs_sha256'], pins[index]['sha256'])
+            if report['romfs_size'] != pins[index]['size']:
+                raise BuildError(f'add-on content {index}: size {report["romfs_size"]} is not the expected {pins[index]["size"]}')
+            shutil.rmtree(aoc / index, ignore_errors=True)
+            aoc.mkdir(parents=True, exist_ok=True)
+            pack.rename(aoc / index)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+        keep.add(index)
+    stale = [p for p in aoc.iterdir() if p.name not in keep] if aoc.is_dir() else []
+    for p in stale:
+        shutil.rmtree(p) if p.is_dir() else p.unlink()
+    if stale:   # the Makefile only sees packs that appear, so the old mask goes with the pack
+        (tree / 'build/botw190/aoc_config.h').unlink(missing_ok=True)
 
 
 def step_code_botw(tree, botw, game, keys, env, logs, *, version='botw160'):
@@ -1074,10 +1145,10 @@ def step_code_botw(tree, botw, game, keys, env, logs, *, version='botw160'):
     report_path.write_text(json.dumps(report, indent=2) + '\n')
 
 
-def step_data_botw(tree, botw, game, keys, logs, *, version='botw160', update=None, firmware=None, shared_fonts=None):
+def step_data_botw(tree, botw, game, keys, logs, *, version='botw160', update=None, dlc=(), firmware=None, shared_fonts=None):
     """The base + update RomFS merged from the card image (1.6.0, games/botw/scripts/extract_romfs.py) or from the base and
     update NSPs (1.9.0, scripts/extract_update_romfs.py), both hactool BKTR; the add-on content volumes the version pins
-    (extract_aoc_romfs.py); and the shared fonts: neither this card's system update partition nor an NSP holds them, so they
+    (extract_aoc_romfs.py), or for 1.9.0 the packs of the --dlc NSPs (extract_dlc.py; none is needed); and the shared fonts: neither this card's system update partition nor an NSP holds them, so they
     come from --shared-fonts, from --firmware (1.9.0) or from a previous build in the work folder."""
     expected = VERSIONS[version]
     py = tree / '.venv/bin/python'
@@ -1106,23 +1177,26 @@ def step_data_botw(tree, botw, game, keys, logs, *, version='botw160', update=No
         check(f'{expected["display_version"]} RomFS', report['romfs_sha256'], expected['romfs']['sha256'])
         check(f'{expected["display_version"]} RomFS size', report['romfs_size'], expected['romfs']['size'])
     aoc = tree / f'extracted/{version}/aoc'
-    aoc_valid = True
-    for i, want in expected.get('aoc', {}).items():
-        try:
-            report = json.loads((aoc / i / 'index.json').read_text())
-            aoc_valid = aoc_valid and report.get('status') == 'pass' and report['romfs_sha256'] == want['sha256'] and \
-                (aoc / i / 'romfs.bin').stat().st_size == want['size']
-        except (OSError, ValueError, KeyError):
-            aoc_valid = False
-    if not aoc_valid:   # only 1.6.0 pins add-on content so far
-        hactool = hactool or build_hactool(tree, logs)
-        if aoc.exists():
-            shutil.rmtree(aoc)
-        say('2/4 data: extracting the add-on content (the expansion pass, 1.4 GB)')
-        run([py, botw / 'scripts/extract_aoc_romfs.py', game, '--keys', keys, '--hactool', hactool, '--output', aoc], logs / 'botw-aoc.log', cwd=tree)
-        for i, want in expected['aoc'].items():
-            report = json.loads((aoc / i / 'index.json').read_text())
-            check(f'add-on content {i}', report['romfs_sha256'], want['sha256'])
+    if update:   # 1.9.0: add-on content comes from the --dlc NSPs, and only from them
+        step_dlc_botw(tree, botw, dlc, keys, logs, expected['aoc'], aoc)
+    else:
+        aoc_valid = True
+        for i, want in expected.get('aoc', {}).items():
+            try:
+                report = json.loads((aoc / i / 'index.json').read_text())
+                aoc_valid = aoc_valid and report.get('status') == 'pass' and report['romfs_sha256'] == want['sha256'] and \
+                    (aoc / i / 'romfs.bin').stat().st_size == want['size']
+            except (OSError, ValueError, KeyError):
+                aoc_valid = False
+        if not aoc_valid:   # the card image holds the packs
+            hactool = hactool or build_hactool(tree, logs)
+            if aoc.exists():
+                shutil.rmtree(aoc)
+            say('2/4 data: extracting the add-on content (the expansion pass, 1.4 GB)')
+            run([py, botw / 'scripts/extract_aoc_romfs.py', game, '--keys', keys, '--hactool', hactool, '--output', aoc], logs / 'botw-aoc.log', cwd=tree)
+            for i, want in expected['aoc'].items():
+                report = json.loads((aoc / i / 'index.json').read_text())
+                check(f'add-on content {i}', report['romfs_sha256'], want['sha256'])
     fonts = tree / 'extracted/firmware/shared-fonts'
     if not fonts_valid(fonts, expected):
         if shared_fonts:
@@ -1169,10 +1243,11 @@ def step_shaders_botw(tree, botw, logs, *, version='botw160'):
 
 
 def parse_args(argv):
-    ap = argparse.ArgumentParser(description='Build a native Mac app or unsigned iPhone/iPad IPA from TOTK base 1.0.0 (XCI/NSP), optionally with the separate 1.1.2, 1.2.1 or 1.4.3 update; or a Mac app from a Breath of the Wild 1.6.0 card image (base + update + add-on content), or from a Breath of the Wild base NSP with its 1.9.0 update NSP.',
+    ap = argparse.ArgumentParser(description='Build a native Mac app or unsigned iPhone/iPad IPA from TOTK base 1.0.0 (XCI/NSP), optionally with the separate 1.1.2, 1.2.1 or 1.4.3 update; or a Mac app from a Breath of the Wild 1.6.0 card image (base + update + add-on content), or from a Breath of the Wild base NSP with its 1.9.0 update NSP and optional add-on content NSPs (--dlc).',
                                  epilog='example: python3 build_app.py ~/Games/totk.xci -k ~/keys/prod.keys')
     ap.add_argument('game', type=Path, help='the game file (.xci or .nsp), base game 1.0.0 (Breath of the Wild: the 1.6.0 card image, or the base NSP with --update)')
     ap.add_argument('--update', type=Path, help='separate supported cumulative update NSP/NSZ; outputs the same single app (Breath of the Wild: the 1.9.0 update NSP, not for a card image)')
+    ap.add_argument('--dlc', type=Path, action='append', metavar='DLC.nsp', help='Breath of the Wild 1.9.0 only: an add-on content (DLC) NSP; repeat for the second pack (01007EF00011F001, 01007EF00011F002); each is optional, and a pack left out is not in the app')
     ap.add_argument('--platform', choices=('macos','ios'), default='macos', help='build a macOS app (default) or unsigned iPhone/iPad IPA')
     ap.add_argument('-k', '--keys', type=Path, required=True, help='your prod.keys')
     ap.add_argument('-o', '--out', type=Path, help=f'the app or IPA to write (default depends on --platform; next to the game file)')
@@ -1202,6 +1277,10 @@ def main(argv):
     update = args.update.expanduser().resolve() if args.update else None
     if update and (not update.is_file() or input_kind(update) not in ('nsp', 'nsz')):
         raise BuildError('--update must be a separate cumulative NSP or NSZ')
+    dlcs = list(dict.fromkeys(d.expanduser().resolve() for d in args.dlc or []))
+    for dlc in dlcs:
+        if not dlc.is_file() or input_kind(dlc) != 'nsp':
+            raise BuildError(f'--dlc must be an add-on content NSP: {dlc}')
     version = 'v0'
     firmware = args.firmware.expanduser().resolve() if args.firmware else None
     shared_fonts = args.shared_fonts.expanduser().resolve() if args.shared_fonts else None
@@ -1224,6 +1303,8 @@ def main(argv):
     # The game decides the platforms, the work folder and the disk space needed, so it is identified before those checks.
     tree = prepare_work(work, py, logs)
     which = identify_game(tree, game, keys, logs)
+    if dlcs and which != 'botw':
+        raise BuildError(f'{APPS[which][0]} has no DLC support: leave out --dlc')
     if which == 'botw':
         if fresh_work and not args.work:   # BotW_build next to the game file, not TOTK_build
             shutil.rmtree(work)
@@ -1233,6 +1314,8 @@ def main(argv):
         if kind == 'xci':   # the 1.6.0 card image
             if update:
                 raise BuildError('Breath of the Wild: the card image already holds its update and add-on content, so leave out --update')
+            if dlcs:
+                raise BuildError('Breath of the Wild: the card image already holds its add-on content, so leave out --dlc')
             version = 'botw160'
         else:   # base NSP + the 1.9.0 update NSP
             if not update:
@@ -1240,6 +1323,7 @@ def main(argv):
                                  '(a card image already holds its 1.6.0 update, so it takes no --update)')
             check_package(update, 'botw', 'update')
             version = 'botw190'
+            check_dlc(dlcs, VERSIONS[version])
         expected = VERSIONS[version]
         if not args.work:
             work = game.parent / 'BotW_build'
@@ -1257,7 +1341,7 @@ def main(argv):
         if update:
             update = prepare_update_container(tree, update, keys, logs)
         step_code_botw(tree, botw, update or game, keys, env, logs, version=version)
-        step_data_botw(tree, botw, game, keys, logs, version=version, update=update, firmware=firmware, shared_fonts=shared_fonts)
+        step_data_botw(tree, botw, game, keys, logs, version=version, update=update, dlc=dlcs, firmware=firmware, shared_fonts=shared_fonts)
         step_shaders_botw(tree, botw, logs, version=version)
         step_shader_libs(tree, logs, version=version)
         step_binary(tree, game, keys, {**env, 'SHADER_LIST': str(BOTW_LIST)}, logs, version=version, title='01007ef00011e000')
@@ -1271,7 +1355,7 @@ def main(argv):
         say(f'   checked in {time.time() - t1:.0f} s')
         step_warm_metal(tree, out, logs)
         say(f'done in {(time.time() - t0) / 60:.0f} min: {out}')
-        say(f'Open it from Finder. The first start verifies the game data (15 GB{" + 1.4 GB of add-on content" if "aoc" in expected else ""}) and keeps a record; '
+        say(f'Open it from Finder. The first start verifies the game data (15 GB{" + 1.4 GB of add-on content" if (tree / f"extracted/{version}/aoc/1/romfs.bin").is_file() else ""}) and keeps a record; '
             'saves, the shader cache and the log go to ~/Library/Application Support/MacNativeGames/BotW and ~/Library/Logs/MacNativeGames/botw.log.')
         return
     work_volume=existing_volume_path(work.parent if work.parent.exists() else game.parent)

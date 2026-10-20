@@ -1,5 +1,5 @@
 {
-  "_comment": "The Legend of Zelda: Breath of the Wild 1.9.0 (base + the 1.9.0 update NSP, version 1114112): the update's ExeFS, its three modules rewritten for Apple silicon, the base + 1.9.0 BKTR-merged RomFS, and the system shared fonts (from firmware 22.5.0; no NSP carries them, so they come from --firmware or --shared-fonts).",
+  "_comment": "The Legend of Zelda: Breath of the Wild 1.9.0 (base + the 1.9.0 update NSP, version 1114112): the update's ExeFS, its three modules rewritten for Apple silicon, the base + 1.9.0 BKTR-merged RomFS, the add-on content packs (from the --dlc NSPs, the same two RomFS images as the 1.6.0 card; each optional), and the system shared fonts (from firmware 22.5.0; no NSP carries them, so they come from --firmware or --shared-fonts).",
   "title_id": "01007EF00011E000",
   "version": 1114112,
   "display_version": "1.9.0",
@@ -19,6 +19,10 @@
     "size": 15132662100,
     "sha256": "826b373b80cea5c581749a09dfbd9bb21e8d7a9cd3ed161c4d5315b9ae429dad",
     "files": 41062
+  },
+  "aoc": {
+    "1": {"title_id": "01007EF00011F001", "size": 1390370680, "sha256": "6fc0b5f075bd52ab5390e98b4c07ffccd1db5efbcfd514003ded703fcdd2d42b", "files": 7094},
+    "2": {"title_id": "01007EF00011F002", "size": 648, "sha256": "a66389137e8505994bba3c5930e709c38d95579dae4554ab5a93ee9e519ebd20", "files": 1}
   },
   "shared_fonts_sha256": {
     "standard": "d8f0b7510ea03e2a7e7552562076ce374b4bd2c9c9c1c79466f342758c046413",
