@@ -123,6 +123,7 @@ class DlcArguments(Fixture):
             prepare_work=mock.patch.object(build_app, 'prepare_work', side_effect=prepare_work),
             identify_game=mock.patch.object(build_app, 'identify_game', return_value=game),
             container=mock.patch.object(build_app, 'prepare_update_container', side_effect=lambda tree, source, keys, logs: source),
+            identify_update=mock.patch.object(build_app, 'identify_botw_update', return_value='botw190'),   # by the update's ExeFS hashes
             step_code_botw=mock.patch.object(build_app, 'step_code_botw'),
             step_data_botw=mock.patch.object(build_app, 'step_data_botw', side_effect=Stop),
             step_code=mock.patch.object(build_app, 'step_code', side_effect=Stop),

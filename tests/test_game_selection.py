@@ -153,6 +153,7 @@ class GameSelectionTests(unittest.TestCase):
             prepare_work=mock.patch.object(build_app, 'prepare_work', side_effect=prepare_work),
             identify_game=mock.patch.object(build_app, 'identify_game', return_value=game),
             container=mock.patch.object(build_app, 'prepare_update_container', side_effect=lambda tree, source, keys, logs: source),
+            identify_update=mock.patch.object(build_app, 'identify_botw_update', return_value='botw190'),   # by the update's ExeFS hashes
             step_code_botw=mock.patch.object(build_app, 'step_code_botw', side_effect=Stop),
             step_code=mock.patch.object(build_app, 'step_code', side_effect=Stop),
             disk=mock.patch.object(build_app.shutil, 'disk_usage', return_value=mock.Mock(free=1000 * 2**30)))
@@ -177,10 +178,13 @@ class GameSelectionTests(unittest.TestCase):
         self.assertIn('--update', str(error))
         started['step_code_botw'].assert_not_called()
 
-    def test_botw_card_image_still_rejects_update(self):
-        error, started = self.run_main(self.card_image(), package(self.root, 'botw-u.nsp', BOTW_UPDATE))
-        self.assertIn('leave out --update', str(error))
-        started['step_code_botw'].assert_not_called()
+    def test_botw_update_decides_the_version(self):
+        update = package(self.root, 'botw-u.nsp', BOTW_UPDATE)
+        error, started = self.run_main(self.card_image(), update)
+        self.assertIsInstance(error, Stop)
+        started['identify_update'].assert_called_once()
+        self.assertEqual(started['step_code_botw'].call_args[0][2], update.resolve())
+        self.assertEqual(started['step_code_botw'].call_args.kwargs['version'], 'botw190')
 
     def test_botw_card_image_is_1_6_0(self):
         error, started = self.run_main(self.card_image())
