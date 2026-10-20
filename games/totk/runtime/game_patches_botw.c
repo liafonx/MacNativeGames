@@ -37,11 +37,18 @@ static uint64_t last_present_ns, report_ns, report_frames;
 static double frame_samples[5], report_seconds, report_game, report_short_ms, report_long_ms;
 static unsigned frame_sample_count, frame_sample_next, report_short, report_long;
 static _Atomic uint32_t pinned_step_us;
+#ifdef GAME_BOTW160
 enum { VFR_INSTANCE = 0x2d1e170, VFR_RATIO = 0x3c, VFR_DELTA_TIME = 0x138 };
+#else   /* 1.9.0: the singleton pointer is main+0x1e93890, the object's layout is the same */
+enum { VFR_INSTANCE = 0x1e93890, VFR_RATIO = 0x3c, VFR_DELTA_TIME = 0x138 };
+#endif
 static _Atomic uint32_t *pad_tick;   /* data page +8: 1 when the next frame's game time crosses a 1/30 s boundary */
 static double pad_phase;
 static uint64_t report_ticks;
-static uint8_t *g_pad_main; static int g_pad_log_on; static _Atomic uint64_t g_pad_dir_until;   /* TOTK_PAD_LOG */
+static int g_pad_log_on; static _Atomic uint64_t g_pad_dir_until;   /* TOTK_PAD_LOG */
+#ifdef GAME_BOTW160
+static uint8_t *g_pad_main;
+#endif
 
 static int realtime_enabled(void) { const char *e = getenv("TOTK_REALTIME"); return !(e && !strcmp(e, "0")); }
 static uint64_t frame_step_bits(float seconds) {
@@ -134,6 +141,7 @@ static uint32_t adrp_reg(unsigned rd, uint64_t site, uint64_t target) {
     uint32_t imm = (uint32_t)pages & 0x1fffff;
     return 0x90000000u | ((imm & 3u) << 29) | ((imm >> 2) << 5) | (rd & 31u);
 }
+#ifdef GAME_BOTW160
 /* Pad repeat and hold counts by real time (TOTK_PAD_REPEAT=0: as shipped; botw.md). sead::ControllerBase::
    updateDerivativeParams_ (main+0x126e3b0) counts the frames each button has been held (+0x30 + 4 i) and raises its
    repeat bit (+0x10) when the count reaches the button's delay (+0xb0 + i) and then every pulse (+0xd0 + i) frames.
@@ -279,6 +287,76 @@ static void patch_realtime(Module *m) {
             sizeof put / sizeof *put, sizeof check / sizeof *check);
     patch_pad_repeat(m, page);
 }
+#else
+/* Breath of the Wild 1.9.0: the same real-time step at the 1.9.0 sites (found by disassembly; MacNativeGames
+   games/botw/scripts/verify_realtime_patch.py --version botw190 and verify_pad_repeat_patch.py --version botw190 run them
+   with Unicorn). ksys::VFR::calc (main+0x151d3d0) joins its ratio paths at the same place as 1.6.0's update:
+     main+0x151d484  fcmp s1, s0        -> adrp x9, <data page>
+     main+0x151d48c  b.eq #0x151d494    -> ldr s1, [x9]
+   so the store of s1 to +0x3c after them runs every frame (the flags are not read again, and x9 is reloaded at +0x151d4a4
+   before any read). The fade steps by max(interval, 1) (main+0x583118) x 0.5 x 0.2;
+   it now adds ratio x 0.2 (w0 from the helper is left as it is, nothing reads it after the conversion):
+     main+0x125f118  ucvtf s0, w0       -> adrp x8, <data page>
+     main+0x125f11c  fmov s1, #0.5      -> ldr s0, [x8]
+     main+0x125f128  fmul s0, s0, s1    -> nop
+   1.9.0's sead::ControllerBase::updateDerivativeParams_ (main+0xeb0ef0) counts held frames in floats: each held button adds
+   s8, a constant 1.0 loaded once before the loop. s8 now comes from the page, the ratio, so counts, delays and pulses are
+   1/30 s of game time at any frame rate without a tick:
+     main+0xeb0f78  adrp x8, <GOT page> -> adrp x8, <data page>
+     main+0xeb0f80  ldr x8, [x8, #0x9e0] -> nop                (the next ldr s8, [x8] reads the ratio)
+   The pause menu's fast-repeat countdown (main+0xe67d00) already takes the VFR's delta frames off per frame in 1.9.0, so
+   the patched ratio makes it real-time too. */
+static void patch_pad_repeat(Module *m, uint64_t page) {
+    const char *e = getenv("TOTK_PAD_REPEAT");
+    if (e && !strcmp(e, "0")) { fprintf(stderr, "[botw] pad repeat and hold counts per frame, as shipped (TOTK_PAD_REPEAT=0)\n"); return; }
+    static const struct { uint32_t off, original; } check[] = {
+        {0xeb0f78u, 0xd00075e8u}, {0xeb0f7cu, 0xaa1f03f5u}, {0xeb0f80u, 0xf944f108u}, {0xeb0f84u, 0x52800036u}, {0xeb0f88u, 0xbd400108u},
+    };
+    for (size_t i = 0; i < sizeof check / sizeof *check; i++) {
+        uint32_t w; memcpy(&w, m->base + check[i].off, 4);
+        if (w != check[i].original) {
+            fprintf(stderr, "[botw] pad repeat main+%#x: found %08x expected %08x\n", check[i].off, w, check[i].original);
+            runtime_fail("pad repeat by real time requires the 1.9.0 sead::ControllerBase loop");
+        }
+    }
+    const struct { uint32_t off, word; } put[] = {
+        {0xeb0f78u, adrp_reg(8, (uintptr_t)m->base + 0xeb0f78, page)}, {0xeb0f80u, 0xd503201fu},
+    };
+    for (size_t i = 0; i < sizeof put / sizeof *put; i++) memcpy(m->base + put[i].off, &put[i].word, 4);
+    fprintf(stderr, "[botw] pad repeat and hold counts by real time: held buttons count the VFR ratio per frame (%zu instructions, "
+                    "%zu verified; TOTK_PAD_REPEAT=0: one per frame, as shipped)\n", sizeof put / sizeof *put, sizeof check / sizeof *check);
+}
+static void patch_realtime(Module *m) {
+    uint64_t data_off = (m->file_size + 0x3fff) & ~0x3fffULL;
+    if (data_off + 0x4000 != m->size || data_off & 0xfff) runtime_fail("real-time frame-step page layout");
+    static const struct { uint32_t off, original; } check[] = {
+        {0x151d484u, 0x1e202020u}, {0x151d488u, 0x3900a268u}, {0x151d48cu, 0x54000040u}, {0x151d490u, 0xbd003e61u},
+        {0x125f114u, 0x97cc9001u}, {0x125f118u, 0x1e230000u}, {0x125f11cu, 0x1e2c1001u}, {0x125f120u, 0xd0002208u},
+        {0x125f124u, 0xbd42d662u}, {0x125f128u, 0x1e210800u}, {0x125f12cu, 0xbd417101u}, {0x125f130u, 0x1e210801u},
+    };
+    for (size_t i = 0; i < sizeof check / sizeof *check; i++) {
+        uint32_t w; memcpy(&w, m->base + check[i].off, 4);
+        if (w != check[i].original) {
+            fprintf(stderr, "[botw] real-time frame step main+%#x: found %08x expected %08x\n", check[i].off, w, check[i].original);
+            runtime_fail("real-time frame step requires the 1.9.0 VFR::calc instructions");
+        }
+    }
+    const uint64_t page = (uintptr_t)m->base + data_off;
+    const struct { uint32_t off, word; } put[] = {
+        {0x151d484u, adrp_reg(9, (uintptr_t)m->base + 0x151d484, page)}, {0x151d48cu, 0xbd400121u},   /* ldr s1, [x9] */
+        {0x125f118u, adrp_reg(8, (uintptr_t)m->base + 0x125f118, page)}, {0x125f11cu, 0xbd400100u},   /* ldr s0, [x8] */
+        {0x125f128u, 0xd503201fu},
+    };
+    for (size_t i = 0; i < sizeof put / sizeof *put; i++) memcpy(m->base + put[i].off, &put[i].word, 4);
+    frame_step_main = m->base;
+    frame_step_data = (_Atomic uint64_t *)(void *)(m->base + data_off);
+    atomic_store(frame_step_data, frame_step_bits(1.0f / 30.0f));
+    fprintf(stderr, "[botw] real-time frame step: the VFR ratio and one interval-stepped fade follow the measured frame time "
+                    "(%zu instructions, %zu verified); initial 33.33 ms, sampled at each present (TOTK_REALTIME=0: as shipped)\n",
+            sizeof put / sizeof *put, sizeof check / sizeof *check);
+    patch_pad_repeat(m, page);
+}
+#endif
 /* Diagnostics (TOTK_JQ_CHECK=1): random crashes look like one job run twice (two threads in the same skinning job, a list
    item consumed twice). brk instructions replace a few instructions of sead::JobQueue::run (main+0x12c0dc0) and of the
    worker manager's wake (main+0x13a0150) and sync (main+0x13a03d0); the SIGTRAP handler (loader.c crash -> botw_jq_hook)
@@ -330,13 +408,8 @@ static unsigned excl_acquire(uint8_t *code, size_t n) {
 }
 void runtime_game_patches(Module *m) {
     fprintf(stderr, "[botw] %s game-code patches\n", TOTK_GAME_VERSION);
-#ifdef GAME_BOTW160
     if (realtime_enabled()) patch_realtime(m);
     else fprintf(stderr, "[botw] real-time frame step off (TOTK_REALTIME=0): the game advances by its present interval\n");
-#else   /* the 1.9.0 sites come with the real-time step for 1.9.0 */
-    if (realtime_enabled() && 0) patch_realtime(m);
-    fprintf(stderr, "[botw] real-time frame step not yet on %s: the game advances by its present interval\n", TOTK_GAME_VERSION);
-#endif
     { const char *a = getenv("TOTK_EXCL_ACQUIRE");
       if (!a || strcmp(a, "0")) {
           unsigned t = excl_acquire(m->base, m->text_end), p = excl_acquire(m->base + m->patch_off, m->file_size - m->patch_off);
@@ -357,6 +430,7 @@ static int jq_slot(uint64_t th) {
 static double jq_ms(uint64_t since) { static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb); return since ? (double)(mach_absolute_time() - since) * tb.numer / tb.denom / 1e6 : -1; }
 #define U32(a) (*(const uint32_t *)(uintptr_t)(a))
 #define U64(a) (*(const uint64_t *)(uintptr_t)(a))
+#ifdef GAME_BOTW160
 /* TOTK_PAD_LOG: at the controller loop's first instruction (x19 = the controller, w11 = the new hold mask): the load it
    replaced, and one line per update while a stick or d-pad direction (bits 16..23) is or was held: time, thread, the
    controller, the tick the loop will read, new and previous hold, the previous update's repeat bits, counts 16..23. */
@@ -377,8 +451,11 @@ static int botw_pad_hook(ucontext_t *u) {
     }
     u->uc_mcontext->__ss.__pc += 4; return 1;
 }
+#endif
 int botw_jq_hook(void *context) {   /* SIGTRAP from loader.c crash(): 1 = it was one of ours, handled */
+#ifdef GAME_BOTW160
     if (g_pad_log_on && ((ucontext_t *)context)->uc_mcontext->__ss.__pc == (uintptr_t)g_pad_main + PAD_LOOP) return botw_pad_hook(context);
+#endif
     if (!g_jq_on) return 0;
     ucontext_t *u = context; uint64_t pc = u->uc_mcontext->__ss.__pc, *x = u->uc_mcontext->__ss.__x;
     int site = -1; for (int i = 0; i < JQ_SITES; i++) if (pc == (uintptr_t)g_jq_main + g_jq_site[i].off) site = i;

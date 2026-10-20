@@ -22,7 +22,7 @@
 #define GAME_ADDR_0x453f648 0x2c7ef90 /* nn::swkbd::ShowKeyboard: main's GOT slot */
 #elif defined(GAME_BOTW190)
 /* Breath of the Wild 1.9.0 (docs/botw-v1.9.0-port.md): the same game code as 1.6.0 with the SDK 20.5 of a later build;
-   game_patches_botw.c takes its sites from the BOTW_* macros below. */
+   game_patches_botw.c holds its 1.9.0 sites (the #else branch of GAME_BOTW160). */
 #ifndef GAME_BOTW
 #define GAME_BOTW 1
 #endif
