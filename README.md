@@ -2,7 +2,7 @@
 
 # English
 
-**Breath of the Wild 1.6.0 is now officially supported on Mac!** (Mac only for now: no iPhone or iPad build yet.)
+**Breath of the Wild 1.6.0 and 1.9.0 are now officially supported on Mac!** (Mac only for now: no iPhone or iPad build yet.)
 **Tears of the Kingdom 1.0.0, 1.2.1 and 1.4.3 are now officially supported on Mac, iPhone and iPad!**
 
 > **Use your AI assistant to help you build the Mac app. We recommend Claude Code, Codex, or any other AI assistant you prefer.**
@@ -34,6 +34,7 @@ Update history:
 
 | Date | Platform | Update |
 |---|---|---|
+| Oct 20 | Mac | **Breath of the Wild 1.9.0** (early): a base NSP and the 1.9.0 update NSP build the same app, each DLC pack optional (`--dlc`); keys 2 and 3 work; both versions now run uncapped on a 120 Hz display too, up to 120 FPS (measured on 1.9.0) |
 | Oct 20 | Mac | Two memory leaks fixed for both games |
 | Oct 20 | Mac | **Breath of the Wild 1.6.0** (early): a card image holding the base game, the update and the add-on content builds its own app with the same command; title, saves, the Great Plateau and the DLC packs work, keys 2 (frame interpolation) and 3 (MetalFX 2K) work |
 | Oct 20 | iPhone, iPad | The launcher adopts the UIScene lifecycle, so an IPA built with Xcode 27 starts on iOS 27 (which ends apps that still make their window in the app delegate) |
@@ -156,7 +157,7 @@ The 1.4.3 port has separately passed scene loading, movement/jumps, menus/map, s
 
 The 1.2.1 port (October 19) passed the same rewrite verification (600 of 600 negative controls) and the loader, RomFS and startup probes. On an M4 Mac it loaded saves in the 1.0.0 and 1.1.2 formats and passed movement/jumps, menus/map/quick menus, manual save and reload in a new process, fall death and retry, and the three key-3 picture modes; the packaged app was also opened through its launcher. See [the 1.2.1 test record](docs/v1.2.1-port.md); this is not full-game or long-session certification.
 
-### Breath of the Wild 1.6.0 (early)
+### Breath of the Wild 1.6.0 and 1.9.0 (early)
 
 The same script builds **The Legend of Zelda: Breath of the Wild 1.6.0** (`01007EF00011E000`) from a card image that holds the base game, the 1.6.0 update and the two add-on content titles together (no `--update`; the game is recognised by the title IDs in the file, never by its name). This card has no system update partition, so the six shared fonts must come from a Tears of the Kingdom build's work folder (`TOTK_build/totk/extracted/firmware/shared-fonts`) or another verified font folder. The startup shaders come from the game data and the game's own [shared shader list](docs/shader-list.md) (`games/botw/assets/shader_list.tsv`), as for Tears of the Kingdom: every shader of the boot and title packages for its default bind state, plus every bind state the list names, compiled ahead and waited for only as far as the title screen needs.
 
@@ -164,13 +165,21 @@ The same script builds **The Legend of Zelda: Breath of the Wild 1.6.0** (`01007
 python3.14 build_app.py ~/Games/botw.xci -k ~/keys/prod.keys --shared-fonts ~/Games/TOTK_build/totk/extracted/firmware/shared-fonts
 ```
 
-The work folder is `BotW_build` next to the game file; the app is `Breath of the Wild.app` (bundle `org.macnativegames.botw`), with its own data folder `~/Library/Application Support/MacNativeGames/BotW` and log `~/Library/Logs/MacNativeGames/botw.log`. Every step is checked against `games/botw/assets/expected-v1.6.0.json`; a fresh build takes about 16 minutes on an M4 (the 15 GB RomFS merge is most of it).
+**1.9.0** builds from your base game NSP and the 1.9.0 update NSP (`--update`) instead of a card image. Each of the two add-on content packs comes from its own NSP with `--dlc` (`01007EF00011F001`, `01007EF00011F002`); each pack is optional, and the app holds only the packs you give. An NSP holds no shared fonts, so add `--firmware` (or `--shared-fonts`), as for a Tears of the Kingdom NSP. A file given on the wrong option stops the build and names the option it belongs on.
 
-What works (October 20, an M4 Mac, a Great Plateau save): title, the add-on content list, loading and saving, the plateau at about 90–120 fps (the game advances by real time; held-button repeats count by real time too), the two DLC packs mounted and read, key 1 (overlays), key 2 (MetalFX frame interpolation: off → 30+30 → half the refresh rate → unlimited, every game frame interpolated on the plateau) and key 3 (MetalFX 2K on / off: MetalFX replaces the game's own upscale of the 1600x900 picture into the 1080p canvas and the window output above 1080p); a 30-minute session on the plateau at about 95 fps with memory steady (+170 MB). Not yet: native 2K, iPhone / iPad, the DLC quests themselves (only verified as mounted and read). This is an early port: expect rough edges.
+```sh
+python3.14 build_app.py ~/Games/botw-base.nsp -k ~/keys/prod.keys --update ~/Games/botw-1.9.0.nsp --dlc ~/Games/botw-dlc-1.nsp --dlc ~/Games/botw-dlc-2.nsp --firmware ~/Games/firmware
+```
+
+Both versions use the work folder `BotW_build` next to the game file and make `Breath of the Wild.app` (bundle `org.macnativegames.botw`), with its own data folder `~/Library/Application Support/MacNativeGames/BotW` and log `~/Library/Logs/MacNativeGames/botw.log`. Every step is checked against `games/botw/assets/expected-v1.6.0.json` or `expected-v1.9.0.json`; a fresh 1.6.0 build takes about 16 minutes on an M4 (the 15 GB RomFS merge is most of it).
+
+What works on 1.6.0 (October 20, an M4 Mac, a Great Plateau save): title, the add-on content list, loading and saving, the plateau at about 90–120 fps (the game advances by real time; held-button repeats count by real time too), the two DLC packs mounted and read, key 1 (overlays), key 2 (MetalFX frame interpolation: off → 30+30 → half the refresh rate → unlimited, every game frame interpolated on the plateau) and key 3 (MetalFX 2K on / off: MetalFX replaces the game's own upscale of the 1600x900 picture into the 1080p canvas and the window output above 1080p); a 30-minute session on the plateau at about 95 fps with memory steady (+170 MB). Not yet: native 2K, iPhone / iPad, the DLC quests themselves (only verified as mounted and read). This is an early port: expect rough edges.
+
+What works on 1.9.0 (October 20, an M1 Pro Mac with its built-in 120 Hz display, both DLC packs): title, loading saves, autosaves, six places from the Shrine of Resurrection to the Hyrule Castle exit at 60.1–82.6 fps standing still, the game advancing by real time at any frame rate (held-button counts too), the two DLC packs (the Kakariko route starts the DLC quest "EX Treasure: Garb of Winds"), key 2 (MetalFX frame interpolation, every game frame interpolated) and key 3 (MetalFX replaces the game's own upscale). Both versions now run uncapped on a 120 Hz display too, up to 120 fps (measured on 1.9.0); before, the game's present interval held them at 60 fps there. Walking into a place for the first time stutters while new pipelines compile. Not yet: native 2K, iPhone / iPad, and a fix for Link's legs, which sink into the stone path after one Great Plateau save loads. See [the 1.9.0 test record](docs/botw-v1.9.0-port.md).
 
 ### iPhone and iPad
 
-Version 1.4.3 has been played on an **iPhone 14 (iOS 26.6.1)** and an **iPad with the A16 chip (iPadOS 26.7.1)**, both signed with a personal development team in Xcode. Versions 1.0.0, 1.1.2 and 1.2.1 have not been tested on iOS. Breath of the Wild has no iPhone/iPad build yet: `--platform ios` with its card image stops with an error.
+Version 1.4.3 has been played on an **iPhone 14 (iOS 26.6.1)** and an **iPad with the A16 chip (iPadOS 26.7.1)**, both signed with a personal development team in Xcode. Versions 1.0.0, 1.1.2 and 1.2.1 have not been tested on iOS. Breath of the Wild has no iPhone/iPad build yet: `--platform ios` stops with an error for both versions.
 
 - **First launch:** the app checks the game data (about 15 seconds) and imports the shaders it carries, with a progress bar. On an iPhone 14 this takes about 3 minutes before the title appears. Later launches show the title in about 8 seconds.
 - **Picture:** the game runs in handheld mode, as a Switch does without its dock: 1280×720.
@@ -249,7 +258,7 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 
 # 中文说明
 
-**正式支持旷野之息 1.6.0 mac了！**（目前只有 Mac 版，还不能打包 iPhone / iPad 版。）
+**正式支持旷野之息 1.6.0 和 1.9.0 mac了！**（目前只有 Mac 版，还不能打包 iPhone / iPad 版。）
 **正式支持王国之泪 1.0.0,1.2.1，1.4.3 Mac iPhone iPad了！**
 
 > **请使用你的 AI 助理帮你完成 Mac App 的构建。推荐 Claude Code、Codex，或其他你喜欢的 AI 助理。**
@@ -281,6 +290,7 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 
 | 日期 | 平台 | 更新 |
 |---|---|---|
+| 10 月 20 日 | Mac | **旷野之息 1.9.0**（早期）：本体 NSP + 1.9.0 更新 NSP 打成同一个 App，每个 DLC 内容包都可选（`--dlc`）；2 键和 3 键都能用；两个版本在 120 Hz 显示器上现在也不限帧，最高 120 帧（在 1.9.0 上测的） |
 | 10 月 20 日 | Mac | 修了两处两个游戏都有的内存泄漏|
 | 10 月 20 日 | Mac | **旷野之息 1.6.0**（早期）：本体 + 更新 + 追加内容合在一起的卡带镜像用同一条命令打成单独的 App；标题、存档、初始台地和 DLC 内容包都能用，2 键（补帧）和 3 键（MetalFX 2K）都能用 |
 | 10 月 20 日 | iPhone、iPad | 启动器改用 UIScene 生命周期：用 Xcode 27 构建的 IPA 能在 iOS 27 上启动（iOS 27 会结束仍在 app delegate 里创建窗口的 App） |
@@ -403,7 +413,7 @@ python3.14 games/totk/tools/install_desktop_entry.py --app "/路径/Tears of the
 
 1.2.1（10 月 19 日）通过了同样的改写验证（600 个反向对照全部抓到）和加载、RomFS、启动探针。在 M4 Mac 上读过 1.0.0 和 1.1.2 两种格式的存档，并通过移动 / 跳跃、菜单 / 地图 / 快捷菜单、手动存档后新进程读档、摔死重试和 3 键的三种画质；打包后的 App 也从启动器打开测试过。详见 [1.2.1 测试记录](docs/v1.2.1-port.md)；这不代表全流程或长局验收。
 
-### 旷野之息 1.6.0（早期）
+### 旷野之息 1.6.0 和 1.9.0（早期）
 
 同一个脚本也能打包**《塞尔达传说 旷野之息》1.6.0**（`01007EF00011E000`）：卡带镜像里要同时有本体、1.6.0 更新和两个追加内容（不用 `--update`；认的是文件里的标题 ID，不看文件名）。这张卡没有系统更新分区，六个共享字体要从王国之泪打包的工作目录拿（`TOTK_build/totk/extracted/firmware/shared-fonts`），或别的已校验的字体目录。启动着色器和王国之泪一样来自游戏数据和这个游戏自己的[公共着色器清单](docs/shader-list.md)（`games/botw/assets/shader_list.tsv`）：启动包和标题包里的每个着色器按默认绑定状态翻译，清单里的每个绑定状态也翻译，打包时预先编好，第一帧只等标题要的那些。
 
@@ -411,13 +421,21 @@ python3.14 games/totk/tools/install_desktop_entry.py --app "/路径/Tears of the
 python3.14 build_app.py ~/Games/botw.xci -k ~/keys/prod.keys --shared-fonts ~/Games/TOTK_build/totk/extracted/firmware/shared-fonts
 ```
 
-工作目录是游戏文件旁边的 `BotW_build`，App 是 `Breath of the Wild.app`（`org.macnativegames.botw`），数据目录 `~/Library/Application Support/MacNativeGames/BotW`，日志 `~/Library/Logs/MacNativeGames/botw.log`。每一步对 `games/botw/assets/expected-v1.6.0.json` 核对；M4 上从头打包约 16 分钟（大头是 15 GB 的 RomFS 合并）。
+**1.9.0** 不用卡带镜像，用你的本体 NSP 加 1.9.0 更新 NSP（`--update`）打包。两个追加内容各有自己的 NSP，用 `--dlc` 给（`01007EF00011F001`、`01007EF00011F002`）；每个都可选，App 里只有你给的内容包。NSP 里没有共享字体，所以和王国之泪的 NSP 一样要加 `--firmware`（或 `--shared-fonts`）。文件放错选项时打包会停下，并说明它该放在哪个选项。
 
-已验证（10 月 20 日，M4 Mac，初始台地的存档）：标题、追加内容一览、读档和存档、台地约 90–120 帧（游戏按真实时间推进，按住按键的重复也按真实时间数）、两个 DLC 内容包挂载并被读取、1 键（提示框）、2 键（MetalFX 补帧：关 → 30+30 → 刷新率一半 → 不限帧，台地上每个游戏帧都插）和 3 键（MetalFX 2K 开 / 关：MetalFX 代替游戏自己把 1600×900 的画面放大进 1080p 画布，窗口大于 1080p 时出图也放大）；台地上 30 分钟约 95 帧、内存平稳（+170 MB）。还没有：原生 2K、iPhone / iPad、DLC 的任务本身（只验证了挂载和读取）。这是早期移植，会有毛边。
+```sh
+python3.14 build_app.py ~/Games/botw-base.nsp -k ~/keys/prod.keys --update ~/Games/botw-1.9.0.nsp --dlc ~/Games/botw-dlc-1.nsp --dlc ~/Games/botw-dlc-2.nsp --firmware ~/Games/firmware
+```
+
+两个版本的工作目录都是游戏文件旁边的 `BotW_build`，App 都是 `Breath of the Wild.app`（`org.macnativegames.botw`），数据目录 `~/Library/Application Support/MacNativeGames/BotW`，日志 `~/Library/Logs/MacNativeGames/botw.log`。每一步对 `games/botw/assets/expected-v1.6.0.json` 或 `expected-v1.9.0.json` 核对；1.6.0 在 M4 上从头打包约 16 分钟（大头是 15 GB 的 RomFS 合并）。
+
+1.6.0 已验证（10 月 20 日，M4 Mac，初始台地的存档）：标题、追加内容一览、读档和存档、台地约 90–120 帧（游戏按真实时间推进，按住按键的重复也按真实时间数）、两个 DLC 内容包挂载并被读取、1 键（提示框）、2 键（MetalFX 补帧：关 → 30+30 → 刷新率一半 → 不限帧，台地上每个游戏帧都插）和 3 键（MetalFX 2K 开 / 关：MetalFX 代替游戏自己把 1600×900 的画面放大进 1080p 画布，窗口大于 1080p 时出图也放大）；台地上 30 分钟约 95 帧、内存平稳（+170 MB）。还没有：原生 2K、iPhone / iPad、DLC 的任务本身（只验证了挂载和读取）。这是早期移植，会有毛边。
+
+1.9.0 已验证（10 月 20 日，M1 Pro Mac 的内置 120 Hz 屏幕，两个 DLC 内容包）：标题、读档和自动存档、六个测试地点（从 Shrine of Resurrection 到海拉鲁城出口）站着不动 60.1–82.6 帧、游戏在任何帧率下都按真实时间推进（按住按键的计数也一样）、两个 DLC 内容包（卡卡利科村的路线会触发 DLC 任务 “EX Treasure: Garb of Winds”）、2 键（MetalFX 补帧，每个游戏帧都插）和 3 键（MetalFX 代替游戏自己的放大）。两个版本在 120 Hz 显示器上现在也不限帧，最高 120 帧（在 1.9.0 上测的）；以前游戏的呈现间隔在这种显示器上把帧率压在 60。第一次走进一个地方时，新管线编译会造成卡顿。还没有：原生 2K、iPhone / iPad，以及林克腿陷进石头路的修复（读初始台地的一个存档后出现）。详见 [1.9.0 测试记录](docs/botw-v1.9.0-port.md)。
 
 ### iPhone 和 iPad
 
-1.4.3 已在 **iPhone 14（iOS 26.6.1）** 和 **A16 芯片的 iPad（iPadOS 26.7.1）** 上实际游玩，两台都是在 Xcode 里用个人开发团队签名安装的。1.0.0、1.1.2 和 1.2.1 没有在 iOS 上测过。旷野之息还没有 iPhone / iPad 版：用它的卡带镜像加 `--platform ios` 会报错退出。
+1.4.3 已在 **iPhone 14（iOS 26.6.1）** 和 **A16 芯片的 iPad（iPadOS 26.7.1）** 上实际游玩，两台都是在 Xcode 里用个人开发团队签名安装的。1.0.0、1.1.2 和 1.2.1 没有在 iOS 上测过。旷野之息还没有 iPhone / iPad 版：两个版本加 `--platform ios` 都会报错退出。
 
 - **第一次启动：** App 先校验游戏数据（约 15 秒），再导入随 App 准备的着色器，有进度条。iPhone 14 上约 3 分钟后出现标题画面；之后的启动约 8 秒出标题。
 - **画面：** 游戏以掌机模式运行，和 Switch 不接底座时一样：1280×720。
