@@ -102,33 +102,35 @@ Two changes act on both BOTW versions:
 
 ## Route measurements
 
-Build: `1209b15` plus the 120 Hz change, which was committed after review as `baa4fba` (a dead term and the probe hooks
-removed, a log line added). Both DLC packs, the uncapped real-time default, MetalFX keys off, write-back staging on.
-Window output: 1920x1080 canvas, 1600x900 render. Each route used its own profile with the route save in slot 0 and a
-warm shader cache. The castle, field and Korok routes had one warm-up run first. Still view from T0 to T0+20 s
-(T0 = 115 s), then a walk with a right turn from T0+20 to T0+35 s. FPS is the frames in the window divided by the
-window length.
+Build: `5ab49a2`, the tip of `botw/port-190`. It has the merge of origin/main `f3ad878` (`ac08d97`), the link stub
+`b6c4656` and the leak fix `5ab49a2` (see "After the merge with upstream"). Both DLC packs, the uncapped real-time
+default, MetalFX keys off, write-back staging on. Window output: 1920x1080 canvas, 1600x900 render. Each route used its
+own profile with the route save in slot 0 and a warm shader cache of upstream's translation chain v5. Every route had
+one warm-up run, then the measured run. Still view from T0 to T0+20 s (T0 = 115 s), then a walk with a right turn from
+T0+20 to T0+35 s. FPS is the frames in the window divided by the window length. The GPU % sampler (`ioreg`) failed in
+most runs, so the table gives the GPU time p50.
 
-| Route | Still FPS | Still p50 / p95 ms | Still frames > 16.7 ms | Walk FPS | Walk p50 / p95 ms | Walk frames > 16.7 ms | GPU % still / walk |
+| Route | Still FPS | Still p50 / p95 ms | Still frames > 16.7 ms | Walk FPS | Walk p50 / p95 ms | Walk frames > 16.7 ms | GPU ms p50 still / walk |
 |---|---|---|---|---|---|---|---|
-| Shrine of Resurrection | 78.4 | 12.4 / 15.0 | 25 | 27.9 | 12.2 / 20.4 | 32 | 89 / 48 |
-| Great Plateau (cliff) | 66.3 | 14.7 / 17.5 | 158 | 46.5 | 15.9 / 20.7 | 227 | 94 / 86 |
-| Kakariko (Goddess statue) | 64.0 | 15.3 / 17.8 | 190 | 19.1 | 17.1 / 70.1 | 163 | 95 / 77 |
-| Central Hyrule field | 82.6 | 11.7 / 14.3 | 19 | 74.5 | 12.0 / 15.1 | 25 | 90 / 92 |
-| Korok Forest | 69.5 | 13.9 / 17.3 | 99 | 64.7 | 14.9 / 18.1 | 149 | 94 / 95 |
-| Hyrule Castle exit | 60.1 | 16.4 / 18.3 | 405 | 54.4 | 14.4 / 18.7 | 154 | 95 / 82 |
+| Shrine of Resurrection | 77.5 | 12.5 / 15.2 | 30 | 81.4 | 11.9 / 15.5 | 22 | 7.5 / 7.5 |
+| Great Plateau (cliff) | 67.6 | 14.3 / 17.0 | 96 | 64.7 | 14.8 / 19.2 | 166 | 8.6 / 9.1 |
+| Kakariko (Goddess statue) | 64.0 | 15.1 / 18.1 | 228 | 58.6 | 16.0 / 20.5 | 334 | 10.0 / 10.8 |
+| Central Hyrule field | 77.3 | 12.0 / 15.4 | 29 | 75.5 | 12.6 / 16.4 | 51 | 8.3 / 8.3 |
+| Korok Forest | 66.7 | 14.6 / 17.3 | 126 | 61.0 | 15.7 / 19.2 | 255 | 10.2 / 11.1 |
+| Hyrule Castle exit | 58.4 | 16.7 / 19.0 | 604 | 61.9 | 15.4 / 20.1 | 281 | 11.5 / 9.5 |
 
-- The walk windows include first-time pipeline compiles. The walks reach new shader variants in every run: each run
-  translates 4-8 shaders not seen before, and all are cached afterwards. The log's long-frame lines (`[长帧]`) show frames
-  of 1-3.3 s that create 2-9 pipelines and shader libraries. An example is the Shrine at 146.2 s: 9 pipelines and
-  4 libraries, 3227 ms.
-- The Kakariko walk also swims into the pond. In the fresh profile, it starts the banner of the DLC quest
-  "EX Treasure: Garb of Winds" and an autosave.
-- No route crashed. CPU per frame (`nvn_ms` p50): 6.9-10.4 ms. GPU p50: 7.6-11.8 ms.
+- The walk windows no longer include first-time pipeline compiles: the cache was warm and every route had a warm-up
+  run. The walks of the earlier table (build `baa4fba`, before the merge) did include them. Walk FPS, earlier to now:
+  Shrine 27.9 to 81.4, Kakariko 19.1 to 58.6, Great Plateau 46.5 to 64.7. The still views are within a few FPS of the
+  earlier table.
+- The warm-up runs were within a few FPS of the measured runs, for example the field at 82.4 still and 77.3 walking,
+  and the castle at 57.0 still.
+- The Kakariko walk also swims into the pond. The shots at 125 s are correct. Those of Kakariko, the field and the
+  castle show the banner of a DLC "EX Treasure" quest in the still window, as fresh profiles did before.
+- All 12 runs (6 warm-ups, 6 measured) exited with code 0, with no abort. CPU per frame (`nvn_ms` p50): 7.1-10.4 ms.
 
-Other checks:
+Other checks, on the build before the merge:
 
-- Capped reference, before the 120 Hz change (60 FPS on this display): Kakariko still view 59.5 FPS, p50 16.6 ms.
 - Real-time step at 120 FPS (title screen): 3601 frames in 30.0 s. The steps add up to 1.0021-1.0033 of the frames'
   time, so game time runs 0.2-0.3 % fast at the 1/120 s clamp. In game at 78-83 FPS: 1.0002-1.0014.
 - Key 3 (Great Plateau): MetalFX replaced 1,801 of 1,801 upscales in a stats window and kept none. The picture is
@@ -137,9 +139,31 @@ Other checks:
 - Picture: the pond water colour, the caption picture of a new autosave and the first Game Over glyphs are correct.
 - Save loads: the 6 route runs, the 3 warm-ups and the 6 checks each loaded a save, with no stop on a command handle.
 
+## After the merge with upstream
+
+`ac08d97` merges origin/main `f3ad878`, the 28 upstream commits since `e58b2bd`.
+
+Link: upstream `466330d` broke the BOTW link. Shared `runtime/romfs.c` now calls `runtime_render_res`, which only the
+TOTK patch files define. `b6c4656` adds a BOTW stub in `game_patches_botw.c` that answers 0 (no bigger scene). The same
+break stops the link of upstream's own BOTW 1.6.0 port.
+
+Write-back staging, A/B on the merged build (Kakariko still view, capped at 60 FPS, warm v5 cache):
+
+| Staging | FPS | p50 / p95 ms | Frames > 16.7 ms |
+|---|---|---|---|
+| On | 59.5 | 16.5 / 19.1 | 504 |
+| Off (the TOTK write-back path) | 53.7 | 18.0 / 22.6 | 850 |
+
+GPU memory leak in the write-back staging, fixed by `5ab49a2`: the first 25-minute run (Shrine, merged build) stopped
+at 1509 s with `gpu_budget_check` FATAL at 5000 of 5000 MB. The GPU allocation grew from 1.1 GB to 2.3 GB by frame
+79,800 (about 10 MB/min), then by about 8 MB/s to 5 GB. 485,380 write-back stage buffers were never freed (2.9 GB). In
+`botw_wb_from_stage`, ARC retains and autoreleases the receiver of `-contents` (`NS_RETURNS_INNER_POINTER`). The game
+thread has no autorelease pool, so each stage buffer kept one reference. The fix puts an `@autoreleasepool` around that
+read. A 5.5-minute check on the Shrine route then held the GPU allocation flat at 1906 MB.
+
 ## Shared edits for the TOTK re-test
 
-Every file under `games/totk` that this port changes (`git diff --stat e58b2bd HEAD -- games/totk`):
+Every file under `games/totk` that this port changes (`git diff --stat f3ad878 HEAD -- games/totk`):
 
 | File | What changed | Guard |
 |---|---|---|
@@ -148,7 +172,7 @@ Every file under `games/totk` that this port changes (`git diff --stat e58b2bd H
 | `runtime/aoc_romfs.c` | default DLC folder `extracted/<TOTK_GAME_DIR>/aoc` instead of the fixed `extracted/botw160/aoc` | the file is inside `#ifdef GAME_BOTW` |
 | `runtime/audio_mixer.h` | two fields keep the voice-drop parameter | `#ifdef GAME_BOTW` |
 | `runtime/audio_renderer.c` | `IAudioRenderer` commands 12 and 13 (Set/GetVoiceDropParameter) | `#ifdef GAME_BOTW` |
-| `runtime/game_patches_botw.c` | the 1.9.0 real-time and held-count sites; the 1.6.0 sites are unchanged | `#ifdef GAME_BOTW160` / `#else`; only BOTW binaries compile this file |
+| `runtime/game_patches_botw.c` | the 1.9.0 real-time and held-count sites; the 1.6.0 sites are unchanged; a `runtime_render_res` stub that answers 0, for the shared `romfs.c` of `466330d` | `#ifdef GAME_BOTW160` / `#else`; only BOTW binaries compile this file |
 | `runtime/game_version.h` | the 1.9.0 version block | `#elif defined(GAME_BOTW190)`, before the TOTK blocks |
 | `runtime/loader.c` | the five-argument `nn::init::Start` of SDK 20.5; `module_finis` is compiled for 1.9.0 too | `#ifdef GAME_BOTW160` / `#elif defined(GAME_BOTW)`; `#ifndef GAME_BOTW` became `#ifndef GAME_BOTW160` |
 | `runtime/shared_font.c` | `nn::pl::IsRunningOnOunce` answers no | `#ifdef GAME_BOTW` |
@@ -160,7 +184,7 @@ Every file under `games/totk` that this port changes (`git diff --stat e58b2bd H
 | `scripts/test_exclusive_windows.py` | `'botw190': []` in `WINDOWS` | additive |
 | `scripts/verify_rewrites.py` | `botw190` in `--version`; an empty window list passes for it, as for `botw160` | new choice; TOTK checks unchanged |
 | `third_party/d2r_gfx/gfx/nvn/hle_nvn.c` | 1.9.0 reports the TOTK NVN version; `BOTW_FAST_DISPLAY_*` hooks at the ends of three lines | `#if defined(GAME_BOTW) && !defined(GAME_BOTW190)`; the hooks are empty for TOTK |
-| `third_party/d2r_gfx/gfx/nvn/nvn_mtl.m` | `BOTW_WB_*` hooks at the ends of existing lines, the staging bodies at the end of the file, `BOTW_MFXUP_KEY` in the scene test | bodies in `#ifdef GAME_BOTW`; for TOTK the hooks are empty and `WB_WAIT_GPU` is `mtl_finish_gpu()`, the call it replaces |
+| `third_party/d2r_gfx/gfx/nvn/nvn_mtl.m` | `BOTW_WB_*` hooks at the ends of existing lines, the staging bodies at the end of the file (their stage read inside an `@autoreleasepool`, `5ab49a2`), `BOTW_MFXUP_KEY` in the scene test | bodies in `#ifdef GAME_BOTW`; for TOTK the hooks are empty and `WB_WAIT_GPU` is `mtl_finish_gpu()`, the call it replaces |
 | `third_party/d2r_gfx/gfx/nvn/nvn_obj.h` | the `BOTW_WB_*` and `BOTW_FAST_DISPLAY_*` macros; `BOTW_MFXUP_KEY` for each version | inside the existing `#ifdef GAME_BOTW` / `#else`, empty in the `#else` |
 
 Outside `games/totk`, `build_app.py` adds the 1.9.0 branch, `--dlc` and the package checks. For TOTK, `--dlc` stops the
@@ -168,16 +192,24 @@ build, and a TOTK DLC file given as the game file stops with a clearer message. 
 by default.
 
 For TOTK 1.0.0, 1.1.2, 1.2.1 and 1.4.3, the preprocessed code (`clang -E -P`) of every changed C, Objective-C and
-header file is identical to `e58b2bd`. The Python scripts keep the TOTK defaults, and the Makefile only adds rules.
-TOTK itself was not re-tested in game on this branch.
+header file is identical to `f3ad878` (60 of 60 checks). The Python scripts keep the TOTK defaults, and the Makefile
+only adds rules. TOTK itself was not re-tested in game on this branch. origin/main moved on to `9e8a514` after the
+merge. This branch does not have those commits.
 
 ## Open items
 
 - Sinking legs: Link stands idle after a load of the 08:29 Great Plateau autosave, and his legs sink into the stone
   path by the ruin wall. One re-test on this branch showed the same as before. An earlier A/B showed that the write-back
   is not the cause: with the write-back off (`flag writeback 0`), the legs sank the same. On our earlier stack, one move
-  or attack cleared it on the same spot. The cause is unknown.
-- 25-minute run: RESULT_PENDING
+  or attack cleared it on the same spot. The merged build made a new save at the same spot (System > Save, slot 1).
+  Five seconds after a load of that save, the legs sink mid-thigh too. The cause is unknown.
+- 25-minute run after the leak fix, Korok Forest with Link moving: 1630 s, exit code 0, no abort. From 120 s on, the
+  run walks 10 s each minute, with a 2 s right turn, then presses A. The 13 shots, one every 120 s, show Link moving in
+  the forest and no Game Over. GPU allocation: 1138 MB at frame 300, 1823 MB at about 170 s, 1916 MB at the end. After
+  the warm-up this is about 4 MB/min, against 10 MB/min before the fix. Resident memory: 2686 to 2900 MB. A first
+  moving try on the field route is void, because Link died before 245 s and the run stayed on Game Over.
+- From upstream `e0ad452`, not from this branch: the `[dead-keep]` set of finalised serials that recording copies keep
+  grows linearly, from 30k to 397k live entries in the 25-minute run.
 - Checked in Unicorn only (the verify scripts), not in game: the held d-pad in the pause menu and the sprint landmark.
 - Not tested:
   - TOTK in game
