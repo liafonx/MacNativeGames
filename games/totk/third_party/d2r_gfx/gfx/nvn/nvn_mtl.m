@@ -14214,7 +14214,11 @@ void botw_wb_stage_encode(void) {
 int botw_wb_from_stage(void *ev) {
     wb_ent *e = ev; const tex_t *t = &e->t;
     if (!e->stage || e->stage_fence < e->fence) return -1;
-    const uint8_t *src = (const uint8_t *)((__bridge id<MTLBuffer>)e->stage).contents; size_t off = 0;
+    /* ARC retains and autoreleases the receiver of -contents (NS_RETURNS_INNER_POINTER), and the game's thread has no
+       autorelease pool to drain it (wb_level_back): without this pool no stage buffer was ever freed (2.9 GB of GPU
+       memory in 25 minutes). */
+    const uint8_t *src; @autoreleasepool { src = (const uint8_t *)((__bridge id<MTLBuffer>)e->stage).contents; }
+    size_t off = 0;
     unsigned layers = t->L.layers ? t->L.layers : 1; int ok = 1;
     for (unsigned l = 0; l < t->d.levels && ok; l++) for (unsigned y = 0; y < layers && ok; y++) {
         size_t lp; size_t n = wb_level_size(t, l, &lp, NULL, NULL);
