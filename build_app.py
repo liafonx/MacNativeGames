@@ -639,9 +639,13 @@ def step_update_data(tree, game, update, keys, logs, *, version='v112'):
         report = json.loads(index.read_text())
         check(f'{expected["display_version"]} RomFS', report['romfs_sha256'], expected['romfs']['sha256'])
         check(f'{expected["display_version"]} RomFS size', report['romfs_size'], expected['romfs']['size'])
-    for script, arguments in [('make_romfs_patches.py', []), ('make_output_res_overlay.py', ['2560x1440'])]:
+    steps = [('make_romfs_patches.py', []), ('make_output_res_overlay.py', ['2560x1440'])]
+    if version == 'v143':   # a TOTK_RENDER_RES scene above 1600x900 grows the same heaps (runtime/game_patches_v143.c)
+        steps += [('make_output_res_overlay.py', [canvas, '--scene', scene])
+                  for canvas in ('1920x1080', '2560x1440') for scene in ('1920x1080', '2560x1440')]
+    for i, (script, arguments) in enumerate(steps):
         run([tree/'.venv/bin/python', 'scripts/'+script, *arguments, '--version', version],
-            logs/(version+'-'+script+'.log'), cwd=tree)
+            logs/(version+'-'+script+(f'-{i}' if i > 1 else '')+'.log'), cwd=tree)
 
 
 def build_spirv_cross(tree, logs):
@@ -825,7 +829,7 @@ def step_app(tree, out, logs, *, version="v0", game='totk'):
     else:
         try:
             report = json.loads((seed/'seed-manifest.json').read_text())
-            if (report['version'] != version or report['chain'] != 'totk-native-v4-unverified' or
+            if (report['version'] != version or report['chain'] != 'totk-native-v5-unverified' or
                     report['shaders'] < (8000 if game == 'totk' else 2000) or not report['files'] or any(
                         Path(name).name != name or sha256(seed/name) != digest for name, digest in report['files'].items())):
                 raise ValueError('version, translation chain or file hash differs')
