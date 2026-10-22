@@ -77,8 +77,11 @@ class StylesFollowControls(unittest.TestCase):
         self.assertIs(mbi.slot_glyphs(drawers, pl.prompt_controls('', 'label'))['a'], drawers['a'])    # A is Cross
         self.assertIs(mbi.slot_glyphs(drawers, pl.prompt_controls('', 'position'))['a'], drawers['b'])  # A is Circle
 
-    def test_the_stick_presses_keep_their_switch_icons_in_this_font(self):
-        self.assertNotIn(0xE056, mbi.STYLES['xbox'](Stub(), None))
+    def test_the_stick_presses_show_the_stick_buttons(self):
+        xbox, playstation = mbi.STYLES['xbox'], mbi.STYLES['playstation']
+        self.assertEqual((letter(xbox, None, 0xE056), letter(xbox, None, 0xE057)), ('LS', 'RS'))
+        self.assertIsNotNone(letter(playstation, None, 0xE056))
+        self.assertIsNone(letter(mbi.STYLES['xbox'], pl.prompt_controls('l3 = none\n', 'position'), 0xE056))   # nothing drives it: unchanged
 
 
 class Command(unittest.TestCase):
