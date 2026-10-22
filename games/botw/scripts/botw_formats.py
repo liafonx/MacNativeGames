@@ -69,14 +69,20 @@ def yaz0_splice(data, decoded, edits):
             spans.append([lo, hi])
     groups = yaz0_groups(data)
     out, taken = bytearray(data[:YAZ0_HEADER]), 0       # `taken`: stream offset up to which the original is copied
-    for lo, hi in spans:
+    while spans:
+        lo, hi = spans.pop(0)
         before = [g for g in groups if g[1] <= lo and g[0] >= taken]
-        start = before[-1] if before else None
-        if start is None:
-            raise ValueError('an edit starts inside an earlier edit\'s stretch')
-        # The literals fill whole groups of eight, so the stretch must be a multiple of 8 bytes (or reach the stream's end).
-        after = [g for g in groups if g[1] >= hi + REACH and ((g[1] - start[1]) % 8 == 0 or g is groups[-1])]
-        end = after[0] if after else groups[-1]
+        if not before:
+            raise ValueError('an edit starts inside an earlier stretch')
+        start = before[-1]
+        while True:
+            # The literals fill whole groups of eight, so the stretch must be a multiple of 8 bytes (or reach the stream's end).
+            after = [g for g in groups if g[1] >= hi + REACH and ((g[1] - start[1]) % 8 == 0 or g is groups[-1])]
+            end = after[0] if after else groups[-1]
+            if spans and spans[0][0] < end[1]:     # the stretch runs over the next edit: it becomes part of this stretch
+                hi = max(hi, spans.pop(0)[1])
+                continue
+            break
         out += data[taken if taken else YAZ0_HEADER:start[0]]
         out += yaz0_literals(bytes(expected[start[1]:end[1]]))
         taken = end[0]

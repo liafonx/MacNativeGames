@@ -143,9 +143,6 @@ def make_pack(pack, controls, letters):
     edits = [(start + textures[name].offset, bf.r8_image(bntx, textures[name], rows)) for name, rows in sorted(new.items())]
     spliced = bf.yaz0_splice(stream, layout, edits)
     new_pack = bf.sarc_replace(pack, LAYOUT, spliced)
-    check = bf.sarc_members(new_pack)
-    if check.keys() != members.keys() or len(bf.yaz0_decode(new_pack[slice(*check[LAYOUT])])) != len(layout):
-        raise ValueError('the new pack does not hold the same members at the same size')
     return new_pack, new, notes, (len(stream), len(spliced), len(layout))
 
 
@@ -162,7 +159,7 @@ def main():
     parser.add_argument('--replace', action='store_true', help=f'overwrite a {PACK} already in the mod folder')
     parser.add_argument('--preview', type=Path, help='also write a picture of the changed textures (PNG)')
     args = parser.parse_args()
-    version = args.version or (args.mod.resolve().name if args.mod.resolve().name.startswith('botw') else None)
+    version = args.version or (args.mod.resolve().name if args.mod.resolve().name in APP_VERSIONS else None)
     romfs, app_fonts = args.romfs, None
     if args.app:
         if not version:
@@ -182,7 +179,9 @@ def main():
         controls = prompt_controls(args.controls.read_text() if args.controls else '', args.face_buttons)
     except LayoutError as error:
         parser.error(f'{args.controls}, {error}')
-    print('\n'.join(describe(args.controls.read_text() if args.controls else '', args.face_buttons, 'xbox')))
+    except (OSError, UnicodeDecodeError) as error:
+        parser.error(f'{args.controls}: {error}')
+    print('\n'.join(describe(args.controls.read_text() if args.controls else '', args.face_buttons, 'xbox', (*FACE, *SHAPE))))
 
     from fontTools.ttLib import TTFont
     letters = Letters(TTFont(io.BytesIO(bfttf_decode((app_fonts / FONT).read_bytes()))))

@@ -11,9 +11,8 @@ sys.path.insert(0, str(ROOT/'games/totk/scripts'))
 try:
     import botw_formats as bf
     import botw_prompts as bp
-except SystemExit as error:     # make_romfs_patches needs Python 3.14 (compression.zstd)
+except (SystemExit, ImportError):     # make_romfs_patches needs Python 3.14 (compression.zstd)
     bf = bp = None
-    SKIP = str(error)
 import prompt_layout as pl      # noqa: E402
 
 NAMES = ['Nt_KeyTexA_00^d', 'Nt_KeyTexB_00^d', 'Nt_KeyTexX_00^d', 'Nt_KeyTexY_00^d', 'Nt_KeyTexL_00^d', 'Nt_KeyTexZL_00^d',
@@ -161,6 +160,15 @@ class Yaz0Splice(unittest.TestCase):
             expected[o:o + len(b)] = b
         self.assertEqual(bf.yaz0_decode(bf.yaz0_splice(self.stream, self.data, edits)), bytes(expected))
 
+    def test_edits_a_little_further_apart_than_the_reach(self):
+        for gap in (bf.REACH + 1, bf.REACH + 50, bf.REACH + 400, bf.REACH + 1500):
+            edits = [(20000, b'P' * 4), (20000 + gap, b'Q' * 4)]
+            expected = bytearray(self.data)
+            for o, b in edits:
+                expected[o:o + len(b)] = b
+            with self.subTest(gap=gap):
+                self.assertEqual(bf.yaz0_decode(bf.yaz0_splice(self.stream, self.data, edits)), bytes(expected))
+
     def test_edit_at_the_very_start_and_the_very_end(self):
         for offset in (0, len(self.data) - 5):
             result = bf.yaz0_splice(self.stream, self.data, [(offset, b'\x99' * 5)])
@@ -286,8 +294,8 @@ class MakePack(unittest.TestCase):
         controls = pl.prompt_controls('menu = none\nl1 = none\nl2 = none\n', 'position')
         controls['lstick'] = None
         new_pack, changed, notes, _ = bp.make_pack(self.pack, controls, StubLetters())
-        self.assertNotIn(NAMES[4], changed)       # L: nothing drives l1's... L has no driver
-        self.assertTrue(any('L:' in n for n in notes))
+        self.assertNotIn(NAMES[4], changed)       # nothing drives L, so its picture stays
+        self.assertTrue(any(n.startswith('L:') for n in notes))
 
     def test_a_texture_in_another_format_stops_the_tool(self):     # negative control
         bad = sarc({'timg/__Combined.bntx': bntx({n: picture(1) for n in NAMES}, fmt=0x1d01)})
