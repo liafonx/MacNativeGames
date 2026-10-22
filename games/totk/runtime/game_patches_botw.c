@@ -585,9 +585,67 @@ static void patch_phone_render(Module *m) {
     put_word(m, PHONE_RENDER + 4, 0xf2e88e08u, "handheld render size");   /* movk x8, #0x4470, lsl #48: 960.0 */
     fprintf(stderr, "[botw] handheld render size 960x540, the game's own upscale to the 1280x720 canvas (phone)\n");
 }
+/* TOTK_PCHTXT=<file>: an emulator ExeFS patch for main in pchtxt form, as community mods ship them, for trying them here;
+   the same file format and reading as TOTK's (game_patches.c patch_pchtxt) and as the build's --mod (scripts/mod_exefs.py).
+   Mac only, 1.9.0 only. Its @nsobid must be main's build id, read from the extracted ExeFS (extracted/botw190/exefs/main at
+   0x40); the lines after @enabled are "<main address> <bytes>", @disabled switches the lines that follow off again, @stop ends
+   the file, "@flag offset_shift 0x100" must come before the first patch line (the addresses leave out the NSO header only the
+   IPS form counts), "@flag print_values" is accepted and any other flag stops the start. The bytes are written into the
+   rewritten main the app runs, before this file's own patches, whose checks of the original words then refuse a file that
+   overlaps them. */
+#ifdef GAME_BOTW190
+static void patch_pchtxt(Module *m) {
+    const char *path = getenv("TOTK_PCHTXT");
+    if (!path || !*path) return;
+    FILE *f = fopen(path, "r");
+    if (!f) runtime_fail("TOTK_PCHTXT: cannot open the file");
+    char nso[256], want[41] = {0}; uint8_t id[20];
+    snprintf(nso, sizeof nso, "extracted/%s/exefs/main", TOTK_GAME_DIR);
+    FILE *n = fopen(nso, "rb");
+    if (!n || fseek(n, 0x40, SEEK_SET) || fread(id, 1, sizeof id, n) != sizeof id) runtime_fail("TOTK_PCHTXT: cannot read main's build id from extracted/<version>/exefs/main");
+    fclose(n);
+    for (int i = 0; i < 20; i++) snprintf(want + 2 * i, 3, "%02X", id[i]);
+    char line[1024]; int enabled = 0, matched = 0, shifted = 0; unsigned count = 0, bytes = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (!strncmp(line, "@nsobid-", 8)) {
+            if (strncasecmp(line + 8, want, 40)) runtime_fail("TOTK_PCHTXT is for another build of main");
+            matched = 1; continue;
+        }
+        if (!strncmp(line, "@enabled", 8)) { enabled = 1; continue; }
+        if (!strncmp(line, "@disabled", 9)) { enabled = 0; continue; }
+        if (!strncmp(line, "@flag", 5)) {
+            char name[64] = "", value[64] = "";
+            sscanf(line + 5, "%63s %63s", name, value);
+            if (!strcmp(name, "print_values")) continue;
+            if (strcmp(name, "offset_shift")) runtime_fail("TOTK_PCHTXT: only @flag offset_shift 0x100 and print_values are supported");
+            if (strtoull(value, NULL, 16) != 0x100) runtime_fail("TOTK_PCHTXT: @flag offset_shift must be 0x100 (the addresses are main addresses)");
+            shifted = 1; continue;
+        }
+        if (!strncmp(line, "@stop", 5)) break;
+        unsigned long long at; char hex[512];
+        if (!enabled || line[0] == '@' || sscanf(line, "%llx %511s", &at, hex) != 2) continue;
+        size_t len = strlen(hex);
+        if (!matched) runtime_fail("TOTK_PCHTXT: patches before its @nsobid line");
+        if (!shifted) runtime_fail("TOTK_PCHTXT: no @flag offset_shift 0x100 before the first patch line");
+        if (len % 2 || at + len / 2 > m->file_size) runtime_fail("TOTK_PCHTXT: a patch line is malformed or outside main");
+        for (size_t i = 0; i < len / 2; i++) { unsigned v; sscanf(hex + 2 * i, "%2x", &v); m->base[at + i] = (uint8_t)v; }
+        count++; bytes += (unsigned)(len / 2);
+    }
+    fclose(f);
+    if (!matched) runtime_fail("TOTK_PCHTXT has no @nsobid line");
+    fprintf(stderr, "[botw] TOTK_PCHTXT %s: %u patches, %u bytes in main (build id %s)\n", path, count, bytes, want);
+}
+#else
+static void patch_pchtxt(Module *m) {
+    (void)m;
+    const char *path = getenv("TOTK_PCHTXT");
+    if (path && *path) runtime_fail("TOTK_PCHTXT: only Breath of the Wild 1.9.0 so far");
+}
+#endif
 void runtime_game_patches(Module *m) {
     fprintf(stderr, "[botw] %s game-code patches\n", TOTK_GAME_VERSION);
     runtime_survey_init(m);   /* TOTK_SURVEY=1: survey pos / move (world_survey.c) */
+    patch_pchtxt(m);   /* first: the patches below check the original words they replace */
     if (!patch_output_res(m)) patch_render_1080(m);
     patch_phone_render(m);
     botw_aspect_install(m);
