@@ -52,6 +52,7 @@ try:
 except ImportError:
     sys.exit('needs Python 3.14 (compression.zstd): run it with python3.14')
 from make_mod_manifest import VERSIONS, read_index, write_manifest
+from sarc_repack import repack
 from prompt_layout import FACE_MODES, LayoutError, describe, prompt_controls
 
 try:
@@ -119,35 +120,6 @@ def bfotf_encode(otf, key):
     for i in range(0, size - size % 4, 4):
         out += struct.pack('<I', struct.unpack_from('<I', otf, i)[0] ^ key)
     return bytes(out + otf[size - size % 4:])
-
-
-def repack(sarc, name, blob):
-    """The SARC with member `name` replaced by `blob`, every other member byte-identical, in the original order and alignment."""
-    start = struct.unpack_from('<I', sarc, 12)[0]
-    fat = 0x14; count = struct.unpack_from('<H', sarc, fat + 6)[0]
-    nodes = [list(struct.unpack_from('<4I', sarc, fat + 12 + i * 16)) for i in range(count)]
-    members = sarc_members(sarc); by_range = {(lo, hi): k for k, (lo, hi) in members.items()}
-    blobs = [blob if by_range[(start + n[2], start + n[3])] == name else sarc[start + n[2]:start + n[3]] for n in nodes]
-
-    def alignment(offset):
-        a = 1
-        while offset % (a * 2) == 0 and a < 0x2000:
-            a *= 2
-        return a
-    data, placed = bytearray(), {}
-    for i in sorted(range(count), key=lambda i: nodes[i][2]):
-        a = alignment(nodes[i][2]) if nodes[i][2] else 1
-        while len(data) % a:
-            data += b'\0'
-        placed[i] = (len(data), len(data) + len(blobs[i])); data += blobs[i]
-    head = bytearray(sarc[:start])
-    for i in range(count):
-        struct.pack_into('<II', head, fat + 12 + i * 16 + 8, *placed[i])
-    out = bytearray(bytes(head) + bytes(data)); struct.pack_into('<I', out, 8, len(out)); out = bytes(out)
-    check = sarc_members(out)
-    for k, (lo, hi) in members.items():
-        assert out[check[k][0]:check[k][1]] == (blob if k == name else sarc[lo:hi]), k
-    return out
 
 
 # ---- drawing (units of the font's 1000-unit em; the round A/B/X/Y icons fill y 20..585) ----

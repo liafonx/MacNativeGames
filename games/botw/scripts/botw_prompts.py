@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Make a RomFS mod that shows Xbox button names in Breath of the Wild's on-screen prompts, for the buttons you really press.
+
+The game draws its main prompts ("A: Talk") as 48x48 textures of the button, one texture for each of A, B, X, Y, L, ZL and
+the left stick press, in Pack/Bootup.pack > Layout/Common.sblarc > timg/__Combined.bntx. A button's texture is a white shape
+with its letter cut out. This tool reads that archive from your own RomFS and, for each Switch button, shows the Xbox button
+you press for it (the chain of prompt_layout.py: face buttons by position or label, then your controls.txt):
+  A B X Y   take the picture of the letter you press (the four face textures trade places);
+  L, ZL     keep the game's key shape, and the letter is replaced by LB, LT, RB or RT;
+  left stick press   keeps its shape, and the letter becomes LS (or RS).
+Letters are drawn from the Switch's own system font, which your Breath of the Wild app already holds (shared-fonts/
+0-standard.bfttf). Nothing of the game ships with the project: every picture comes from your files, and the result is written
+only into the mod folder you name (then manifest.tsv, made with make_mod_manifest.py; runtime/romfs.c checks it at start).
+Not changed: R, ZR and the right stick press have no texture of their own, and the + and - icons and the icons inside text
+are font glyphs (Font/Font_*.sbfarc): they keep their Switch look.
+
+Needs Python 3.14 and fontTools (python3.14 -m pip install fonttools). An existing Pack/Bootup.pack in the mod folder (another
+mod's, or an earlier run) is only overwritten with --replace.
+usage: botw_prompts.py <mod folder> (--app <Breath of the Wild.app> | --romfs <folder>) [--version botw190]
+                       [--face-buttons position|label] [--controls controls.txt] [--replace] [--preview picture.png]
+"""
+import argparse
+import io
+import struct
+import sys
+import zlib
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import botw_formats as bf                                                        # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'totk' / 'scripts'))
+from make_mod_manifest import APP_VERSIONS, read_index, write_manifest          # noqa: E402
+from prompt_layout import FACE_MODES, LayoutError, describe, prompt_controls    # noqa: E402
+
+PACK, LAYOUT, BNTX = 'Pack/Bootup.pack', 'Layout/Common.sblarc', 'timg/__Combined.bntx'
+FACE = {slot: f'Nt_KeyTex{slot.upper()}_00^d' for slot in 'abxy'}               # Switch button -> its texture
+SHAPE = {'l': ['Nt_KeyTexL_00^d'], 'zl': ['Nt_KeyTexZL_00^d'], 'lstick': ['Nt_KeyTexLSt_00^d', 'Nt_KeyTexLSt_01^d']}
+XBOX_TEXT = {'a': 'A', 'b': 'B', 'x': 'X', 'y': 'Y', 'l1': 'LB', 'r1': 'RB', 'l2': 'LT', 'r2': 'RT', 'l3': 'LS', 'r3': 'RS'}
+FONT = 'shared-fonts/0-standard.bfttf'
+BFTTF_MAGIC = 0x7f9a0218
+SIZE = 48
+
+
+def bfttf_decode(blob):
+    """A BFTTF (the Switch's system font files): big-endian words XOR-ed with word0 ^ 0x7f9a0218; word1 is the font's size."""
+    key = struct.unpack_from('>I', blob, 0)[0] ^ BFTTF_MAGIC
+    size = struct.unpack_from('>I', blob, 4)[0] ^ key
+    body = blob[8:8 + size]
+    words = struct.unpack(f'>{size // 4}I', body[:size - size % 4])
+    return struct.pack(f'>{len(words)}I', *(w ^ key for w in words)) + body[size - size % 4:]
+
+
+class Letters:
+    """Outlines of the system font, as pixel contours."""
+    def __init__(self, font):
+        from fontTools.pens.recordingPen import RecordingPen
+        self.font, self.pen = font, RecordingPen
+        self.glyphs, self.cmap = font.getGlyphSet(), font.getBestCmap()
+        self.em = font['head'].unitsPerEm
+
+    def text(self, label, cap, cx, cy, max_width):
+        """Contours of `label` with capital height `cap` pixels, centred on (cx, cy) (pixels, y down), at most max_width wide."""
+        capital = self.pen(); self.glyphs[self.cmap[ord('H')]].draw(capital)
+        ys = [p[1] for _, args in capital.value for p in args if p]
+        scale = cap / (max(ys) - min(ys))
+        x, parts = 0.0, []
+        for ch in label:
+            name = self.cmap[ord(ch)]
+            rec = self.pen(); self.glyphs[name].draw(rec)
+            parts.append((rec.value, x)); x += self.font['hmtx'][name][0]
+        width = (x - 0) * scale
+        if width > max_width:
+            scale *= max_width / width; width = max_width
+        contours = []
+        for value, offset in parts:
+            for contour in bf.flatten(value):
+                contours.append([(cx - width / 2 + (px + offset) * scale, cy + cap / 2 - py * scale + (min(ys) * scale)) for px, py in contour])
+        return contours
+
+
+def png(rows, path, scale=4):
+    raw = b''.join((b'\0' + b''.join(bytes([v]) * scale for v in r)) * scale for r in rows)
+    def chunk(tag, data):
+        return struct.pack('>I', len(data)) + tag + data + struct.pack('>I', zlib.crc32(tag + data))
+    Path(path).write_bytes(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', len(rows[0]) * scale, len(rows) * scale, 8, 0, 0, 0, 0))
+                           + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
+
+
+def relabel(rows, label, letters):
+    """The key `rows` with its old letter replaced by `label`: the marks (the old letter) are filled white, and the new letter
+    is cut out in the same place, as high as 70 % of the old one."""
+    marks = bf.enclosed_marks(rows)
+    if not marks:
+        raise ValueError('no letter found in the texture')
+    points = set().union(*marks)
+    xs, ys = [p[0] for p in points], [p[1] for p in points]
+    out = [bytearray(r) for r in rows]
+    for x, y in points:
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if 0 <= y + dy < SIZE and 0 <= x + dx < SIZE:
+                    out[y + dy][x + dx] = 255
+    cx, cy = (min(xs) + max(xs) + 1) / 2, (min(ys) + max(ys) + 1) / 2
+    cut = bf.coverage(letters.text(label, (max(ys) - min(ys) + 1) * 0.7, cx, cy, 26), SIZE)
+    # The game's letters are bold and the system font's regular: thicken the cut by about half a pixel.
+    cut = [bytes(max(c, int(0.6 * max(cut[yy + dy][xx + dx] for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0))
+                                      if 0 <= yy + dy < SIZE and 0 <= xx + dx < SIZE)))
+                 for xx, c in enumerate(row)) for yy, row in enumerate(cut)]
+    return [bytes(min(o, 255 - c) for o, c in zip(out_row, cov_row)) for out_row, cov_row in zip(out, cut)]
+
+
+def plan(bntx, textures, controls, letters):
+    """texture name -> new pixel rows for the prompts `controls` (prompt_layout.prompt_controls) asks for, and notes."""
+    new, notes = {}, []
+    for slot, name in FACE.items():
+        pad = controls[slot]
+        if pad in FACE:   # a face button: take the picture of the letter you press
+            new[name] = bf.r8_read(bntx, textures[FACE[pad]])
+        else:
+            notes.append(f'{slot.upper()}: {pad or "nothing"} has no face picture; the Switch icon stays')
+    for slot, names in SHAPE.items():
+        label = XBOX_TEXT.get(controls[slot])
+        if label is None:
+            notes.append(f'{slot.upper()}: {controls[slot] or "nothing"} has no Xbox letter here; the Switch icon stays')
+            continue
+        for name in names:
+            new[name] = relabel(bf.r8_read(bntx, textures[name]), label, letters)
+    return new, notes
+
+
+def make_pack(pack, controls, letters):
+    """Pack/Bootup.pack with the prompts of `controls` (prompt_layout.prompt_controls) redrawn. Returns (the new pack, texture
+    name -> new pixel rows, notes, (Common.sblarc size before, after, decompressed size)). Only the changed textures' bytes
+    differ: every other byte of the decompressed layout archive, and every other member of the pack, is the original."""
+    members = bf.sarc_members(pack)
+    stream = pack[slice(*members[LAYOUT])]
+    layout = bf.yaz0_decode(stream)
+    inner = bf.sarc_members(layout)
+    start = inner[BNTX][0]
+    bntx = layout[start:inner[BNTX][1]]
+    textures = bf.bntx_textures(bntx)
+    new, notes = plan(bntx, textures, controls, letters)
+    edits = [(start + textures[name].offset, bf.r8_image(bntx, textures[name], rows)) for name, rows in sorted(new.items())]
+    spliced = bf.yaz0_splice(stream, layout, edits)
+    new_pack = bf.sarc_replace(pack, LAYOUT, spliced)
+    check = bf.sarc_members(new_pack)
+    if check.keys() != members.keys() or len(bf.yaz0_decode(new_pack[slice(*check[LAYOUT])])) != len(layout):
+        raise ValueError('the new pack does not hold the same members at the same size')
+    return new_pack, new, notes, (len(stream), len(spliced), len(layout))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    parser.add_argument('mod', type=Path, help='the mod folder to write into (other files in it are kept and listed too)')
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('--app', type=Path, help='the built Breath of the Wild.app')
+    source.add_argument('--romfs', type=Path, help='a folder holding romfs.bin and runtime-index.bin')
+    parser.add_argument('--version', choices=[v for v in APP_VERSIONS if v.startswith('botw')], help='the game version (default: the mod folder name)')
+    parser.add_argument('--face-buttons', choices=FACE_MODES, default='position',
+                        help='how the controller\'s face buttons map (the runtime\'s TOTK_FACE_BUTTONS, or key 6): position (Xbox, PlayStation; default) or label (Switch)')
+    parser.add_argument('--controls', type=Path, help='your controls.txt (the prompts then show the button you press)')
+    parser.add_argument('--replace', action='store_true', help=f'overwrite a {PACK} already in the mod folder')
+    parser.add_argument('--preview', type=Path, help='also write a picture of the changed textures (PNG)')
+    args = parser.parse_args()
+    version = args.version or (args.mod.resolve().name if args.mod.resolve().name.startswith('botw') else None)
+    romfs, app_fonts = args.romfs, None
+    if args.app:
+        if not version:
+            parser.error('name the game version with --version (or name the mod folder botw160 or botw190)')
+        romfs = args.app / f'Contents/Resources/totk/extracted/{version}/romfs'
+        app_fonts = args.app / 'Contents/Resources/totk/extracted/firmware'
+    if app_fonts is None:
+        app_fonts = romfs.parent.parent / 'firmware'
+    for need in ('romfs.bin', 'runtime-index.bin'):
+        if not (romfs / need).is_file():
+            parser.error(f'{romfs / need} not found')
+    if not (app_fonts / FONT).is_file():
+        parser.error(f'{app_fonts / FONT} not found (the app\'s copy of the Switch system fonts)')
+    if (args.mod / PACK).exists() and not args.replace:
+        parser.error(f'{args.mod / PACK} already exists (another mod\'s, or an earlier run): pass --replace to overwrite it')
+    try:
+        controls = prompt_controls(args.controls.read_text() if args.controls else '', args.face_buttons)
+    except LayoutError as error:
+        parser.error(f'{args.controls}, {error}')
+    print('\n'.join(describe(args.controls.read_text() if args.controls else '', args.face_buttons, 'xbox')))
+
+    from fontTools.ttLib import TTFont
+    letters = Letters(TTFont(io.BytesIO(bfttf_decode((app_fonts / FONT).read_bytes()))))
+    index = read_index(romfs / 'runtime-index.bin')
+    with (romfs / 'romfs.bin').open('rb') as image:
+        offset, size = index[PACK]; image.seek(offset); pack = image.read(size)
+    new_pack, new, notes, layout_sizes = make_pack(pack, controls, letters)
+    for note in notes:
+        print('note:', note)
+    target = args.mod / PACK
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(new_pack)
+    print(f'{target}: {len(new)} textures changed; {PACK} {len(pack)} -> {len(new_pack)} bytes, {LAYOUT} {layout_sizes[0]} -> '
+          f'{layout_sizes[1]} (decompressed {layout_sizes[2]} bytes, unchanged)')
+    if args.preview and new:
+        names = sorted(new)
+        rows = [b''] * SIZE
+        for name in names:
+            rows = [a + b + bytes([128]) for a, b in zip(rows, new[name])]
+        png(rows, args.preview)
+        print(f'{args.preview}: {", ".join(n.split("^")[0].replace("Nt_KeyTex", "") for n in names)}')
+    found = write_manifest(args.mod, romfs)
+    if found.misspelt:
+        sys.exit('manifest not written: ' + ', '.join(f'{a} (the RomFS has {b})' for a, b in found.misspelt))
+    print(f'{args.mod / "manifest.tsv"}: {len(found.lines)} files ({len(found.lines) - len(found.added)} replaced, {len(found.added)} added)')
+
+
+if __name__ == '__main__':
+    main()
