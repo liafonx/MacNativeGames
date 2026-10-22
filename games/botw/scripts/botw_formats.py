@@ -1,5 +1,5 @@
 """File formats the Breath of the Wild prompt tool reads and writes (botw_prompts.py): Yaz0 with a local re-encode, BNTX
-textures (Switch block-linear R8) and the glyph rasterizer. Plain Python, no game data, no fontTools.
+textures (Switch block-linear R8 and R8G8) and the glyph rasterizer. Plain Python, no game data, no fontTools.
 
 Yaz0 is the game's compression. A compressed archive is changed by decoding it, editing bytes in place and writing the stream
 back with yaz0_splice(): only the stretch around the edit is encoded again (as literals), everything before and after it keeps
@@ -95,6 +95,7 @@ def yaz0_splice(data, decoded, edits):
 
 # ---- BNTX -------------------------------------------------------------------------------------------------------------
 R8_UNORM = 0x201
+R8G8_UNORM = 0x901      # two bytes a pixel: grey shading, then alpha (the controller pictures)
 BC4_UNORM = 0x1d01
 TILE_BLOCK_LINEAR = 0
 
@@ -159,6 +160,35 @@ def r8_image(bntx, texture, rows):
     return bytes(out)
 
 
+def check_rg8(texture):
+    if (texture.format, texture.tile_mode, texture.mips, texture.layers, texture.depth) != (R8G8_UNORM, TILE_BLOCK_LINEAR, 1, 1, 1):
+        raise ValueError(f'{texture.name}: expected a plain single-mip R8G8 block-linear texture, got format 0x{texture.format:x}, '
+                         f'tile mode {texture.tile_mode}, {texture.mips} mips, {texture.layers} layers')
+
+
+def rg8_read(bntx, texture):
+    """The pixels of an R8G8 texture as two pictures (grey rows, alpha rows), each a list of bytes, top row first."""
+    check_rg8(texture)
+    base, w = texture.offset, texture.width
+    at = [[base + gob_address(x, y, w, 2, texture.block_height) for x in range(w)] for y in range(texture.height)]
+    return [bytes(bntx[a] for a in row) for row in at], [bytes(bntx[a + 1] for a in row) for row in at]
+
+
+def rg8_image(bntx, texture, grey, alpha):
+    """The texture's image bytes (image_size of them, from the original) with the pixels replaced by the `grey` and `alpha` rows;
+    the padding bytes stay as they were."""
+    check_rg8(texture)
+    for rows in (grey, alpha):
+        if len(rows) != texture.height or any(len(r) != texture.width for r in rows):
+            raise ValueError(f'{texture.name}: {texture.width}x{texture.height} pixels expected')
+    out = bytearray(bntx[texture.offset:texture.offset + texture.image_size])
+    for y in range(texture.height):
+        for x in range(texture.width):
+            at = gob_address(x, y, texture.width, 2, texture.block_height)
+            out[at], out[at + 1] = grey[y][x], alpha[y][x]
+    return bytes(out)
+
+
 # ---- rasterizer -------------------------------------------------------------------------------------------------------
 def flatten(operations, steps=12):
     """Contours (lists of points) from fontTools pen operations [(name, args), ...]; curves become `steps` line pieces."""
@@ -195,30 +225,43 @@ def flatten(operations, steps=12):
     return contours
 
 
-def coverage(contours, size, oversample=8):
-    """Coverage 0-255 of a shape over a size x size picture. `contours` are in pixels, x right and y down (nonzero winding: a
+def coverage_rect(contours, width, height, oversample=8):
+    """Coverage 0-255 of a shape over a width x height picture. `contours` are in pixels, x right and y down (nonzero winding: a
     contour wound the other way cuts a hole). Returns rows of bytes, top row first."""
     edges = []
     for contour in contours:
         for (ax, ay), (bx, by) in zip(contour, contour[1:] + contour[:1]):
             if ay != by:
-                edges.append((ax, ay, bx, by))
+                edges.append((min(ay, by), max(ay, by), ax, ay, bx, by))
     n = oversample
     rows = []
-    for py in range(size):
-        hits = [0] * (size * n)
+    for py in range(height):
+        near = [e for e in edges if e[0] < py + 1 and e[1] >= py]
+        if not near:
+            rows.append(bytes(width))
+            continue
+        steps = [0] * (width * n + 1)       # the change of the hit count at each sub-pixel; summed up below
         for sy in range(n):
             y = py + (sy + 0.5) / n
             crossings = sorted((ax + (y - ay) * (bx - ax) / (by - ay), 1 if by > ay else -1)
-                               for ax, ay, bx, by in edges if (ay <= y < by) or (by <= y < ay))
+                               for lo, hi, ax, ay, bx, by in near if (ay <= y < by) or (by <= y < ay))
             winding, previous = 0, 0.0
             for x, direction in crossings:
                 if winding:
-                    for sx in range(max(0, round(previous * n)), min(size * n, round(x * n))):
-                        hits[sx] += 1
+                    start, stop = max(0, round(previous * n)), min(width * n, round(x * n))
+                    if stop > start:
+                        steps[start] += 1; steps[stop] -= 1
                 winding += direction; previous = x
-        rows.append(bytes(min(255, round(255 * sum(hits[px * n:(px + 1) * n]) / (n * n))) for px in range(size)))
+        hits, total = [], 0
+        for step in steps[:-1]:
+            total += step; hits.append(total)
+        rows.append(bytes(min(255, round(255 * sum(hits[px * n:(px + 1) * n]) / (n * n))) for px in range(width)))
     return rows
+
+
+def coverage(contours, size, oversample=8):
+    """coverage_rect() over a square size x size picture."""
+    return coverage_rect(contours, size, size, oversample)
 
 
 def enclosed_marks(rows, window=(8, 8, 40, 40), dark=0xE0, largest=400):

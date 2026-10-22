@@ -358,6 +358,21 @@ class FontGlyphs(unittest.TestCase):
             self.assertLess(max(abs(x - y) for rw, rg in zip(want, got) for x, y in zip(rw, rg)), 130)
             self.assertNotEqual(font.get(old_rows, a), got)
 
+    @unittest.skipIf(mbi is None, 'needs fontTools (the Menu and View drawers come from make_button_icons.py)')
+    def test_menu_and_view_discs_sit_where_the_games_disc_sits(self):
+        # The game's + and - glyphs fill only the left part of their cell and the game draws only that part (a disc at the middle of
+        # the cell was cut off): the new disc keeps the old one's place.
+        old = [bytes(255 if (x - 15) ** 2 + (y - 22) ** 2 <= 13 ** 2 else 0 for x in range(50)) for y in range(50)]
+        for kind in ('menu', 'view'):
+            new = bp.button_cell(kind, old)
+            xs = [x for row in new for x, v in enumerate(row) if v > 128]
+            ys = [y for y, row in enumerate(new) for v in row if v > 128]
+            self.assertLessEqual(abs((min(xs) + max(xs)) / 2 - 15), 2)
+            self.assertLessEqual(abs((min(ys) + max(ys)) / 2 - 22), 2)
+            self.assertLess(max(xs), 30)                                        # nothing in the half the game does not draw
+        with self.assertRaises(ValueError):                                   # negative control: a blank cell has no disc
+            bp.button_cell('menu', [bytes(50)] * 50)
+
     def test_unknown_style_is_refused(self):      # negative control
         data = bffnt(self.sheet())
         with self.assertRaises(ValueError):
@@ -415,7 +430,7 @@ class MakePack(unittest.TestCase):
         return {n: bf.r8_read(blob, t) for n, t in bf.bntx_textures(blob).items()}
 
     def test_default_layout_trades_the_face_pictures_and_redraws_the_keys(self):
-        new_pack, changed, notes, _ = bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters())
+        new_pack, changed, _, notes, _ = bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters())
         got = self.pictures(new_pack)
         self.assertEqual(got[NAMES[0]], self.pics[NAMES[1]])      # Switch A shows the Xbox B picture (position mode)
         self.assertEqual(got[NAMES[1]], self.pics[NAMES[0]])
@@ -428,13 +443,13 @@ class MakePack(unittest.TestCase):
 
     def test_owner_layout_by_label(self):
         owner = 'north = a\nsouth = x\nwest = y\neast = b\n'
-        new_pack, _, _, _ = bp.make_pack(self.pack, pl.prompt_controls(owner, 'label'), StubLetters())
+        new_pack, _, _, _, _ = bp.make_pack(self.pack, pl.prompt_controls(owner, 'label'), StubLetters())
         got = self.pictures(new_pack)
         self.assertEqual((got[NAMES[0]], got[NAMES[1]], got[NAMES[2]], got[NAMES[3]]),
                          (self.pics[NAMES[2]], self.pics[NAMES[0]], self.pics[NAMES[1]], self.pics[NAMES[3]]))   # A <- X, B <- A, X <- B, Y <- Y
 
     def test_everything_else_is_the_original(self):
-        new_pack, _, _, sizes = bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters())
+        new_pack, _, _, _, sizes = bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters())
         before, after = bf.sarc_members(self.pack), bf.sarc_members(new_pack)
         self.assertEqual(before.keys(), after.keys())
         for name in before:
@@ -451,7 +466,7 @@ class MakePack(unittest.TestCase):
     def test_a_button_nothing_drives_keeps_its_picture(self):
         controls = pl.prompt_controls('menu = none\nl1 = none\nl2 = none\n', 'position')
         controls['lstick'] = None
-        new_pack, changed, notes, _ = bp.make_pack(self.pack, controls, StubLetters())
+        new_pack, changed, _, notes, _ = bp.make_pack(self.pack, controls, StubLetters())
         self.assertNotIn(NAMES[4], changed)       # nothing drives L, so its picture stays
         self.assertTrue(any(n.startswith('L:') for n in notes))
 
@@ -480,7 +495,7 @@ class MakePackPlayStation(unittest.TestCase):
     def test_face_textures_are_drawn_on_discs_like_the_originals_and_the_rest_is_the_original(self):
         controls = pl.prompt_controls('', 'position')
         xbox_pack = bp.make_pack(self.pack, controls, StubLetters())[0]
-        new_pack, changed, notes, sizes = bp.make_pack(self.pack, controls, StubLetters(), 'playstation')
+        new_pack, changed, _, notes, sizes = bp.make_pack(self.pack, controls, StubLetters(), 'playstation')
         got, xbox = self.pictures(new_pack), self.pictures(xbox_pack)
         for name in NAMES[:4]:
             self.assertNotEqual(got[name], self.pics[name])
@@ -489,7 +504,9 @@ class MakePackPlayStation(unittest.TestCase):
         for name in NAMES[4:]:
             self.assertNotEqual(got[name], self.pics[name])       # the key got its PlayStation letter
             self.assertEqual(got[name][2], self.pics[name][2])    # the rest of the key is as it was
-        self.assertEqual((sorted(changed), notes), (sorted(NAMES), []))
+        self.assertEqual(sorted(changed), sorted(NAMES))
+        self.assertEqual(len(notes), 1)       # the controller pictures stay the Switch's: PlayStation has no drawing
+        self.assertIn('stay the Switch', notes[0])
         before, after = bf.sarc_members(self.pack), bf.sarc_members(new_pack)
         for name in before:
             if name != 'Layout/Common.sblarc':
@@ -505,7 +522,7 @@ class MakePackPlayStation(unittest.TestCase):
     @unittest.skipIf(mbi is None, 'needs fontTools')
     def test_a_face_button_without_a_playstation_picture_keeps_its_texture(self):
         controls = {**pl.prompt_controls('', 'position'), 'a': 'l1'}      # L1 has no face picture
-        new_pack, changed, notes, _ = bp.make_pack(self.pack, controls, StubLetters(), 'playstation')
+        new_pack, changed, _, notes, _ = bp.make_pack(self.pack, controls, StubLetters(), 'playstation')
         self.assertNotIn(NAMES[0], changed)
         self.assertEqual(self.pictures(new_pack)[NAMES[0]], self.pics[NAMES[0]])
         self.assertTrue(any(n.startswith('A:') and 'PlayStation' not in n and 'face picture' in n for n in notes))

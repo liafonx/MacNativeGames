@@ -272,7 +272,7 @@ Nothing of the game is in the project.
   `--face-buttons`). Without the two options the output is the same as before: the default layout by position. The stick
   presses and the prompts drawn as fixed images keep their Switch icons.
 - Breath of the Wild 1.9.0 (1.6.0 untested): `games/botw/scripts/botw_prompts.py` redraws eight key textures in the Xbox (or PlayStation) style
-  (see below).
+  and, in the Xbox style, the controller pictures of the controller tips page (see below).
 
 Before they write, the tools print one line for each Switch button they change, for example `Switch A <- Xbox X`. `make_button_icons.py` prints these lines when you pass `--face-buttons` or `--controls`. Check these lines.
 
@@ -300,7 +300,7 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 ```
 
 Use `botw160` for 1.6.0. The tool needs Python 3.14 and fontTools (`python3.14 -m pip install fonttools`). It changes
-eight 48x48 key textures in `Pack/Bootup.pack` > `Layout/Common.sblarc`:
+eight 48x48 key textures in `Pack/Bootup.pack` > `Layout/Common.sblarc`, and with `--style xbox` six controller pictures (next section):
 
 - A, B, X and Y take the picture of the letter you press. The four face pictures trade places.
 - L and ZL keep the game's key shape and get LB, LT, RB or RT.
@@ -310,6 +310,32 @@ eight 48x48 key textures in `Pack/Bootup.pack` > `Layout/Common.sblarc`:
 The icons inside text (the controller tips, the pick-up window, camera mode, and R, ZR, + and − in messages) are glyphs of the
 button font, `External_00.bffnt` in every `Font/Font_*.sbfarc` (a BC4 glyph sheet). The tool changes them the same way: A, B,
 X and Y trade places, L, R, ZL and ZR become LB, RB, LT and RT, and + and − become the Xbox Menu and View buttons.
+
+#### The controller pictures of the controller tips page
+
+The layout of the controller tips page (`PaAllControllerTipsNN_00`) has only one controller artwork: the Switch in handheld
+mode. It does not change with the controller you use. It is two pictures, a front view (`Nt_NNillust_00`, 576x288) and the top edge (`Nt_NNillust_01`, 576x100), and labelled lines end on
+their buttons. The hint boxes in play (`PaMessageTipsDrcImageNN_00`) use four 228x228 pieces of the same artwork
+(`Nt_GamePadIllustSnn_00` to `_03`): the left and right shoulder views, and the right and left front of the handheld.
+With `--style xbox` the tool draws an Xbox controller in these six textures. They hold two channels, grey and alpha. The
+pictures come from our own drawing code and the system font, not from the game's art. The tool takes only the places of the
+buttons from the game, so the lines still end on a button of the same kind:
+
+- The left stick, the d-pad (a cross where the Switch has four round buttons), the right stick and the four face buttons are
+  in the places of the Switch's. View and Menu are in the places of − and +. LT, LB, RT and RB are in the places of ZL, L,
+  ZR and R. This puts the guide button, grips and body in an Xbox shape; they are not the Switch's shape.
+- The four face buttons keep the controller's own layout: Y at the top, X on the left, B on the right and A at the bottom
+  (Triangle, Square, Circle and Cross with `--style playstation`). A `controls.txt` changes only which action a button does,
+  so it changes the prompts in the text, not the diamond. Each shoulder button shows the button you press for the Switch
+  button of that place, the same chain as for the prompts; one that nothing drives stays blank.
+- The Pro Controller picture (`amiiboProConNN_00`) is only in the amiibo scan hint, and the Wii U GamePad pictures
+  (`Nt_GamePadIllustS_*`, `amiiboDRCNN_00`) are for the Wii U layouts. The tool leaves them as they are.
+- `--keep-switch-pictures` leaves all six pictures as the Switch's. `--style playstation` also leaves them: it has no
+  drawing, because the DualSense's d-pad sits above its left stick, the other way round from the places the lines end at.
+  The tool prints a note. A picture whose texture is not the size of the drawing stays too (another game version).
+- Not tested in play. Whether the lines line up with the drawn buttons was worked out from the layout and the pictures,
+  and checked by eye on decoded pictures, but nobody has run the game with the mod. The lines move in animations, and
+  that part is also unchecked.
 
 These prompts keep the Switch look:
 
@@ -327,7 +353,7 @@ Only the bytes of the changed textures differ. Every other member and byte of th
 decompressed `Layout/Common.sblarc` keeps its size. The tool writes only `Pack/Bootup.pack`, the seven `Font/Font_*.sbfarc` and `manifest.tsv`. The other
 files in the folder stay and go into the manifest too. It stops when the folder already has one of these files
 (another mod's, or an earlier run). `--replace` overwrites it, and that other mod's changes to the pack are lost: the
-tool always starts from the game's own pack. `--preview <picture.png>` also writes a picture of the changed textures.
+tool always starts from the game's own pack. `--preview <picture.png>` also writes a picture of the changed textures, and `<picture>-pictures.png` with the controller pictures.
 
 #### A mods folder that already holds files
 
@@ -659,7 +685,7 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
   `--face-buttons position|label` 和 `--controls <controls.txt>` 后按你的设置显示（`--controls` 必须同时给
   `--face-buttons`）。不加这两个参数时，输出和以前完全一样：默认的按位置布局。摇杆按下和以固定图片显示的提示仍是
   Switch 图标。
-- 旷野之息 1.9.0（1.6.0 未测试）：`games/botw/scripts/botw_prompts.py` 以 Xbox（或 PlayStation）风格重绘八张按键贴图（见下文）。
+- 旷野之息 1.9.0（1.6.0 未测试）：`games/botw/scripts/botw_prompts.py` 以 Xbox（或 PlayStation）风格重绘八张按键贴图，Xbox 风格还会重绘手柄提示页上的手柄图片（见下文）。
 
 写文件之前，工具会为它改动的每个 Switch 按键打印一行，例如 `Switch A <- Xbox X`；`make_button_icons.py` 在加了 `--face-buttons` 或 `--controls` 时才打印。先核对这些行。
 
@@ -686,7 +712,7 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 ```
 
 1.6.0 用 `botw160`。需要 Python 3.14 和 fontTools（`python3.14 -m pip install fonttools`）。工具修改
-`Pack/Bootup.pack` > `Layout/Common.sblarc` 里的八张 48x48 按键贴图：
+`Pack/Bootup.pack` > `Layout/Common.sblarc` 里的八张 48x48 按键贴图，加 `--style xbox` 时还有六张手柄图片（见下一节）：
 
 - A、B、X、Y 换成你实际要按的那个字母的图案，四张面键图案互换位置。
 - L 和 ZL 保留游戏的按键外形，字母换成 LB、LT、RB 或 RT。
@@ -696,6 +722,26 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 文字里的图标（手柄提示、拾取窗口、相机模式，以及消息里的 R、ZR、+、−）是按键字体的字形，即每个 `Font/Font_*.sbfarc` 里的
 `External_00.bffnt`（一张 BC4 字形表）。工具用同样的办法改它们：A、B、X、Y 互换位置，L、R、ZL、ZR 变成 LB、RB、LT、RT，
 + 和 − 变成 Xbox 的 Menu 和 View 按键。
+
+#### 手柄提示页上的手柄图片
+
+手柄提示页的布局（`PaAllControllerTipsNN_00`）里只有一种手柄图：掌机模式的 Switch，不随你用的手柄变化。它是两张图，正面图（`Nt_NNillust_00`，576x288）和顶边图
+（`Nt_NNillust_01`，576x100），带文字的引线指向图上的按键。游戏里的提示框（`PaMessageTipsDrcImageNN_00`）用同一幅图的四块
+228x228 小图（`Nt_GamePadIllustSnn_00` 到 `_03`）：左右肩部视图，以及掌机右半和左半的正面。加 `--style xbox` 时，工具在这六张贴图里
+画一个 Xbox 手柄。贴图有灰度和透明度两个通道。图案由我们自己的绘图代码和系统字体画成，不是游戏的原图；工具只从游戏取按键的位置，
+所以引线仍然指在同类按键上：
+
+- 左摇杆、十字键（Switch 是四个圆键，这里画成十字）、右摇杆和四个面键在 Switch 按键的位置。View 和 Menu 在 − 和 + 的位置，
+  LT、LB、RT、RB 在 ZL、L、ZR、R 的位置。中间的 Guide 键、握把和机身是 Xbox 的形状，不是 Switch 的形状。
+- 四个面键保持手柄本身的布局：上 Y、左 X、右 B、下 A（`--style playstation` 时是三角、方、圆、叉）。`controls.txt` 只改变按键
+  执行的动作，所以它改变文字里的按键提示，不改变菱形。每个肩键上写的是这个位置上的 Switch 按键你实际要按的按键（和按键提示是同一条
+  规则）；没有任何按键对应的肩键留空。
+- Pro 手柄图（`amiiboProConNN_00`）只出现在 amiibo 扫描提示里，Wii U GamePad 图（`Nt_GamePadIllustS_*`、`amiiboDRCNN_00`）属于
+  Wii U 版的界面，工具都不改。
+- `--keep-switch-pictures` 让这六张图保持 Switch 的样子。`--style playstation` 也不改：它还没有对应的图，因为 DualSense 的十字键在
+  左摇杆上方，和引线所指的位置正好相反。工具会打印一行说明。贴图尺寸与图案不符时（别的游戏版本）也保持原样。
+- 没有在游戏里测试。引线是否对准画出的按键，是根据布局和图片推算并在解码后的图片上用肉眼核对的，没有人带着这个模组运行过游戏；引线在
+  动画里会移动，这部分同样没有核对。
 
 下面这些提示仍是 Switch 样式：
 
@@ -709,7 +755,7 @@ Xbox 字母，所以工具重新画叉、圆、方、三角，放在与游戏原
 只有改动的贴图字节不同：包里其余每个成员、每个字节都是原版，解压后的 `Layout/Common.sblarc` 大小不变。工具只写
 `Pack/Bootup.pack`、七个 `Font/Font_*.sbfarc` 和 `manifest.tsv`；目录里的其他文件保留，也会写进清单。目录里已经有这些文件之一（别的模组的，
 或者上次生成的）时工具会停下。加 `--replace` 会覆盖它，那个模组对这个包的改动也就没了：工具总是从游戏原版的包开始改。
-`--preview <图片.png>` 另外写一张改动贴图的图片。
+`--preview <图片.png>` 另外写一张改动贴图的图片，以及带手柄图片的 `<图片>-pictures.png`。
 
 #### 已有文件的模组目录
 
