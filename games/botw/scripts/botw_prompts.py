@@ -16,11 +16,14 @@ only into the mod folder you name (then manifest.tsv, made with make_mod_manifes
 The icons inside text (controller tips, the pick-up window, camera mode) are glyphs of the button font in Font/Font_*.sbfarc
 (External_00.bffnt, a BC4 glyph sheet): the same changes are made there for A B X Y, L R ZL ZR (as LB RB LT RT), and + and -
 (as the Menu and View buttons, or Options and Create). The stick press glyphs keep their Switch look: their letter touches the ring and is not found.
+With --style xbox the controller pictures of the controller tips page are drawn again too: the handheld Switch (Nt_NNillust_00, _01) and the
+four pieces of the hint boxes (Nt_GamePadIllustSnn_00 to _03) become an Xbox controller drawn by botw_controller_art.py, with the buttons in
+the places of the Switch's, so the game's callout lines still end on a button of the same kind. --keep-switch-pictures leaves them alone.
 
 Needs Python 3.14 and fontTools (python3.14 -m pip install fonttools). An existing Pack/Bootup.pack in the mod folder (another
 mod's, or an earlier run) is only overwritten with --replace.
 usage: botw_prompts.py <mod folder> (--app <Breath of the Wild.app> | --romfs <folder>) [--version botw190]
-                       [--style xbox|playstation] [--face-buttons position|label] [--controls controls.txt] [--replace] [--preview picture.png]
+                       [--style xbox|playstation] [--face-buttons position|label] [--controls controls.txt] [--replace] [--keep-switch-pictures] [--preview picture.png]
 """
 import argparse
 import io
@@ -31,6 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import botw_formats as bf                                                        # noqa: E402
+import botw_controller_art as art                                                # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'totk' / 'scripts'))
 from make_mod_manifest import APP_VERSIONS, read_index, write_manifest          # noqa: E402
 from prompt_layout import FACE_MODES, LayoutError, describe, prompt_controls    # noqa: E402
@@ -39,6 +43,7 @@ PACK, LAYOUT, BNTX = 'Pack/Bootup.pack', 'Layout/Common.sblarc', 'timg/__Combine
 FACE = {slot: f'Nt_KeyTex{slot.upper()}_00^d' for slot in 'abxy'}               # Switch button -> its texture
 SHAPE = {'l': ['Nt_KeyTexL_00^d'], 'zl': ['Nt_KeyTexZL_00^d'], 'lstick': ['Nt_KeyTexLSt_00^d', 'Nt_KeyTexLSt_01^d']}
 XBOX_TEXT = {'a': 'A', 'b': 'B', 'x': 'X', 'y': 'Y', 'l1': 'LB', 'r1': 'RB', 'l2': 'LT', 'r2': 'RT', 'l3': 'LS', 'r3': 'RS'}
+PICTURES = art.PICTURES      # the controller pictures of the controller tips page and the hint boxes
 PLAYSTATION_TEXT = {'a': 'Cross', 'b': 'Circle', 'x': 'Square', 'y': 'Triangle', 'l1': 'L1', 'r1': 'R1', 'l2': 'L2', 'r2': 'R2', 'l3': 'L3', 'r3': 'R3'}
 STYLES = {'xbox': (XBOX_TEXT, 'Xbox'), 'playstation': (PLAYSTATION_TEXT, 'PlayStation')}      # style -> (button names, brand)
 FONT = 'shared-fonts/0-standard.bfttf'
@@ -176,9 +181,27 @@ def plan(bntx, textures, controls, letters, style='xbox'):
     return new, notes
 
 
-def make_pack(pack, controls, letters, style='xbox'):
-    """Pack/Bootup.pack with the prompts of `controls` (prompt_layout.prompt_controls) redrawn. Returns (the new pack, texture
-    name -> new pixel rows, notes, (Common.sblarc size before, after, decompressed size)). Only the changed textures' bytes
+def plan_pictures(bntx, textures, controls, letters, style='xbox'):
+    """texture name -> (grey rows, alpha rows) of the controller pictures of the controller tips page, drawn again as an Xbox
+    controller (botw_controller_art.py), and notes. Only the Xbox style has a drawing; a picture whose texture is not the size
+    of the drawing (another game version) stays as it was."""
+    if style != 'xbox':
+        return {}, [f'the controller pictures of the controller tips page stay the Switch\'s ({style} has no drawing)']
+    new, notes = {}, []
+    for name, ((width, height), draw) in PICTURES.items():
+        texture = textures.get(name)
+        if texture is None or (texture.width, texture.height) != (width, height):
+            notes.append(f'{name}: not found as a {width}x{height} texture; the Switch picture stays')
+            continue
+        bf.check_rg8(texture)
+        new[name] = draw(controls, letters, XBOX_TEXT)
+    return new, notes
+
+
+def make_pack(pack, controls, letters, style='xbox', pictures=True):
+    """Pack/Bootup.pack with the prompts of `controls` (prompt_layout.prompt_controls) redrawn, and with `pictures` the controller
+    pictures of the controller tips page too. Returns (the new pack, texture name -> new pixel rows, texture name -> (grey rows,
+    alpha rows) of the pictures, notes, (Common.sblarc size before, after, decompressed size)). Only the changed textures' bytes
     differ: every other byte of the decompressed layout archive, and every other member of the pack, is the original."""
     members = bf.sarc_members(pack)
     stream = pack[slice(*members[LAYOUT])]
@@ -188,10 +211,12 @@ def make_pack(pack, controls, letters, style='xbox'):
     bntx = layout[start:inner[BNTX][1]]
     textures = bf.bntx_textures(bntx)
     new, notes = plan(bntx, textures, controls, letters, style)
+    drawn, more = plan_pictures(bntx, textures, controls, letters, style) if pictures else ({}, [])
     edits = [(start + textures[name].offset, bf.r8_image(bntx, textures[name], rows)) for name, rows in sorted(new.items())]
+    edits += [(start + textures[name].offset, bf.rg8_image(bntx, textures[name], *drawn[name])) for name in sorted(drawn)]
     spliced = bf.yaz0_splice(stream, layout, edits)
     new_pack = bf.sarc_replace(pack, LAYOUT, spliced)
-    return new_pack, new, notes, (len(stream), len(spliced), len(layout))
+    return new_pack, new, drawn, notes + more, (len(stream), len(spliced), len(layout))
 
 
 FONT_FACE = {'a': 0xE040, 'b': 0xE041, 'x': 0xE042, 'y': 0xE043}              # Switch button -> code point in External_00.bffnt
@@ -200,11 +225,11 @@ FONT_MENU = {'plus': 0xE04B, 'minus': 0xE04C}
 BFFNT = 'External_00.bffnt'
 
 
-def button_cell(kind, size, drawers=None):
-    """The Menu ('menu') or View ('view') button (of `drawers`, default the Xbox ones) as a size x size picture: the same drawing
-    the TOTK tool uses."""
+def button_cell(kind, rows, drawers=None):
+    """The Menu ('menu') or View ('view') button (of `drawers`, default the Xbox ones) as a picture the size of the cell `rows`,
+    on the disc of the game's + or -: the glyph sits in the left part of its cell and the game draws only that part."""
     drawers = drawers or drawers_of('xbox')
-    return draw_button(drawers[kind], size, size / 2, size / 2, size * 0.56)      # the game's + and - are small discs in their cell
+    return draw_button(drawers[kind], len(rows), *disc_of(rows))
 
 
 def font_cells(font, sheet_rows, controls, letters, style='xbox'):
@@ -238,7 +263,7 @@ def font_cells(font, sheet_rows, controls, letters, style='xbox'):
     for slot, code in FONT_MENU.items():
         kind = controls[slot]
         if kind in ('menu', 'view') and code in font.cells:
-            new[code] = button_cell(kind, font.cell, drawers_of(style))
+            new[code] = button_cell(kind, font.get(sheet_rows, code), drawers_of(style))
         else:
             notes.append(f'{slot}: {kind or "nothing"} has no {brand} picture here; the Switch glyph stays')
     return new, notes
@@ -283,6 +308,8 @@ def main():
                         help='how the controller\'s face buttons map (the runtime\'s TOTK_FACE_BUTTONS, or key 6): position (Xbox, PlayStation; default) or label (Switch)')
     parser.add_argument('--controls', type=Path, help='your controls.txt (the prompts then show the button you press)')
     parser.add_argument('--replace', action='store_true', help=f'overwrite a {PACK} or Font/Font_*.sbfarc already in the mod folder')
+    parser.add_argument('--keep-switch-pictures', action='store_true',
+                        help='leave the controller pictures of the controller tips page as the Switch\'s (the Xbox style draws an Xbox controller there)')
     parser.add_argument('--preview', type=Path, help='also write a picture of the changed textures (PNG)')
     args = parser.parse_args()
     version = args.version or (args.mod.resolve().name if args.mod.resolve().name in APP_VERSIONS else None)
@@ -315,13 +342,13 @@ def main():
     index = read_index(romfs / 'runtime-index.bin')
     with (romfs / 'romfs.bin').open('rb') as image:
         offset, size = index[PACK]; image.seek(offset); pack = image.read(size)
-    new_pack, new, notes, layout_sizes = make_pack(pack, controls, letters, args.style)
+    new_pack, new, drawn, notes, layout_sizes = make_pack(pack, controls, letters, args.style, not args.keep_switch_pictures)
     for note in notes:
         print('note:', note)
     target = args.mod / PACK
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(new_pack)
-    print(f'{target}: {len(new)} textures changed; {PACK} {len(pack)} -> {len(new_pack)} bytes, {LAYOUT} {layout_sizes[0]} -> '
+    print(f'{target}: {len(new) + len(drawn)} textures changed ({len(drawn)} controller pictures); {PACK} {len(pack)} -> {len(new_pack)} bytes, {LAYOUT} {layout_sizes[0]} -> '
           f'{layout_sizes[1]} (decompressed {layout_sizes[2]} bytes, unchanged)')
     if args.preview and new:
         names = sorted(new)
@@ -330,6 +357,14 @@ def main():
             rows = [a + b + bytes([128]) for a, b in zip(rows, new[name])]
         png(rows, args.preview)
         print(f'{args.preview}: {", ".join(n.split("^")[0].replace("Nt_KeyTex", "") for n in names)}')
+    if args.preview and drawn:
+        width, rows = max(len(grey[0]) for grey, _ in drawn.values()), []
+        for name in sorted(drawn, key=lambda n: (-len(drawn[n][0][0]), n)):       # the pictures over a mid grey, one under the other
+            rows += [bytes((g * a + 90 * (255 - a)) // 255 for g, a in zip(grey, alpha)).ljust(width, bytes([128])) for grey, alpha in zip(*drawn[name])]
+            rows.append(bytes([128]) * width)
+        target = args.preview.with_name(args.preview.stem + '-pictures.png')
+        png(rows, target, 2)
+        print(f'{target}: {", ".join(sorted(drawn))}')
     fonts = sorted(n for n in index if n.startswith('Font/Font_') and n.endswith('.sbfarc'))
     exists = [n for n in fonts if (args.mod / n).exists()]
     if exists and not args.replace:
