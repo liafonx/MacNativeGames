@@ -13,6 +13,10 @@ try:
     import botw_prompts as bp
 except (SystemExit, ImportError):     # make_romfs_patches needs Python 3.14 (compression.zstd)
     bf = bp = None
+try:
+    import make_button_icons as mbi         # the PlayStation drawings; it needs fontTools and exits without it
+except (SystemExit, ImportError):
+    mbi = None
 import prompt_layout as pl      # noqa: E402
 
 NAMES = ['Nt_KeyTexA_00^d', 'Nt_KeyTexB_00^d', 'Nt_KeyTexX_00^d', 'Nt_KeyTexY_00^d', 'Nt_KeyTexL_00^d', 'Nt_KeyTexZL_00^d',
@@ -126,6 +130,25 @@ def key_picture(letter_box=(20, 16, 28, 30)):
         for x in range(x0, x1):
             rows[y][x] = 0
     return [bytes(r) for r in rows]
+
+
+def disc_picture(cx, cy, radius, size=48):
+    """A black picture with a white disc of the given centre and radius and a dark mark inside, like the game's face buttons."""
+    rows = [bytearray(size) for _ in range(size)]
+    for y in range(size):
+        for x in range(size):
+            if (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= radius ** 2:
+                rows[y][x] = 255
+    for y in range(int(cy) - 4, int(cy) + 5):
+        for x in range(int(cx) - 3, int(cx) + 4):
+            rows[y][x] = 0
+    return [bytes(r) for r in rows]
+
+
+def same_disc(test, new, old, tolerance=2):
+    """The white disc of `new` has the box of the disc of `old` within `tolerance` pixels."""
+    for a, b in zip(bp.disc_of(new), bp.disc_of(old)):
+        test.assertAlmostEqual(a, b, delta=tolerance)
 
 
 class StubLetters:
@@ -335,6 +358,36 @@ class FontGlyphs(unittest.TestCase):
             self.assertLess(max(abs(x - y) for rw, rg in zip(want, got) for x, y in zip(rw, rg)), 130)
             self.assertNotEqual(font.get(old_rows, a), got)
 
+    def test_unknown_style_is_refused(self):      # negative control
+        data = bffnt(self.sheet())
+        with self.assertRaises(ValueError):
+            bp.make_font(yaz0_encode(sarc({'External_00.bffnt': data})), pl.prompt_controls('', 'position'), StubLetters(), 'nintendo')
+
+    @unittest.skipIf(mbi is None, 'needs fontTools')
+    def test_playstation_font_redraws_the_face_glyphs_on_discs_like_the_originals(self):
+        rows = [bytearray(256) for _ in range(4 * 51 + 4)]
+        font = bf.Bffnt(bffnt(rows))
+        for i, code in enumerate(sorted(font.cells)):          # a disc of a different size and place in each cell
+            x0, y0, x1, y1 = font.cell_box(code)
+            disc = disc_picture(25 + i, 25, 14 + i, 50)
+            for y in range(50):
+                rows[y0 + y][x0:x1] = disc[y]
+        data = bffnt(rows)
+        archive = sarc({'External_00.bffnt': data})
+        controls = pl.prompt_controls('', 'position')
+        _, xbox, _ = bp.make_font(yaz0_encode(archive), controls, StubLetters())
+        new_stream, cells, _ = bp.make_font(yaz0_encode(archive), controls, StubLetters(), 'playstation')
+        self.assertEqual(sorted(cells), [0xE040, 0xE041, 0xE042, 0xE043])
+        font = bf.Bffnt(data)
+        old_rows = bf.bc4_read(data[font.sheet_at:], font.texture)
+        new_archive = bf.yaz0_decode(new_stream)
+        new_data = new_archive[slice(*bf.sarc_members(new_archive)['External_00.bffnt'])]
+        new_rows = bf.bc4_read(new_data[font.sheet_at:], font.texture)
+        for code in cells:
+            self.assertNotEqual(font.get(new_rows, code), font.get(old_rows, code))
+            self.assertNotEqual(cells[code], xbox[code])
+            same_disc(self, font.get(new_rows, code), font.get(old_rows, code))
+
 
 @unittest.skipIf(bf is None, 'needs Python 3.14')
 class SystemFont(unittest.TestCase):
@@ -407,6 +460,59 @@ class MakePack(unittest.TestCase):
         pack = sarc({'Layout/Common.sblarc': yaz0_encode(bad)})
         with self.assertRaises(ValueError):
             bp.make_pack(pack, pl.prompt_controls('', 'position'), StubLetters())
+
+
+@unittest.skipIf(bf is None, 'needs Python 3.14')
+class MakePackPlayStation(unittest.TestCase):
+    def setUp(self):
+        self.pics = {n: disc_picture(24 + i * 0.5, 23 + i * 0.5, 17 + i * 0.5) for i, n in enumerate(NAMES[:4])}
+        for n in NAMES[4:]:
+            self.pics[n] = key_picture()
+        self.layout = sarc({'blyt/other.bflyt': sample(3000, 5), 'timg/__Combined.bntx': bntx(self.pics), 'anim/x.bflan': sample(500, 6)})
+        self.pack = sarc({'Pack/other': sample(2000, 7), 'Layout/Common.sblarc': yaz0_encode(self.layout), 'Pack/tail': sample(900, 8)})
+
+    def pictures(self, pack):
+        layout = bf.yaz0_decode(pack[slice(*bf.sarc_members(pack)['Layout/Common.sblarc'])])
+        inner = bf.sarc_members(layout); blob = layout[slice(*inner['timg/__Combined.bntx'])]
+        return {n: bf.r8_read(blob, t) for n, t in bf.bntx_textures(blob).items()}
+
+    @unittest.skipIf(mbi is None, 'needs fontTools')
+    def test_face_textures_are_drawn_on_discs_like_the_originals_and_the_rest_is_the_original(self):
+        controls = pl.prompt_controls('', 'position')
+        xbox_pack = bp.make_pack(self.pack, controls, StubLetters())[0]
+        new_pack, changed, notes, sizes = bp.make_pack(self.pack, controls, StubLetters(), 'playstation')
+        got, xbox = self.pictures(new_pack), self.pictures(xbox_pack)
+        for name in NAMES[:4]:
+            self.assertNotEqual(got[name], self.pics[name])
+            self.assertNotEqual(got[name], xbox[name])
+            same_disc(self, got[name], self.pics[name])
+        for name in NAMES[4:]:
+            self.assertNotEqual(got[name], self.pics[name])       # the key got its PlayStation letter
+            self.assertEqual(got[name][2], self.pics[name][2])    # the rest of the key is as it was
+        self.assertEqual((sorted(changed), notes), (sorted(NAMES), []))
+        before, after = bf.sarc_members(self.pack), bf.sarc_members(new_pack)
+        for name in before:
+            if name != 'Layout/Common.sblarc':
+                self.assertEqual(self.pack[slice(*before[name])], new_pack[slice(*after[name])], name)
+        self.assertEqual(sizes[2], len(self.layout))
+        old = bf.yaz0_decode(self.pack[slice(*before['Layout/Common.sblarc'])])
+        new = bf.yaz0_decode(new_pack[slice(*after['Layout/Common.sblarc'])])
+        a, b = bf.sarc_members(old), bf.sarc_members(new)
+        for name in a:
+            if name != 'timg/__Combined.bntx':
+                self.assertEqual(old[slice(*a[name])], new[slice(*b[name])], name)
+
+    @unittest.skipIf(mbi is None, 'needs fontTools')
+    def test_a_face_button_without_a_playstation_picture_keeps_its_texture(self):
+        controls = {**pl.prompt_controls('', 'position'), 'a': 'l1'}      # L1 has no face picture
+        new_pack, changed, notes, _ = bp.make_pack(self.pack, controls, StubLetters(), 'playstation')
+        self.assertNotIn(NAMES[0], changed)
+        self.assertEqual(self.pictures(new_pack)[NAMES[0]], self.pics[NAMES[0]])
+        self.assertTrue(any(n.startswith('A:') and 'PlayStation' not in n and 'face picture' in n for n in notes))
+
+    def test_unknown_style_is_refused(self):      # negative control
+        with self.assertRaises(ValueError):
+            bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters(), 'nintendo')
 
 
 if __name__ == '__main__':
