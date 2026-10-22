@@ -95,6 +95,7 @@ def yaz0_splice(data, decoded, edits):
 
 # ---- BNTX -------------------------------------------------------------------------------------------------------------
 R8_UNORM = 0x201
+BC4_UNORM = 0x1d01
 TILE_BLOCK_LINEAR = 0
 
 
@@ -118,11 +119,18 @@ def bntx_textures(bntx):
     return {t.name: t for t in (Texture(bntx, m.start()) for m in re.finditer(b'BRTI', bntx))}
 
 
+def gob_address(x, y, width, element, block_height):
+    """Byte offset of element (x, y) in a block-linear (GOB) texture whose elements are `element` bytes (a pixel, or a 4x4 block
+    of a compressed format); `width` is in elements."""
+    xb = x * element
+    gobs_wide = (width * element + 63) // 64
+    gob = (y // (8 * block_height)) * 512 * block_height * gobs_wide + (xb // 64) * 512 * block_height + (y % (8 * block_height) // 8) * 512
+    return gob + ((xb % 64) // 32) * 256 + ((y % 8) // 2) * 64 + ((xb % 32) // 16) * 32 + (y % 2) * 16 + (xb % 16)
+
+
 def r8_address(x, y, width, block_height):
-    """Byte offset of pixel (x, y) in a one-byte-per-pixel block-linear (GOB) texture."""
-    gobs_wide = (width + 63) // 64
-    gob = (y // (8 * block_height)) * 512 * block_height * gobs_wide + (x // 64) * 512 * block_height + (y % (8 * block_height) // 8) * 512
-    return gob + ((x % 64) // 32) * 256 + ((y % 8) // 2) * 64 + ((x % 32) // 16) * 32 + (y % 2) * 16 + (x % 16)
+    """Byte offset of pixel (x, y) in a one-byte-per-pixel block-linear texture."""
+    return gob_address(x, y, width, 1, block_height)
 
 
 def check_r8(texture):
@@ -235,3 +243,105 @@ def enclosed_marks(rows, window=(8, 8, 40, 40), dark=0xE0, largest=400):
             if len(group) <= largest and min(xs) >= window[0] and min(ys) >= window[1] and max(xs) < window[2] and max(ys) < window[3]:
                 marks.append(group)
     return marks
+
+
+# ---- BC4 (one-channel block compression: 8 bytes for a 4x4 block) and the glyph sheet of a BFFNT ----------------------------
+def bc4_decode(block):
+    r0, r1 = block[0], block[1]
+    if r0 > r1:
+        palette = [r0, r1] + [((7 - i) * r0 + i * r1) // 7 for i in range(1, 7)]
+    else:
+        palette = [r0, r1] + [((5 - i) * r0 + i * r1) // 5 for i in range(1, 5)] + [0, 255]
+    bits = int.from_bytes(block[2:8], 'little')
+    return [palette[(bits >> (3 * i)) & 7] for i in range(16)]
+
+
+def bc4_encode(values):
+    """An 8-byte BC4 block for 16 values (the 8-colour mode, endpoints at the extremes, each value to the nearest entry)."""
+    hi, lo = max(values), min(values)
+    if hi == lo:
+        return bytes([hi, lo]) + bytes(6) if hi else bytes(8)
+    palette = [hi, lo] + [((7 - i) * hi + i * lo) // 7 for i in range(1, 7)]
+    bits = 0
+    for i, v in enumerate(values):
+        bits |= min(range(8), key=lambda k: abs(palette[k] - v)) << (3 * i)
+    return bytes([hi, lo]) + bits.to_bytes(6, 'little')
+
+
+def check_bc4(texture):
+    if (texture.format, texture.tile_mode, texture.mips, texture.layers, texture.depth) != (BC4_UNORM, TILE_BLOCK_LINEAR, 1, 1, 1):
+        raise ValueError(f'{texture.name or "texture"}: expected a single-mip BC4 block-linear texture, got format 0x{texture.format:x}')
+
+
+def bc4_read(blob, texture):
+    """The pixels of a BC4 texture as a list of bytearray rows, top row first."""
+    check_bc4(texture)
+    rows = [bytearray(texture.width) for _ in range(texture.height)]
+    for by in range(texture.height // 4):
+        for bx in range(texture.width // 4):
+            at = texture.offset + gob_address(bx, by, texture.width // 4, 8, texture.block_height)
+            for i, v in enumerate(bc4_decode(blob[at:at + 8])):
+                rows[by * 4 + i // 4][bx * 4 + i % 4] = v
+    return rows
+
+
+def bc4_image(blob, texture, rows, boxes):
+    """The texture's image bytes with only the 4x4 blocks that touch one of `boxes` ((x0, y0, x1, y1) each) written again from
+    `rows`; every other block keeps its original bytes."""
+    check_bc4(texture)
+    out = bytearray(blob[texture.offset:texture.offset + texture.image_size])
+    for x0, y0, x1, y1 in boxes:
+        for by in range(y0 // 4, (y1 + 3) // 4):
+            for bx in range(x0 // 4, (x1 + 3) // 4):
+                at = gob_address(bx, by, texture.width // 4, 8, texture.block_height)
+                out[at:at + 8] = bc4_encode([rows[by * 4 + i // 4][bx * 4 + i % 4] for i in range(16)])
+    return bytes(out)
+
+
+class Bffnt:
+    """The glyph sheet of a BFFNT (the bitmap fonts of Font/Font_*.sbfarc): a BNTX with one BC4 texture inside the TGLP section,
+    a grid of cells, and a CMAP that gives each code point its cell. Glyph cells are counted from the bottom of the sheet."""
+    def __init__(self, data):
+        if data[:4] != b'FFNT':
+            raise ValueError('not a BFFNT')
+        position, self.sections = struct.unpack_from('<H', data, 6)[0], {}
+        for _ in range(struct.unpack_from('<H', data, 16)[0]):
+            self.sections[data[position:position + 4]] = position
+            position += struct.unpack_from('<I', data, position + 4)[0]
+        tglp = self.sections[b'TGLP']
+        self.cell, _, self.sheets, _, size, _, _, self.columns, self.rows, _, _, sheet = struct.unpack_from('<BBBBIHHHHHHI', data, tglp + 8)
+        if self.sheets != 1:
+            raise ValueError('a BFFNT with more than one sheet is not supported')
+        self.sheet_at = sheet
+        blob = data[sheet:sheet + size]
+        textures = bntx_textures(blob)
+        if len(textures) != 1:
+            raise ValueError('expected one texture in the glyph sheet')
+        self.texture = next(iter(textures.values()))
+        cmap = self.sections[b'CMAP']
+        begin, end, kind = struct.unpack_from('<IIH', data, cmap + 8)
+        if kind != 1:
+            raise ValueError('only a CMAP of kind 1 (a table) is supported')
+        self.cells = {begin + i: v for i, v in enumerate(struct.unpack_from(f'<{end - begin + 1}H', data, cmap + 24)) if v != 0xFFFF}
+        self.data = data
+
+    def get(self, rows, code):
+        """The glyph cell of `code` as upright rows of bytes (the sheet is stored upside down, cell by cell)."""
+        x0, y0, x1, y1 = self.cell_box(code)
+        return [bytes(r[x0:x1]) for r in reversed(rows[y0:y1])]
+
+    def put(self, rows, code, cell):
+        """Write an upright cell (`cell` rows of bytes) into the sheet's rows; returns the box it covers."""
+        x0, y0, x1, y1 = self.cell_box(code)
+        if len(cell) != y1 - y0 or any(len(r) != x1 - x0 for r in cell):
+            raise ValueError(f'a glyph cell is {x1 - x0}x{y1 - y0} pixels')
+        for y, line in zip(range(y0, y1), reversed(cell)):
+            rows[y][x0:x1] = line
+        return (x0, y0, x1, y1)
+
+    def cell_box(self, code):
+        """(x0, y0, x1, y1) of the glyph cell of `code` in the sheet's pixels."""
+        i = self.cells[code]
+        step = self.cell + 1
+        return (i % self.columns * step, (self.rows - 1 - i // self.columns) * step,
+                i % self.columns * step + self.cell, (self.rows - 1 - i // self.columns) * step + self.cell)

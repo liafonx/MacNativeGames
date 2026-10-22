@@ -11,8 +11,9 @@ you press for it (the chain of prompt_layout.py: face buttons by position or lab
 Letters are drawn from the Switch's own system font, which your Breath of the Wild app already holds (shared-fonts/
 0-standard.bfttf). Nothing of the game ships with the project: every picture comes from your files, and the result is written
 only into the mod folder you name (then manifest.tsv, made with make_mod_manifest.py; runtime/romfs.c checks it at start).
-Not changed: R, ZR and the right stick press have no texture of their own, and the + and - icons and the icons inside text
-are font glyphs (Font/Font_*.sbfarc): they keep their Switch look.
+The icons inside text (controller tips, the pick-up window, camera mode) are glyphs of the button font in Font/Font_*.sbfarc
+(External_00.bffnt, a BC4 glyph sheet): the same changes are made there for A B X Y, L R ZL ZR (as LB RB LT RT), and + and -
+(as the Menu and View buttons). The stick press glyphs keep their Switch look: their letter touches the ring and is not found.
 
 Needs Python 3.14 and fontTools (python3.14 -m pip install fonttools). An existing Pack/Bootup.pack in the mod folder (another
 mod's, or an earlier run) is only overwritten with --replace.
@@ -86,25 +87,26 @@ def png(rows, path, scale=4):
                            + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
 
 
-def relabel(rows, label, letters):
+def relabel(rows, label, letters, dark=0xE0, grow=1):   # rows: a square picture (a 48 pixel texture or a 50 pixel font cell)
     """The key `rows` with its old letter replaced by `label`: the marks (the old letter) are filled white, and the new letter
     is cut out in the same place, as high as 70 % of the old one."""
-    marks = bf.enclosed_marks(rows)
+    size = len(rows)
+    marks = bf.enclosed_marks(rows, (3, 3, size - 3, size - 3), dark)
     if not marks:
         raise ValueError('no letter found in the texture')
     points = set().union(*marks)
     xs, ys = [p[0] for p in points], [p[1] for p in points]
     out = [bytearray(r) for r in rows]
     for x, y in points:
-        for dy in (-1, 0, 1):
-            for dx in (-1, 0, 1):
-                if 0 <= y + dy < SIZE and 0 <= x + dx < SIZE:
+        for dy in range(-grow, grow + 1):
+            for dx in range(-grow, grow + 1):
+                if 0 <= y + dy < size and 0 <= x + dx < size:
                     out[y + dy][x + dx] = 255
     cx, cy = (min(xs) + max(xs) + 1) / 2, (min(ys) + max(ys) + 1) / 2
-    cut = bf.coverage(letters.text(label, (max(ys) - min(ys) + 1) * 0.7, cx, cy, 26), SIZE)
+    cut = bf.coverage(letters.text(label, (max(ys) - min(ys) + 1) * 0.7, cx, cy, 26), size)
     # The game's letters are bold and the system font's regular: thicken the cut by about half a pixel.
     cut = [bytes(max(c, int(0.6 * max(cut[yy + dy][xx + dx] for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0))
-                                      if 0 <= yy + dy < SIZE and 0 <= xx + dx < SIZE)))
+                                      if 0 <= yy + dy < size and 0 <= xx + dx < size)))
                  for xx, c in enumerate(row)) for yy, row in enumerate(cut)]
     return [bytes(min(o, 255 - c) for o, c in zip(out_row, cov_row)) for out_row, cov_row in zip(out, cut)]
 
@@ -146,6 +148,79 @@ def make_pack(pack, controls, letters):
     return new_pack, new, notes, (len(stream), len(spliced), len(layout))
 
 
+FONT_FACE = {'a': 0xE040, 'b': 0xE041, 'x': 0xE042, 'y': 0xE043}              # Switch button -> code point in External_00.bffnt
+FONT_SHAPE = {'l': 0xE044, 'r': 0xE045, 'zl': 0xE046, 'zr': 0xE047, 'lstick': 0xE056, 'rstick': 0xE057}
+FONT_MENU = {'plus': 0xE04B, 'minus': 0xE04C}
+BFFNT = 'External_00.bffnt'
+
+
+def button_cell(kind, size):
+    """The Xbox Menu ('menu') or View ('view') button as a size x size picture: the same drawing the TOTK tool uses."""
+    from fontTools.pens.recordingPen import RecordingPen
+    import make_button_icons as mbi
+    drawer = mbi.xbox_drawers(None)[0][kind]
+    pen = RecordingPen(); drawer[1](pen)
+    scale = size * 0.56 / (2 * mbi.R)      # the game's + and - are small discs in their cell
+    contours = [[(size / 2 + (x - drawer[0] / 2) * scale, size / 2 - (y - mbi.CY) * scale) for x, y in c] for c in bf.flatten(pen.value)]
+    return bf.coverage(contours, size)
+
+
+def font_cells(font, sheet_rows, controls, letters):
+    """code point -> new upright cell for the prompts `controls` asks for, and notes (as plan() does for the textures)."""
+    new, notes = {}, []
+    for slot, code in FONT_FACE.items():
+        pad = controls[slot]
+        if pad in FONT_FACE:
+            new[code] = font.get(sheet_rows, FONT_FACE[pad])
+        else:
+            notes.append(f'{slot.upper()}: {pad or "nothing"} has no face glyph; the Switch glyph stays')
+    for slot, code in FONT_SHAPE.items():
+        label = XBOX_TEXT.get(controls[slot])
+        if code not in font.cells:
+            continue
+        if label is None:
+            notes.append(f'{slot.upper()}: {controls[slot] or "nothing"} has no Xbox letter here; the Switch glyph stays')
+            continue
+        try:
+            new[code] = relabel(font.get(sheet_rows, code), label, letters)
+        except ValueError as error:     # the stick press glyph's letter touches its ring: not found, the glyph stays as it was
+            notes.append(f'{slot.upper()} glyph: {error}; the Switch glyph stays')
+    for slot, code in FONT_MENU.items():
+        kind = controls[slot]
+        if kind in ('menu', 'view') and code in font.cells:
+            new[code] = button_cell(kind, font.cell)
+        else:
+            notes.append(f'{slot}: {kind or "nothing"} has no Xbox picture here; the Switch glyph stays')
+    return new, notes
+
+
+def make_font(stream, controls, letters):
+    """A Font/Font_<language>.sbfarc (Yaz0 of a SARC) with the glyphs of `controls` redrawn in its External_00.bffnt. Returns
+    (the new file, glyph code point -> new cell, notes). Only the changed blocks of the glyph sheet differ."""
+    archive = bf.yaz0_decode(stream)
+    members = bf.sarc_members(archive)
+    start, end = members[BFFNT]
+    data = archive[start:end]
+    font = bf.Bffnt(data)
+    sheet = data[font.sheet_at:]
+    rows = bf.bc4_read(sheet, font.texture)
+    new, notes = font_cells(font, rows, controls, letters)
+    boxes = [font.put(rows, code, cell) for code, cell in sorted(new.items())]
+    image = bf.bc4_image(sheet, font.texture, rows, boxes)
+    base = start + font.sheet_at + font.texture.offset
+    old = archive[base:base + len(image)]
+    edits, i = [], 0
+    while i < len(image):       # the runs of bytes that changed
+        if image[i] == old[i]:
+            i += 1
+            continue
+        j = i
+        while j < len(image) and (image[j] != old[j] or (j + 1 < len(image) and image[j + 1] != old[j + 1])):
+            j += 1
+        edits.append((base + i, image[i:j])); i = j
+    return bf.yaz0_splice(stream, archive, edits), new, notes
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('mod', type=Path, help='the mod folder to write into (other files in it are kept and listed too)')
@@ -156,7 +231,7 @@ def main():
     parser.add_argument('--face-buttons', choices=FACE_MODES, default='position',
                         help='how the controller\'s face buttons map (the runtime\'s TOTK_FACE_BUTTONS, or key 6): position (Xbox, PlayStation; default) or label (Switch)')
     parser.add_argument('--controls', type=Path, help='your controls.txt (the prompts then show the button you press)')
-    parser.add_argument('--replace', action='store_true', help=f'overwrite a {PACK} already in the mod folder')
+    parser.add_argument('--replace', action='store_true', help=f'overwrite a {PACK} or Font/Font_*.sbfarc already in the mod folder')
     parser.add_argument('--preview', type=Path, help='also write a picture of the changed textures (PNG)')
     args = parser.parse_args()
     version = args.version or (args.mod.resolve().name if args.mod.resolve().name in APP_VERSIONS else None)
@@ -175,6 +250,7 @@ def main():
         parser.error(f'{app_fonts / FONT} not found (the app\'s copy of the Switch system fonts)')
     if (args.mod / PACK).exists() and not args.replace:
         parser.error(f'{args.mod / PACK} already exists (another mod\'s, or an earlier run): pass --replace to overwrite it')
+    font_notes = []
     try:
         controls = prompt_controls(args.controls.read_text() if args.controls else '', args.face_buttons)
     except LayoutError as error:
@@ -203,6 +279,20 @@ def main():
             rows = [a + b + bytes([128]) for a, b in zip(rows, new[name])]
         png(rows, args.preview)
         print(f'{args.preview}: {", ".join(n.split("^")[0].replace("Nt_KeyTex", "") for n in names)}')
+    fonts = sorted(n for n in index if n.startswith('Font/Font_') and n.endswith('.sbfarc'))
+    exists = [n for n in fonts if (args.mod / n).exists()]
+    if exists and not args.replace:
+        sys.exit(f'{args.mod / exists[0]} already exists: pass --replace to overwrite it (nothing else was written to the fonts)')
+    for name in fonts:
+        offset, size = index[name]
+        with (romfs / 'romfs.bin').open('rb') as image:
+            image.seek(offset); stream = image.read(size)
+        data, cells, font_notes = make_font(stream, controls, letters)
+        (args.mod / name).parent.mkdir(parents=True, exist_ok=True)
+        (args.mod / name).write_bytes(data)
+        print(f'{args.mod / name}: {len(cells)} glyphs changed; {size} -> {len(data)} bytes')
+    for note in dict.fromkeys(font_notes) if fonts else ():
+        print('note (font glyphs):', note)
     found = write_manifest(args.mod, romfs)
     if found.misspelt:
         sys.exit('manifest not written: ' + ', '.join(f'{a} (the RomFS has {b})' for a, b in found.misspelt))

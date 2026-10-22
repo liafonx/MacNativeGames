@@ -307,10 +307,14 @@ eight 48x48 key textures in `Pack/Bootup.pack` > `Layout/Common.sblarc`:
 - The left stick press (two textures) gets LS or RS.
 - The new letters come from the Switch system font that your app already holds.
 
+The icons inside text (the controller tips, the pick-up window, camera mode, and R, ZR, + and − in messages) are glyphs of the
+button font, `External_00.bffnt` in every `Font/Font_*.sbfarc` (a BC4 glyph sheet). The tool changes them the same way: A, B,
+X and Y trade places, L, R, ZL and ZR become LB, RB, LT and RT, and + and − become the Xbox Menu and View buttons.
+
 These prompts keep the Switch look:
 
-- R, ZR and the right stick press: the game has no texture of their own for them.
-- + and −, and the icons inside text: they are font glyphs in `Font/Font_*.sbfarc`, not textures.
+- The right stick press (it has no texture of its own) and both stick press glyphs of the font: the letter of the font glyph
+  touches its ring, so the tool does not find it. The tool prints a note.
 - A prompt whose button has no Xbox picture or letter here, for example Switch A on a shoulder button. The tool prints a
   note for it.
 
@@ -318,8 +322,8 @@ There is no PlayStation style for Breath of the Wild yet. The output was checked
 textures. It is not yet tested in play.
 
 Only the bytes of the changed textures differ. Every other member and byte of the pack is the original, and the
-decompressed `Layout/Common.sblarc` keeps its size. The tool writes only `Pack/Bootup.pack` and `manifest.tsv`. The other
-files in the folder stay and go into the manifest too. It stops when the folder already has a `Pack/Bootup.pack`
+decompressed `Layout/Common.sblarc` keeps its size. The tool writes only `Pack/Bootup.pack`, the seven `Font/Font_*.sbfarc` and `manifest.tsv`. The other
+files in the folder stay and go into the manifest too. It stops when the folder already has one of these files
 (another mod's, or an earlier run). `--replace` overwrites it, and that other mod's changes to the pack are lost: the
 tool always starts from the game's own pack. `--preview <picture.png>` also writes a picture of the changed textures.
 
@@ -687,16 +691,19 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 - 左摇杆按下（两张贴图）换成 LS 或 RS。
 - 新字母取自你的 App 里已有的 Switch 系统字体。
 
+文字里的图标（手柄提示、拾取窗口、相机模式，以及消息里的 R、ZR、+、−）是按键字体的字形，即每个 `Font/Font_*.sbfarc` 里的
+`External_00.bffnt`（一张 BC4 字形表）。工具用同样的办法改它们：A、B、X、Y 互换位置，L、R、ZL、ZR 变成 LB、RB、LT、RT，
++ 和 − 变成 Xbox 的 Menu 和 View 按键。
+
 下面这些提示仍是 Switch 样式：
 
-- R、ZR 和右摇杆按下：游戏没有它们自己的贴图。
-- + 和 −，以及文字里的图标：它们是 `Font/Font_*.sbfarc` 里的字体字形，不是贴图。
+- 右摇杆按下（它没有自己的贴图），以及字体里两个摇杆按下的字形：字形里的字母和圆环相连，工具找不到它，会打印一行说明。
 - 对应按键在这里没有 Xbox 图案或字母的提示，例如把 Switch A 放在肩键上。工具会为它打印一行说明。
 
 旷野之息还没有 PlayStation 风格。输出只在解码后的 1.9.0 贴图图片上用肉眼核对过，还没有在游戏里测试。
 
 只有改动的贴图字节不同：包里其余每个成员、每个字节都是原版，解压后的 `Layout/Common.sblarc` 大小不变。工具只写
-`Pack/Bootup.pack` 和 `manifest.tsv`；目录里的其他文件保留，也会写进清单。目录里已经有 `Pack/Bootup.pack`（别的模组的，
+`Pack/Bootup.pack`、七个 `Font/Font_*.sbfarc` 和 `manifest.tsv`；目录里的其他文件保留，也会写进清单。目录里已经有这些文件之一（别的模组的，
 或者上次生成的）时工具会停下。加 `--replace` 会覆盖它，那个模组对这个包的改动也就没了：工具总是从游戏原版的包开始改。
 `--preview <图片.png>` 另外写一张改动贴图的图片。
 
