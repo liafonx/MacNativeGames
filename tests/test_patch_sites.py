@@ -94,6 +94,35 @@ class Extraction(unittest.TestCase):
         self.assertIn(0x628c74, found)                  # ultrawide
         self.assertNotIn(0x8f6c60, found)               # game_patches.c is not compiled for 1.4.3
 
+    def test_botw190_sites_follow_game_patches_botw_c(self):
+        # Breath of the Wild 1.9.0: the rows {offset, word, ...} of the branch GAME_BOTW190 compiles, and nothing of 1.6.0's.
+        found = offsets('botw190')
+        for site in (0x151d484, 0x151d490,              # the VFR ratio (real-time frame step), first and last word
+                     0x125f118, 0x1280ecc, 0x128106c,   # the fade, the UI step, the physics ratio
+                     0xeb0f78, 0xeb0f88,                # the pad repeat count
+                     0x12660c8,                         # the docked render size
+                     0x12c1010, 0x13a0508,              # TOTK_JQ_CHECK
+                     0xc617e8, 0x15a01a0, 0x1d78198):   # GAME_ADDR sites of game_version.h's 1.9.0 block
+            self.assertIn(site, found, hex(site))
+        self.assertNotIn(0x1c0120c, found)              # 1.6.0's VFR site: that branch is not compiled for 1.9.0
+        self.assertNotIn(0x126e490, found)              # 1.6.0's pad loop
+        self.assertNotIn(0x1821674, found)              # 1.6.0's render size
+        self.assertNotIn(0x151d484 + 1, found)
+
+    def test_botw190_has_no_totk_sites(self):
+        found = offsets('botw190')
+        self.assertNotIn(0x8f6c60, found)               # TOTK 1.0.0 60 FPS
+        self.assertNotIn(0xce3fec, found)               # the high-FPS bounce
+        self.assertEqual(sorted(patch_sites._unresolved), [])
+
+    def test_the_botw_branch_is_chosen_by_the_macros(self):
+        text = '#ifdef A\none\n#else\ntwo\n#endif\n#ifndef A\nthree\n#endif\n#if defined(B)\nfour\n#elif C\nfive\n#endif\n#if X > 1\nsix\n#endif\n'
+        kept = lambda defined: {line for line in patch_sites.compiled_text(text, defined).split() if line.isalpha()}
+        self.assertEqual(kept({'A'}), {'one', 'five', 'six'})      # an #elif is not evaluated: its sites are reserved
+        self.assertEqual(kept({'B'}), {'two', 'three', 'four', 'five', 'six'})
+        self.assertEqual(kept(set()), {'two', 'three', 'five', 'six'})
+        self.assertEqual(patch_sites.compiled_text(text, {'A'}).count('\n'), text.count('\n'))      # line numbers stay
+
     def test_rewriter_tables_need_the_build_id(self):
         without = offsets('v0')
         with_id = offsets('v0', BUILD_ID_V0)

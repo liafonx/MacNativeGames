@@ -14,6 +14,8 @@ Where the list comes from (no offset is written down twice in this repository):
   games/totk/runtime/game_patches.c     the literal tables of the versions 1.0.0 / 1.1.2 / 1.2.1
                                         (cloth/hair clock, ultrawide stub sites), per #if block
   games/totk/runtime/game_patches_v143.c the literal Patch tables of 1.4.3
+  games/totk/runtime/game_patches_botw.c the rows {offset, original word, ...} of Breath of the Wild 1.9.0's check, put and
+                                        job-queue tables (the branch that GAME_BOTW190 compiles)
   third_party/d2r/patch_nso.py          CUTS, OBS, PARAMS and SIGNED_TABLES (the signed jump tables) for the
                                         build ID being rewritten
 
@@ -30,11 +32,14 @@ ROOT = Path(__file__).resolve().parents[1]          # games/totk
 RUNTIME = ROOT / 'runtime'
 REWRITER = ROOT / 'third_party/d2r/patch_nso.py'
 
-VERSIONS = ('v0', 'v112', 'v121', 'v143')
+VERSIONS = ('v0', 'v112', 'v121', 'v143', 'botw190')
 # The #if guard that selects a version's block in game_version.h / game_patches.c; 1.0.0 is the #else block.
-GUARDS = {'v112': 'TOTK_GAME_V112', 'v121': 'TOTK_GAME_V121', 'v143': 'TOTK_GAME_V143'}
+GUARDS = {'v112': 'TOTK_GAME_V112', 'v121': 'TOTK_GAME_V121', 'v143': 'TOTK_GAME_V143', 'botw190': 'GAME_BOTW190'}
 # The version-specific patch source (game_patches.c is shared by 1.0.0, 1.1.2 and 1.2.1).
-PATCHER = {'v0': 'game_patches.c', 'v112': 'game_patches.c', 'v121': 'game_patches.c', 'v143': 'game_patches_v143.c'}
+PATCHER = {'v0': 'game_patches.c', 'v112': 'game_patches.c', 'v121': 'game_patches.c', 'v143': 'game_patches_v143.c',
+           'botw190': 'game_patches_botw.c'}
+# What the compiler defines for the Breath of the Wild runtime (game_version.h): the branches of game_patches_botw.c it keeps.
+BOTW_DEFINED = {'botw190': {'GAME_BOTW', 'GAME_BOTW190'}}
 
 Site = namedtuple('Site', 'label offset size')
 MAX_IMAGE = 0x8000000     # 128 MiB: above every main image, below every instruction word a table mentions
@@ -50,6 +55,9 @@ BRANCH_ARG = re.compile(r'\bbranch[ \t]*\([ \t]*(0x[0-9a-fA-F]+)')
 BASE_PLUS = re.compile(r'm->base[ \t]*\+[ \t]*(0x[0-9a-fA-F]+)')
 CLOTH = re.compile(r'cloth_inline\[3\][ \t]*=[ \t]*\{(.*?)\};', re.S)
 CLOTH_ENTRY = re.compile(r'\{([^{}]*)\}')
+BOTW_ROW = re.compile(r'\{[ \t]*(0x[0-9a-fA-F]+)u[ \t]*,')       # a row of game_patches_botw.c's tables: {main offset, word, ...}
+BOTW_MOVK = re.compile(r'\bRENDER_MOVK[ \t]*=[ \t]*(0x[0-9a-fA-F]+)')
+CONDITION = re.compile(r'\s*#\s*(ifdef|ifndef|if|elif|else|endif)\b(.*)')
 CLOTH_CALL = re.compile(r'cloth_call[ \t]*=[ \t]*(0x[0-9a-fA-F]+)[ \t]*,[ \t]*cloth_update[ \t]*=[ \t]*(0x[0-9a-fA-F]+)')
 
 _unresolved = set()     # logical GAME_ADDR names a version does not define (drift alarm; expected empty)
@@ -172,7 +180,8 @@ def game_addr_sites(version):
         for match in GAME_ADDR.finditer(text):
             name = match.group(1).lower()
             if name not in offsets:
-                _unresolved.add(name)
+                if version not in BOTW_DEFINED:     # Breath of the Wild compiles the TOTK-only uses out (GAME_BOTW)
+                    _unresolved.add(name)
                 continue
             found.append(Site(f'{path.name}:{_line_of(text, match.start())}', offsets[name], 4))
     return found
@@ -187,6 +196,8 @@ def patcher_sites(version):
     sites. Branches of unrelated conditionals are shared and stay in."""
     source = PATCHER[version]
     text = (RUNTIME / source).read_text()
+    if version in BOTW_DEFINED:
+        return botw_sites(text, source, BOTW_DEFINED[version])
     foreign = [(start, end) for block, start, end in branch_spans(text) if block not in (version, None)]
     scoped = _blank(text, foreign)
     found = _sites_in_literals(_blank(scoped, [m.span() for m in CLOTH.finditer(text)]), source)
@@ -202,6 +213,43 @@ def patcher_sites(version):
             for number in match.groups():
                 found.append(Site(f'{source} cloth_call/update+{int(number, 16):#x}', int(number, 16), 4))
     return found
+
+
+def compiled_text(text, defined):
+    """The text of a C file with the lines of the branches that a build with these macros does not compile blanked (the
+    directives too; newlines stay, so line numbers do not move). #ifdef, #ifndef and #if defined(NAME) are evaluated; any
+    other condition counts as true, so a site under it is reserved rather than missed."""
+    stack, out = [], []        # stack of [parent compiles, this branch compiles, the condition is evaluated, a branch was taken]
+    for line in text.splitlines(keepends=True):
+        match = CONDITION.match(line)
+        if not match:
+            out.append(line if all(entry[1] for entry in stack) else re.sub(r'[^\n]', ' ', line))
+            continue
+        kind, rest = match.groups()
+        parent = all(entry[1] for entry in stack)
+        if kind in ('ifdef', 'ifndef', 'if'):
+            name = rest.split()[0] if kind != 'if' and rest.split() else (re.fullmatch(r'\s*defined\s*\(\s*(\w+)\s*\)\s*', rest) or [None, None])[1]
+            known = name is not None
+            on = (name in defined) != (kind == 'ifndef') if known else True
+            stack.append([parent, on, known, on])
+        elif kind in ('elif', 'else') and stack:
+            entry = stack[-1]
+            entry[1] = not entry[3] if entry[2] and kind == 'else' else True
+            entry[3] = entry[3] or entry[1]
+        elif kind == 'endif' and stack:
+            stack.pop()
+        out.append(re.sub(r'[^\n]', ' ', line))
+    return ''.join(out)
+
+
+def botw_sites(text, source, defined):
+    """The code sites Breath of the Wild's runtime reads or writes (game_patches_botw.c, the branches `defined` keeps): the
+    rows {main offset, original word, ...} of its check, put and job-queue tables, and the render-size site. Each is one
+    instruction; a mod patch on it would make the runtime refuse the start (the check) or write over the mod (the put)."""
+    active = compiled_text(text, defined)
+    found = [(int(match.group(1), 16), _line_of(active, match.start())) for pattern in (BOTW_ROW, BOTW_MOVK)
+             for match in pattern.finditer(active)]
+    return [Site(f'{source}:{line}', offset, 4) for offset, line in found]
 
 
 def _table_body(text, table):
