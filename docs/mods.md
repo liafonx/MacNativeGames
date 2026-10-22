@@ -260,6 +260,105 @@ Check `grep "mods/botw190 checked" ~/Library/Logs/MacNativeGames/botw.log | tail
   `en-US`). To give only this game another language:
   `defaults write org.macnativegames.botw AppleLanguages -array en-US`.
 
+<a id="prompts"></a>
+### Button prompts
+
+Two tools redraw the game's button prompts, so that each prompt shows the controller button you press for that Switch
+button. Both read the art from your own app and write a RomFS mod with its `manifest.tsv` into the folder you name.
+Nothing of the game is in the project.
+
+- Tears of the Kingdom: `games/totk/scripts/make_button_icons.py` redraws the icon font. The `xbox` and `playstation`
+  styles follow your setup with `--face-buttons position|label` and `--controls <controls.txt>` (`--controls` needs
+  `--face-buttons`). Without the two options the output is the same as before: the default layout by position. The stick
+  presses and the prompts drawn as fixed images keep their Switch icons.
+- Breath of the Wild 1.6.0 and 1.9.0: `games/botw/scripts/botw_prompts.py` redraws eight key textures in the Xbox style
+  (see below).
+
+Before they write, both tools print one line for each Switch button, for example `Switch A <- Xbox X`. Check these lines.
+
+The prompts depend on the face mode: the game's `TOTK_FACE_BUTTONS`, or the controller type picked with key 6. Pass the
+same mode as `--face-buttons`:
+
+| The game's setting | `--face-buttons` |
+| --- | --- |
+| key 6 on Xbox or PlayStation | `position` |
+| key 6 on Switch | `label` |
+| key 6 on auto, with `TOTK_FACE_BUTTONS=label` | `label` |
+| key 6 on auto, without `TOTK_FACE_BUTTONS` | `position` |
+
+The shortcut reminder shows the current type. With the wrong mode, every face prompt shows the wrong letter: Xbox A and B
+trade places, and so do X and Y. Pass the `controls.txt` the game reads, from its data folder
+(`~/Library/Application Support/MacNativeGames/BotW/controls.txt`, or `.../TOTK/controls.txt`). After you change that
+file or the mode, run the tool again with `--replace`.
+
+#### Breath of the Wild prompts
+
+```bash
+MODDIR="$HOME/Library/Application Support/MacNativeGames/BotW/mods/botw190"
+python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath of the Wild.app" \
+  --face-buttons position --controls "$HOME/Library/Application Support/MacNativeGames/BotW/controls.txt"
+```
+
+Use `botw160` for 1.6.0. The tool needs Python 3.14 and fontTools (`python3.14 -m pip install fonttools`). It changes
+eight 48x48 key textures in `Pack/Bootup.pack` > `Layout/Common.sblarc`:
+
+- A, B, X and Y take the picture of the letter you press. The four face pictures trade places.
+- L and ZL keep the game's key shape and get LB, LT, RB or RT.
+- The left stick press (two textures) gets LS or RS.
+- The new letters come from the Switch system font that your app already holds.
+
+These prompts keep the Switch look:
+
+- R, ZR and the right stick press: the game has no texture of their own for them.
+- + and −, and the icons inside text: they are font glyphs in `Font/Font_*.sbfarc`, not textures.
+- A prompt whose button has no Xbox picture or letter here, for example Switch A on a shoulder button. The tool prints a
+  note for it.
+
+There is no PlayStation style for Breath of the Wild yet. The output was checked by eye on a decoded picture of the 1.9.0
+textures. It is not yet tested in play.
+
+Only the bytes of the changed textures differ. Every other member and byte of the pack is the original, and the
+decompressed `Layout/Common.sblarc` keeps its size. The tool writes only `Pack/Bootup.pack` and `manifest.tsv`. The other
+files in the folder stay and go into the manifest too. It stops when the folder already has a `Pack/Bootup.pack`
+(another mod's, or an earlier run). `--replace` overwrites it, and that other mod's changes to the pack are lost: the
+tool always starts from the game's own pack. `--preview <picture.png>` also writes a picture of the changed textures.
+
+#### A mods folder that already holds files
+
+To keep a folder that works, write into a copy and swap it in. Quit the game first.
+
+```bash
+MODS="$HOME/Library/Application Support/MacNativeGames/BotW/mods"
+cp -R "$MODS/botw190" "$MODS/botw190.new"
+python3.14 games/botw/scripts/botw_prompts.py "$MODS/botw190.new" --version botw190 \
+  --app "/path/to/Breath of the Wild.app" --face-buttons position \
+  --controls "$HOME/Library/Application Support/MacNativeGames/BotW/controls.txt"
+mv "$MODS/botw190" "$MODS/botw190.backup" && mv "$MODS/botw190.new" "$MODS/botw190"
+```
+
+The copy needs `--version`, because `botw190.new` is not a version name. The old folder becomes `botw190.backup`, which
+the game never loads. With no mods folder yet, run the tool on `$MODS/botw190` itself, as above.
+
+To turn the mods off, delete `$MODS/botw190/manifest.tsv` or the whole folder. This turns off every mod in the folder.
+To go back to the folder without the prompts, swap the backup back in:
+
+```bash
+mv "$MODS/botw190" "$MODS/botw190.prompts" && mv "$MODS/botw190.backup" "$MODS/botw190"
+```
+
+For Tears of the Kingdom the steps are the same, with `make_button_icons.py`, `TOTK/mods/<version>` and `--version`.
+
+#### How a new game plugs in
+
+1. Add the game's version name to `APP_VERSIONS` in `games/totk/scripts/make_mod_manifest.py`, so that the manifest
+   tool accepts its mods folder.
+2. Write a small backend that finds the game's prompt art for each Switch button and writes it back. `botw_prompts.py`
+   is the example: two tables of Switch button -> art item (`FACE` and `SHAPE`), and the code that reads and writes
+   those items.
+3. Reuse the rest: `prompt_layout.py`, `sarc_repack.py`, `write_manifest()` from `make_mod_manifest.py`, and the RomFS
+   loader (`runtime/romfs.c`). In `prompt_layout.py`, `prompt_controls()` gives the controller button for each Switch
+   button from `controls.txt` and the face mode. `describe()` prints the check lines.
+
 ### Notes
 
 - Do not edit `manifest.tsv` by hand; regenerate it.
@@ -543,6 +642,96 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
   `Pack/Bootup_<语言>.pack` 变大的翻译 mod）。
 - 游戏语言跟随 App 的首选语言，也由它决定 mod 要放在哪个语言目录（`en-US` 对应 `USen`）。只给这个游戏换语言：
   `defaults write org.macnativegames.botw AppleLanguages -array en-US`。
+
+<a id="prompts-zh"></a>
+### 按键提示
+
+有两个工具可以重绘游戏的按键提示，让每个提示显示这个 Switch 按键实际要按的手柄按键。两个工具都从你自己的 App 读取
+图案，把一个 RomFS 模组和它的 `manifest.tsv` 写进你指定的目录。项目里不含任何游戏内容。
+
+- 王国之泪：`games/totk/scripts/make_button_icons.py` 重绘图标字体。`xbox` 和 `playstation` 风格加上
+  `--face-buttons position|label` 和 `--controls <controls.txt>` 后按你的设置显示（`--controls` 必须同时给
+  `--face-buttons`）。不加这两个参数时，输出和以前完全一样：默认的按位置布局。摇杆按下和以固定图片显示的提示仍是
+  Switch 图标。
+- 旷野之息 1.6.0 和 1.9.0：`games/botw/scripts/botw_prompts.py` 以 Xbox 风格重绘八张按键贴图（见下文）。
+
+写文件之前，两个工具都会为每个 Switch 按键打印一行，例如 `Switch A <- Xbox X`。先核对这些行。
+
+提示取决于面键的映射方式：游戏的 `TOTK_FACE_BUTTONS`，或 6 键选的手柄类型。`--face-buttons` 要用同一种：
+
+| 游戏的设置 | `--face-buttons` |
+| --- | --- |
+| 6 键选 Xbox 或 PlayStation | `position` |
+| 6 键选 Switch | `label` |
+| 6 键为自动，设了 `TOTK_FACE_BUTTONS=label` | `label` |
+| 6 键为自动，没设 `TOTK_FACE_BUTTONS` | `position` |
+
+快捷键说明会显示当前的手柄类型。映射方式选错时，每个面键提示的字母都不对：Xbox 的 A 和 B 互换，X 和 Y 也互换。
+`--controls` 要用游戏读取的那份 `controls.txt`，它在游戏的数据目录里
+（`~/Library/Application Support/MacNativeGames/BotW/controls.txt`，或 `.../TOTK/controls.txt`）。改了这个文件或映射方式后，
+加 `--replace` 重新运行工具。
+
+#### 旷野之息的按键提示
+
+```bash
+MODDIR="$HOME/Library/Application Support/MacNativeGames/BotW/mods/botw190"
+python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath of the Wild.app" \
+  --face-buttons position --controls "$HOME/Library/Application Support/MacNativeGames/BotW/controls.txt"
+```
+
+1.6.0 用 `botw160`。需要 Python 3.14 和 fontTools（`python3.14 -m pip install fonttools`）。工具修改
+`Pack/Bootup.pack` > `Layout/Common.sblarc` 里的八张 48x48 按键贴图：
+
+- A、B、X、Y 换成你实际要按的那个字母的图案，四张面键图案互换位置。
+- L 和 ZL 保留游戏的按键外形，字母换成 LB、LT、RB 或 RT。
+- 左摇杆按下（两张贴图）换成 LS 或 RS。
+- 新字母取自你的 App 里已有的 Switch 系统字体。
+
+下面这些提示仍是 Switch 样式：
+
+- R、ZR 和右摇杆按下：游戏没有它们自己的贴图。
+- + 和 −，以及文字里的图标：它们是 `Font/Font_*.sbfarc` 里的字体字形，不是贴图。
+- 对应按键在这里没有 Xbox 图案或字母的提示，例如把 Switch A 放在肩键上。工具会为它打印一行说明。
+
+旷野之息还没有 PlayStation 风格。输出只在解码后的 1.9.0 贴图图片上用肉眼核对过，还没有在游戏里测试。
+
+只有改动的贴图字节不同：包里其余每个成员、每个字节都是原版，解压后的 `Layout/Common.sblarc` 大小不变。工具只写
+`Pack/Bootup.pack` 和 `manifest.tsv`；目录里的其他文件保留，也会写进清单。目录里已经有 `Pack/Bootup.pack`（别的模组的，
+或者上次生成的）时工具会停下。加 `--replace` 会覆盖它，那个模组对这个包的改动也就没了：工具总是从游戏原版的包开始改。
+`--preview <图片.png>` 另外写一张改动贴图的图片。
+
+#### 已有文件的模组目录
+
+为了不动正在用的目录，先在副本里生成，再换进来。先完全退出游戏。
+
+```bash
+MODS="$HOME/Library/Application Support/MacNativeGames/BotW/mods"
+cp -R "$MODS/botw190" "$MODS/botw190.new"
+python3.14 games/botw/scripts/botw_prompts.py "$MODS/botw190.new" --version botw190 \
+  --app "/path/to/Breath of the Wild.app" --face-buttons position \
+  --controls "$HOME/Library/Application Support/MacNativeGames/BotW/controls.txt"
+mv "$MODS/botw190" "$MODS/botw190.backup" && mv "$MODS/botw190.new" "$MODS/botw190"
+```
+
+副本要加 `--version`，因为 `botw190.new` 不是版本名。原来的目录变成 `botw190.backup`，游戏不会读取它。还没有模组目录时，
+直接对 `$MODS/botw190` 运行工具，同上。
+
+关掉模组：删除 `$MODS/botw190/manifest.tsv` 或整个目录。这会关掉目录里的所有模组。要回到没有按键提示的目录，把备份换回来：
+
+```bash
+mv "$MODS/botw190" "$MODS/botw190.prompts" && mv "$MODS/botw190.backup" "$MODS/botw190"
+```
+
+王国之泪步骤相同，换成 `make_button_icons.py`、`TOTK/mods/<version>`，并加 `--version`。
+
+#### 新游戏怎么接入
+
+1. 在 `games/totk/scripts/make_mod_manifest.py` 的 `APP_VERSIONS` 里加上这个游戏的版本名，清单工具才接受它的模组目录。
+2. 写一个小的后端：为每个 Switch 按键找到游戏里的提示图案，改好后写回。`botw_prompts.py` 就是例子：两张
+   「Switch 按键 -> 图案」的表（`FACE` 和 `SHAPE`），加上读写这些图案的代码。
+3. 其余部分直接复用：`prompt_layout.py`、`sarc_repack.py`、`make_mod_manifest.py` 的 `write_manifest()`，以及 RomFS
+   加载器（`runtime/romfs.c`）。`prompt_layout.py` 里的 `prompt_controls()` 根据 `controls.txt` 和面键映射方式，给出每个
+   Switch 按键对应的手柄按键；`describe()` 打印核对用的行。
 
 ### 注意
 
