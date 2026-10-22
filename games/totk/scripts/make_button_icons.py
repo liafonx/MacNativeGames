@@ -348,10 +348,10 @@ def playstation_drawers(g):
     return drawers, dpads
 
 
-# The Switch buttons the TOTK font has a glyph for (code points U+E040 to U+E068); the stick presses (U+E056, U+E057) keep
-# their Switch icons here. A prompt names its Switch button, prompt_layout says which controller button the player presses.
+# The Switch buttons the TOTK font has a glyph for (code points U+E040 to U+E068). A prompt names its Switch button,
+# prompt_layout says which controller button the player presses.
 SLOT_CODEPOINTS = {'a': 0xE040, 'b': 0xE041, 'x': 0xE042, 'y': 0xE043, 'l': 0xE044, 'r': 0xE045, 'zl': 0xE046, 'zr': 0xE047,
-                   'plus': 0xE04B, 'minus': 0xE04C}
+                   'plus': 0xE04B, 'minus': 0xE04C, 'lstick': 0xE056, 'rstick': 0xE057}
 
 
 def slot_glyphs(drawers, controls):
