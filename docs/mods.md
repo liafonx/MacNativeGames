@@ -116,6 +116,23 @@ carries on, its code half is in the app, and its data half takes effect once the
 (`--install-mod-romfs`, or by hand). With `--update` the patch is merged into the updated module, which is the one
 the app runs.
 
+**Breath of the Wild 1.9.0.** The same `--mod` flag and the same patch formats work for the 1.9.0 build (give the base NSP,
+`--update` and the rest as for any 1.9.0 build). The patch is applied to the verified 1.9.0 main, and the `@nsobid-` line
+must name that main (the 20 bytes at 0x40 of the extracted `main`). It is refused when it lands on a site the app
+patches or checks itself in this game: the real-time frame step, the pad repeat count, the docked render size, the
+`TOTK_JQ_CHECK` sites and the sites listed for 1.9.0 in `runtime/game_version.h` (all read out of `runtime/game_patches_botw.c` by
+`games/totk/scripts/patch_sites.py`). Three things differ from Tears of the Kingdom:
+
+- `--install-mod-romfs` is refused for this game. Copy the mod's RomFS files into
+  `~/Library/Application Support/MacNativeGames/BotW/mods/botw190` and write the manifest as in [Breath of the Wild](#breath-of-the-wild)
+  below; the build prints this when the mod has a `romfs/`.
+- 1.6.0 is refused: its sites are not listed yet. There is no iPhone / iPad build of this game.
+- To try a `.pchtxt` without a build, start the game from the work folder (`<work>/totk`, which holds
+  `extracted/botw190/exefs/main`) with `TOTK_PCHTXT=<file>` (a development switch, Mac and 1.9.0 only; the same reading as the
+  build, but the bytes go into the rewritten main the game runs, so a patch on an instruction the rewriter changed behaves
+  differently there). The game stops at start when the file is for another build of main, or touches a word the
+  app checks.
+
 <a id="data"></a>
 ### The mod's RomFS files: `--install-mod-romfs`
 
@@ -444,6 +461,18 @@ App 没有模块加载器：启动时它映射的是构建时的那三个代码�
 就是没有代码要合并，没有 `romfs/` 时构建不会碰版本目录。`exefs/` 里没有可合并进 main 的东西（只有
 `subsdk9`、只有 `main.npdm`，甚至空的 `exefs/`）只算提示、不算失败：构建照常往下走，只是这个 mod 只生效数据
 那一半。带 `--update` 时补丁合并进更新后的模块，也就是 App 实际运行的那个。
+
+**旷野之息 1.9.0。** 同样的 `--mod` 参数和同样的补丁格式也适用于 1.9.0 的构建（基础 NSP、`--update` 等按 1.9.0 的常规构建给出）。
+补丁打在核对过的 1.9.0 main 上，`@nsobid-` 一行必须是这个 main 的（解出的 `main` 偏移 0x40 起的 20 字节）。补丁落在这个游戏里 App 自己打补丁或检查的位置上会被拒绝：
+实时帧步长、手柄重复计数、坞站渲染分辨率、`TOTK_JQ_CHECK` 的位置，以及 `runtime/game_version.h` 里 1.9.0 一段列出的位置
+（都由 `games/totk/scripts/patch_sites.py` 从 `runtime/game_patches_botw.c` 读出）。与王国之泪有三处不同：
+
+- 这个游戏拒绝 `--install-mod-romfs`。把模组的 RomFS 文件复制到
+  `~/Library/Application Support/MacNativeGames/BotW/mods/botw190`，再按下面「旷野之息」一节生成清单；模组带 `romfs/` 时构建会提示这一点。
+- 1.6.0 会被拒绝：它的位置还没有列出。这个游戏也还没有 iPhone / iPad 版本。
+- 想不重新构建就试一个 `.pchtxt`，在工作目录（`<work>/totk`，里面有 `extracted/botw190/exefs/main`）里用 `TOTK_PCHTXT=<文件>` 启动游戏
+  （开发用开关，仅 Mac、仅 1.9.0；读法与构建相同，但字节写进游戏实际运行的改写后 main，
+  所以补丁落在改写器改过的指令上时表现会不同）。文件是给另一个 main 的、或改到 App 检查的字时，游戏在启动时停止。
 
 <a id="data-zh"></a>
 ### 模组的 RomFS 文件：`--install-mod-romfs`
