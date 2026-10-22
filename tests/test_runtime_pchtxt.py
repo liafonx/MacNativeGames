@@ -1,6 +1,6 @@
-"""TOTK_PCHTXT (runtime/game_patches.c patch_pchtxt) reads a pchtxt the way the build's --mod does
-(games/totk/scripts/mod_exefs.py): @disabled sections are not applied, @flag print_values is accepted, and
-"@flag offset_shift 0x100" is required before the first patch line."""
+"""TOTK_PCHTXT (runtime/game_patches.c patch_pchtxt, and Breath of the Wild 1.9.0's copy in game_patches_botw.c) reads a
+pchtxt the way the build's --mod does (games/totk/scripts/mod_exefs.py): @disabled sections are not applied, @flag
+print_values is accepted, and "@flag offset_shift 0x100" is required before the first patch line."""
 from pathlib import Path
 import os
 import shutil
@@ -14,8 +14,10 @@ BUILD_ID = bytes(range(0x10, 0x24))       # 20 bytes at 0x40 of the extracted ma
 HEADER = f'@nsobid-{BUILD_ID.hex().upper()}\n@flag print_values\n@flag offset_shift 0x100\n'
 
 
-@unittest.skipUnless(sys.platform == 'darwin', 'the runtime builds on macOS only')
-class RuntimePchtxt(unittest.TestCase):
+class PchtxtCases:
+    DEFINES = []          # compiler options that select the game's runtime source (tests/pchtxt_probe.c)
+    GAME_DIR = 'v0'       # extracted/<this>/exefs/main: where the runtime reads main's build id
+
     @classmethod
     def setUpClass(cls):
         compiler = shutil.which('clang')
@@ -26,13 +28,13 @@ class RuntimePchtxt(unittest.TestCase):
         cls.probe = cls.dir / 'pchtxt-probe'
         gfx = ROOT / 'games/totk/third_party/d2r_gfx/gfx/nvn'
         build = subprocess.run([compiler, '-std=c11', '-Wall', '-Wextra', '-Werror', '-Wno-unused-function',
-                                '-Wno-deprecated-declarations', '-I' + str(gfx / 'include'),
+                                '-Wno-deprecated-declarations', *cls.DEFINES, '-I' + str(gfx / 'include'),
                                 '-Wl,-undefined,dynamic_lookup', '-Wl,-dead_strip',
                                 str(ROOT / 'tests/pchtxt_probe.c'), '-o', str(cls.probe)],
                                capture_output=True, text=True, timeout=90)
         if build.returncode:
             raise AssertionError(build.stdout + build.stderr)
-        main = cls.dir / 'extracted/v0/exefs/main'
+        main = cls.dir / 'extracted' / cls.GAME_DIR / 'exefs/main'
         main.parent.mkdir(parents=True)
         main.write_bytes(b'NSO0' + bytes(0x3c) + BUILD_ID + bytes(0x100))
 
@@ -76,6 +78,33 @@ class RuntimePchtxt(unittest.TestCase):
         code, out = self.run_patch('@nsobid-' + '00' * 20 + '\n@flag offset_shift 0x100\n@enabled\n40 aa\n@stop\n')
         self.assertEqual(code, 3, out)
         self.assertIn('another build of main', out)
+
+
+@unittest.skipUnless(sys.platform == 'darwin', 'the runtime builds on macOS only')
+class RuntimePchtxt(PchtxtCases, unittest.TestCase):
+    pass
+
+
+@unittest.skipUnless(sys.platform == 'darwin', 'the runtime builds on macOS only')
+class RuntimePchtxtBotw190(PchtxtCases, unittest.TestCase):
+    """Breath of the Wild 1.9.0 has its own copy of the reader (game_patches_botw.c): the same reading, its own folder."""
+    DEFINES = ['-DGAME_BOTW190']
+    GAME_DIR = 'botw190'
+
+
+@unittest.skipUnless(sys.platform == 'darwin', 'the runtime builds on macOS only')
+class RuntimePchtxtBotw160(PchtxtCases, unittest.TestCase):
+    """1.6.0 has no reserved-site list for --mod and no test of this reader yet: TOTK_PCHTXT stops the start there."""
+    DEFINES = ['-DGAME_BOTW160']
+    GAME_DIR = 'botw160'
+    test_disabled_section_is_not_applied = test_community_header_with_print_values_and_crlf = None
+    test_missing_offset_shift_stops = test_another_offset_shift_stops = test_unknown_flag_stops = None
+    test_another_build_stops = None
+
+    def test_the_variable_stops_the_start(self):
+        code, out = self.run_patch(HEADER + '@enabled\n40 aabbccdd\n@stop\n')
+        self.assertEqual(code, 3, out)
+        self.assertIn('only Breath of the Wild 1.9.0 so far', out)
 
 
 if __name__ == '__main__':
