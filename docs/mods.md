@@ -271,10 +271,10 @@ Nothing of the game is in the project.
   styles follow your setup with `--face-buttons position|label` and `--controls <controls.txt>` (`--controls` needs
   `--face-buttons`). Without the two options the output is the same as before: the default layout by position. The stick
   presses and the prompts drawn as fixed images keep their Switch icons.
-- Breath of the Wild 1.6.0 and 1.9.0: `games/botw/scripts/botw_prompts.py` redraws eight key textures in the Xbox style
+- Breath of the Wild 1.9.0 (1.6.0 untested): `games/botw/scripts/botw_prompts.py` redraws eight key textures in the Xbox style
   (see below).
 
-Before they write, both tools print one line for each Switch button, for example `Switch A <- Xbox X`. Check these lines.
+Before they write, the tools print one line for each Switch button they change, for example `Switch A <- Xbox X`. `make_button_icons.py` prints these lines when you pass `--face-buttons` or `--controls`. Check these lines.
 
 The prompts depend on the face mode: the game's `TOTK_FACE_BUTTONS`, or the controller type picked with key 6. Pass the
 same mode as `--face-buttons`:
@@ -284,7 +284,7 @@ same mode as `--face-buttons`:
 | key 6 on Xbox or PlayStation | `position` |
 | key 6 on Switch | `label` |
 | key 6 on auto, with `TOTK_FACE_BUTTONS=label` | `label` |
-| key 6 on auto, without `TOTK_FACE_BUTTONS` | `position` |
+| key 6 on auto, without `TOTK_FACE_BUTTONS` | `position` (`label` for a Nintendo controller) |
 
 The shortcut reminder shows the current type. With the wrong mode, every face prompt shows the wrong letter: Xbox A and B
 trade places, and so do X and Y. Pass the `controls.txt` the game reads, from its data folder
@@ -653,9 +653,9 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
   `--face-buttons position|label` 和 `--controls <controls.txt>` 后按你的设置显示（`--controls` 必须同时给
   `--face-buttons`）。不加这两个参数时，输出和以前完全一样：默认的按位置布局。摇杆按下和以固定图片显示的提示仍是
   Switch 图标。
-- 旷野之息 1.6.0 和 1.9.0：`games/botw/scripts/botw_prompts.py` 以 Xbox 风格重绘八张按键贴图（见下文）。
+- 旷野之息 1.9.0（1.6.0 未测试）：`games/botw/scripts/botw_prompts.py` 以 Xbox 风格重绘八张按键贴图（见下文）。
 
-写文件之前，两个工具都会为每个 Switch 按键打印一行，例如 `Switch A <- Xbox X`。先核对这些行。
+写文件之前，工具会为它改动的每个 Switch 按键打印一行，例如 `Switch A <- Xbox X`；`make_button_icons.py` 在加了 `--face-buttons` 或 `--controls` 时才打印。先核对这些行。
 
 提示取决于面键的映射方式：游戏的 `TOTK_FACE_BUTTONS`，或 6 键选的手柄类型。`--face-buttons` 要用同一种：
 
@@ -664,7 +664,7 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
 | 6 键选 Xbox 或 PlayStation | `position` |
 | 6 键选 Switch | `label` |
 | 6 键为自动，设了 `TOTK_FACE_BUTTONS=label` | `label` |
-| 6 键为自动，没设 `TOTK_FACE_BUTTONS` | `position` |
+| 6 键为自动，没设 `TOTK_FACE_BUTTONS` | `position`（任天堂手柄为 `label`） |
 
 快捷键说明会显示当前的手柄类型。映射方式选错时，每个面键提示的字母都不对：Xbox 的 A 和 B 互换，X 和 Y 也互换。
 `--controls` 要用游戏读取的那份 `controls.txt`，它在游戏的数据目录里

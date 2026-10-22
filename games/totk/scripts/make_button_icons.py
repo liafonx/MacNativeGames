@@ -423,7 +423,7 @@ def main():
     if args.style == 'playstation-label' and args.face_buttons == 'position':
         parser.error('playstation-label is --face-buttons label')
     if args.controls or args.face_buttons:
-        face = args.face_buttons or 'label'
+        face = args.face_buttons or ('label' if args.style == 'playstation-label' else 'position')
         try:
             controls = prompt_controls(args.controls.read_text() if args.controls else '', face)
         except LayoutError as error:

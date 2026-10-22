@@ -138,8 +138,8 @@ def prompt_controls(controls_text=None, face_buttons='position'):
 SWITCH_LABEL = {'lstick': 'left stick press', 'rstick': 'right stick press', 'plus': '+', 'minus': '-'}
 
 
-def describe(controls_text, face_buttons, style='xbox'):
-    """Lines like `Switch A <- Xbox X` for the user to check before a mod is built."""
+def describe(controls_text, face_buttons, style='xbox', slots=None):
+    """Lines like `Switch A <- Xbox X` for the user to check before a mod is built (only the Switch buttons in `slots`, if given)."""
     faces = {'xbox': {'a': 'A', 'b': 'B', 'x': 'X', 'y': 'Y'},
              'playstation': {'a': 'Cross', 'b': 'Circle', 'x': 'Square', 'y': 'Triangle'}}[style]
     other = {'l1': 'LB', 'r1': 'RB', 'l2': 'LT', 'r2': 'RT', 'l3': 'LS', 'r3': 'RS', 'menu': 'Menu', 'view': 'View'}
@@ -148,6 +148,8 @@ def describe(controls_text, face_buttons, style='xbox'):
     brand = {'xbox': 'Xbox', 'playstation': 'PlayStation'}[style]
     lines = []
     for slot, pad in prompt_controls(controls_text, face_buttons).items():
+        if slots is not None and slot not in slots:
+            continue
         shown = 'unchanged (nothing drives it)' if pad is None else faces.get(pad, other.get(pad, pad))
         lines.append(f'Switch {SWITCH_LABEL.get(slot, slot.upper())} <- ' + (shown if pad is None else f'{brand} {shown}'))
     return lines
