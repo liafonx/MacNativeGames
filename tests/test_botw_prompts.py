@@ -231,6 +231,111 @@ class Textures(unittest.TestCase):
         self.assertEqual(contour[12], (20.0, 0.0))
 
 
+def bc4_bntx(width, height, block_height, rows):
+    """A BNTX with one BC4 block-linear texture holding `rows` (a list of bytearray rows), as inside a BFFNT's glyph sheet."""
+    blocks_w, blocks_h = width // 4, height // 4
+    gobs = -(-blocks_h // (8 * block_height)) * block_height * (width * 2 // 64)
+    image = bytearray(gobs * 512)
+    for by in range(blocks_h):
+        for bx in range(blocks_w):
+            at = bf.gob_address(bx, by, blocks_w, 8, block_height)
+            image[at:at + 8] = bf.bc4_encode([rows[by * 4 + i // 4][bx * 4 + i % 4] for i in range(16)])
+    head = bytearray(b'BNTX' + bytes(0x1fc)); name = struct.pack('<H', 1) + b'x' + bytes(5)
+    entry = bytearray(0xa0); entry[:4] = b'BRTI'
+    struct.pack_into('<HHHIIIIIIII', entry, 0x12, 0, 0, 1, 1, bf.BC4_UNORM, 0, width, height, 1, 1, block_height.bit_length() - 1)
+    struct.pack_into('<I', entry, 0x50, len(image))
+    name_at, brti_at = len(head), len(head) + len(name)
+    pointers_at = brti_at + len(entry); data_at = pointers_at + 8
+    struct.pack_into('<Q', entry, 0x60, name_at); struct.pack_into('<Q', entry, 0x70, pointers_at)
+    return bytes(head + name + entry + struct.pack('<Q', data_at) + image)
+
+
+def bffnt(rows, columns=5, grid_rows=4, cell=50, block_height=1, codes=(0xE040, 0xE041, 0xE042, 0xE043)):
+    """A BFFNT: header, TGLP with the sheet (a BNTX) and a CMAP table starting at 0xE040 (glyph i = code 0xE040 + i)."""
+    sheet = bc4_bntx(256, grid_rows * 51 + 4, block_height, rows)
+    tglp_at = 0x14
+    sheet_at = 0x1000
+    tglp = b'TGLP' + struct.pack('<I', sheet_at + len(sheet) - tglp_at) + struct.pack('<BBBBIHHHHHHI', cell, cell, 1, cell, len(sheet), 36, 12, columns, grid_rows, 256, grid_rows * 51 + 4, sheet_at)
+    table = struct.pack('<%dH' % len(codes), *range(len(codes)))
+    cmap = b'CMAP' + struct.pack('<I', 24 + len(table)) + struct.pack('<IIHHI', codes[0], codes[-1], 1, 0, 0) + table
+    out = bytearray(b'FFNT' + b'\xff\xfe' + struct.pack('<H', 0x14) + bytes(4) + bytes(4) + struct.pack('<H', 2) + bytes(2))
+    body = bytearray(out) + bytearray(tglp.ljust(sheet_at - len(out), b'\0')) + bytearray(sheet)
+    cmap_at = len(body); body += cmap
+    # the sections are found by walking sizes: TGLP's size reaches the CMAP
+    struct.pack_into('<I', body, tglp_at + 4, cmap_at - tglp_at)
+    return bytes(body)
+
+
+@unittest.skipIf(bf is None, 'needs Python 3.14')
+class FontGlyphs(unittest.TestCase):
+    def sheet(self):
+        rng = random.Random(3)
+        rows = [bytearray(rng.choice((0, 255, 128)) for _ in range(256)) for _ in range(4 * 51 + 4)]
+        return rows
+
+    def test_bc4_block_round_trip_of_flat_and_two_level_blocks(self):
+        for values in ([0] * 16, [255] * 16, [0, 255] * 8, [7] * 16):
+            self.assertEqual(bf.bc4_decode(bf.bc4_encode(values)), values)
+
+    def test_the_sheet_reads_back_and_a_cell_is_upright(self):
+        rows = self.sheet()
+        data = bffnt(rows)
+        font = bf.Bffnt(data)
+        self.assertEqual((font.cell, font.columns, font.rows), (50, 5, 4))
+        self.assertEqual(sorted(font.cells), [0xE040, 0xE041, 0xE042, 0xE043])
+        decoded = bf.bc4_read(data[font.sheet_at:], font.texture)
+        x0, y0, x1, y1 = font.cell_box(0xE042)
+        self.assertEqual(font.get(decoded, 0xE042), [bytes(r[x0:x1]) for r in reversed(decoded[y0:y1])])
+        self.assertEqual(font.cell_box(0xE040)[1], (4 - 1) * 51)            # glyph 0 is the bottom row of the sheet
+
+    def test_only_the_blocks_under_the_changed_cell_are_written_again(self):
+        data = bffnt(self.sheet())
+        font = bf.Bffnt(data)
+        sheet = data[font.sheet_at:]
+        rows = bf.bc4_read(sheet, font.texture)
+        box = font.put(rows, 0xE041, [bytes([200]) * 50] * 50)
+        image = bf.bc4_image(sheet, font.texture, rows, [box])
+        old = sheet[font.texture.offset:font.texture.offset + font.texture.image_size]
+        changed = [i for i in range(len(image)) if image[i] != old[i]]
+        self.assertTrue(changed)
+        self.assertLess(len(changed), len(image) // 3)                       # one cell of twenty: most blocks are untouched
+        after = bf.bc4_read(sheet[:font.texture.offset] + image + sheet[font.texture.offset + len(image):], font.texture)
+        self.assertEqual(font.get(after, 0xE041)[10][10], 200)
+        self.assertEqual(font.get(after, 0xE042), font.get(rows, 0xE042))    # the neighbour cell is as it was
+
+    def test_a_cell_of_the_wrong_size_and_a_wrong_format_are_refused(self):    # negative controls
+        data = bffnt(self.sheet())
+        font = bf.Bffnt(data)
+        with self.assertRaises(ValueError):
+            font.put(bf.bc4_read(data[font.sheet_at:], font.texture), 0xE040, [bytes(50)] * 49)
+        r8 = bntx({NAMES[0]: picture(1)}); texture = bf.bntx_textures(r8)[NAMES[0]]
+        with self.assertRaises(ValueError):
+            bf.bc4_read(r8, texture)
+        with self.assertRaises(ValueError):
+            bf.Bffnt(b'NOPE' + bytes(100))
+
+    def test_make_font_trades_the_face_glyphs_and_keeps_the_rest_of_the_archive(self):
+        rows = self.sheet()
+        data = bffnt(rows)
+        archive = sarc({'External_00.bffnt': data, 'Other.bffnt': sample(2000, 9)})
+        stream = yaz0_encode(archive)
+        new_stream, cells, _ = bp.make_font(stream, pl.prompt_controls('', 'position'), StubLetters())
+        self.assertEqual(sorted(cells), [0xE040, 0xE041, 0xE042, 0xE043])    # the synthetic font has no other glyphs
+        new_archive = bf.yaz0_decode(new_stream)
+        self.assertEqual(len(new_archive), len(archive))
+        before, after = bf.sarc_members(archive), bf.sarc_members(new_archive)
+        self.assertEqual(archive[slice(*before['Other.bffnt'])], new_archive[slice(*after['Other.bffnt'])])
+        font = bf.Bffnt(archive[slice(*before['External_00.bffnt'])])
+        new_data = new_archive[slice(*after['External_00.bffnt'])]
+        old_rows = bf.bc4_read(archive[slice(*before['External_00.bffnt'])][font.sheet_at:], font.texture)
+        new_rows = bf.bc4_read(new_data[font.sheet_at:], font.texture)
+        # Switch A (E040) now shows the cell of Xbox B (E041) and the other way round, up to BC4's own rounding.
+        for a, b in ((0xE040, 0xE041), (0xE041, 0xE040)):
+            want, got = font.get(old_rows, b), font.get(new_rows, a)
+            self.assertLess(max(abs(x - y) for rw, rg in zip(want, got) for x, y in zip(rw, rg)), 130)
+            self.assertNotEqual(font.get(old_rows, a), got)
+
+
 @unittest.skipIf(bf is None, 'needs Python 3.14')
 class SystemFont(unittest.TestCase):
     def test_bfttf_decodes_to_the_font_inside(self):
