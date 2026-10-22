@@ -271,7 +271,7 @@ Nothing of the game is in the project.
   styles follow your setup with `--face-buttons position|label` and `--controls <controls.txt>` (`--controls` needs
   `--face-buttons`). Without the two options the output is the same as before: the default layout by position. The stick
   presses and the prompts drawn as fixed images keep their Switch icons.
-- Breath of the Wild 1.9.0 (1.6.0 untested): `games/botw/scripts/botw_prompts.py` redraws eight key textures in the Xbox style
+- Breath of the Wild 1.9.0 (1.6.0 untested): `games/botw/scripts/botw_prompts.py` redraws eight key textures in the Xbox (or PlayStation) style
   (see below).
 
 Before they write, the tools print one line for each Switch button they change, for example `Switch A <- Xbox X`. `make_button_icons.py` prints these lines when you pass `--face-buttons` or `--controls`. Check these lines.
@@ -318,8 +318,10 @@ These prompts keep the Switch look:
 - A prompt whose button has no Xbox picture or letter here, for example Switch A on a shoulder button. The tool prints a
   note for it.
 
-There is no PlayStation style for Breath of the Wild yet. The output was checked by eye on a decoded picture of the 1.9.0
-textures. It is not yet tested in play.
+`--style playstation` shows PlayStation buttons instead: L1, L2 and L3 (R1 and R2 in the font), and Options and Create for + and −.
+The game's face pictures carry Xbox letters, so the tool draws the Cross, Circle, Square and Triangle again, on a disc of the same
+size and place as the game's. The output was checked by eye on a decoded picture of the 1.9.0 textures. It is not yet tested
+in play.
 
 Only the bytes of the changed textures differ. Every other member and byte of the pack is the original, and the
 decompressed `Layout/Common.sblarc` keeps its size. The tool writes only `Pack/Bootup.pack`, the seven `Font/Font_*.sbfarc` and `manifest.tsv`. The other
@@ -657,7 +659,7 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
   `--face-buttons position|label` 和 `--controls <controls.txt>` 后按你的设置显示（`--controls` 必须同时给
   `--face-buttons`）。不加这两个参数时，输出和以前完全一样：默认的按位置布局。摇杆按下和以固定图片显示的提示仍是
   Switch 图标。
-- 旷野之息 1.9.0（1.6.0 未测试）：`games/botw/scripts/botw_prompts.py` 以 Xbox 风格重绘八张按键贴图（见下文）。
+- 旷野之息 1.9.0（1.6.0 未测试）：`games/botw/scripts/botw_prompts.py` 以 Xbox（或 PlayStation）风格重绘八张按键贴图（见下文）。
 
 写文件之前，工具会为它改动的每个 Switch 按键打印一行，例如 `Switch A <- Xbox X`；`make_button_icons.py` 在加了 `--face-buttons` 或 `--controls` 时才打印。先核对这些行。
 
@@ -700,7 +702,9 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 - 右摇杆按下（它没有自己的贴图），以及字体里两个摇杆按下的字形：字形里的字母和圆环相连，工具找不到它，会打印一行说明。
 - 对应按键在这里没有 Xbox 图案或字母的提示，例如把 Switch A 放在肩键上。工具会为它打印一行说明。
 
-旷野之息还没有 PlayStation 风格。输出只在解码后的 1.9.0 贴图图片上用肉眼核对过，还没有在游戏里测试。
+加 `--style playstation` 则显示 PlayStation 按键：L1、L2、L3（字体里还有 R1、R2），+ 和 − 变成 Options 和 Create。游戏的面键图案带
+Xbox 字母，所以工具重新画叉、圆、方、三角，放在与游戏原图同样大小和位置的圆盘上。输出只在解码后的 1.9.0 贴图图片上用肉眼核对过，
+还没有在游戏里测试。
 
 只有改动的贴图字节不同：包里其余每个成员、每个字节都是原版，解压后的 `Layout/Common.sblarc` 大小不变。工具只写
 `Pack/Bootup.pack`、七个 `Font/Font_*.sbfarc` 和 `manifest.tsv`；目录里的其他文件保留，也会写进清单。目录里已经有这些文件之一（别的模组的，
