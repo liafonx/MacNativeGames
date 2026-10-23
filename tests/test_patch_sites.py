@@ -103,6 +103,8 @@ class Extraction(unittest.TestCase):
                      0x12660c8,                         # the docked render size
                      0xc617e8, 0x15a01a0, 0x1d78198):   # GAME_ADDR sites of game_version.h's 1.9.0 block
             self.assertIn(site, found, hex(site))
+        for word in (0x1266114, 0x1266118, 0x126611c):   # the phone's handheld render size, three instructions
+            self.assertTrue(patch_sites.overlaps([(word, 4)], patch_sites.sites('botw190')), hex(word))
         self.assertNotIn(0x1c0120c, found)              # 1.6.0's VFR site: that branch is not compiled for 1.9.0
         self.assertNotIn(0x126e490, found)              # 1.6.0's pad loop
         self.assertNotIn(0x1821674, found)              # 1.6.0's render size
@@ -126,9 +128,11 @@ class Extraction(unittest.TestCase):
                      0x1821674,                         # the docked render size
                      0xe53f8c, 0x2128690, 0x2c7ef90,    # GAME_ADDR sites of game_version.h's 1.6.0 block
                      0x182167c, 0x18216ac, 0x1804c44, 0xe53fa0,   # the output size's display-mode and heap checks
-                     0x18216c8, 0x18216cc, 0x18216d0):   # the phone's handheld render size
+                     0x18216c8):                        # the phone's handheld render size (three instructions)
             self.assertIn(site, found, hex(site))
         sizes = {site.offset: site.size for site in reserved}
+        for word in (0x18216cc, 0x18216d0):
+            self.assertTrue(patch_sites.overlaps([(word, 4)], reserved), hex(word))
         self.assertEqual(sizes[0x126e490], 4 * 38)      # the pad loop, 38 instructions rewritten in place
         self.assertEqual(sizes[0x1214474], 4 * 9)       # the menu countdown, 9 instructions
         for site in (0xe563dc, 0x1805028):              # the output size's initialisers: movz, and the movk 12 bytes on
