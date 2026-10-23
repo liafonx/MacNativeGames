@@ -58,6 +58,8 @@ def yaz0_splice(data, decoded, edits):
     """The Yaz0 stream `data` (which decodes to `decoded`) with `edits` applied: a list of (offset, new bytes) that keep the
     size. The stream before the first group at or before an edit and after the first group that starts REACH bytes past it is
     kept as it was; the stretch between is written as literals. Decodes the result and checks it before returning it."""
+    if not edits:
+        return data
     expected = bytearray(decoded)
     for offset, blob in edits:
         expected[offset:offset + len(blob)] = blob

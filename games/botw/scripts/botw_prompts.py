@@ -386,8 +386,11 @@ def main():
             parser.error(f'{romfs / need} not found')
     if not (app_fonts / FONT).is_file():
         parser.error(f'{app_fonts / FONT} not found (the app\'s copy of the Switch system fonts)')
-    if (args.mod / PACK).exists() and not args.replace:
-        parser.error(f'{args.mod / PACK} already exists (another mod\'s, or an earlier run): pass --replace to overwrite it')
+    index = read_index(romfs / 'runtime-index.bin')
+    fonts = sorted(n for n in index if n.startswith('Font/Font_') and n.endswith('.sbfarc'))
+    exists = [n for n in (PACK, *fonts) if (args.mod / n).exists()]
+    if exists and not args.replace:      # checked before anything is written
+        parser.error(f'{args.mod / exists[0]} already exists (another mod\'s, or an earlier run): pass --replace to overwrite it')
     font_notes = []
     try:
         controls = prompt_controls(args.controls.read_text() if args.controls else '', args.face_buttons)
@@ -399,7 +402,6 @@ def main():
 
     from fontTools.ttLib import TTFont
     letters = Letters(TTFont(io.BytesIO(bfttf_decode((app_fonts / FONT).read_bytes()))))
-    index = read_index(romfs / 'runtime-index.bin')
     with (romfs / 'romfs.bin').open('rb') as image:
         offset, size = index[PACK]; image.seek(offset); pack = image.read(size)
     new_pack, new, drawn, notes, layout_sizes = make_pack(pack, controls, letters, args.style, not args.keep_switch_pictures)
@@ -427,10 +429,6 @@ def main():
         target = args.preview.with_name(args.preview.stem + '-pictures.png')
         png(rows, target, 2)
         print(f'{target}: {", ".join(sorted(drawn))}')
-    fonts = sorted(n for n in index if n.startswith('Font/Font_') and n.endswith('.sbfarc'))
-    exists = [n for n in fonts if (args.mod / n).exists()]
-    if exists and not args.replace:
-        sys.exit(f'{args.mod / exists[0]} already exists: pass --replace to overwrite it (nothing else was written to the fonts)')
     for name in fonts:
         offset, size = index[name]
         with (romfs / 'romfs.bin').open('rb') as image:
