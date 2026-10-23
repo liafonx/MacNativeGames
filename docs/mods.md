@@ -297,8 +297,9 @@ The tools below make the same icons by hand, into the mods folder.
 
 - Tears of the Kingdom: `games/totk/scripts/make_button_icons.py` redraws the icon font. The `xbox` and `playstation`
   styles follow your setup with `--face-buttons position|label` and `--controls <controls.txt>` (`--controls` needs
-  `--face-buttons`). Without the two options the output is the same as before: the default layout by position. The stick
-  presses and the prompts drawn as fixed images keep their Switch icons.
+  `--face-buttons`). Without the two options the output is the same as before: the default layout by position. The `xbox`
+  and `playstation` styles draw the stick presses as LS and RS (L3 and R3); the prompts drawn as fixed images keep their
+  Switch icons.
 - Breath of the Wild 1.9.0 (1.6.0 untested): `games/botw/scripts/botw_prompts.py` redraws eight key textures in the Xbox (or PlayStation) style
   and the controller pictures of the controller tips page (see below).
 
@@ -743,8 +744,8 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
 
 - 王国之泪：`games/totk/scripts/make_button_icons.py` 重绘图标字体。`xbox` 和 `playstation` 风格加上
   `--face-buttons position|label` 和 `--controls <controls.txt>` 后按你的设置显示（`--controls` 必须同时给
-  `--face-buttons`）。不加这两个参数时，输出和以前完全一样：默认的按位置布局。摇杆按下和以固定图片显示的提示仍是
-  Switch 图标。
+  `--face-buttons`）。不加这两个参数时，输出和以前完全一样：默认的按位置布局。`xbox` 和
+  `playstation` 风格把摇杆按下画成 LS 和 RS（L3 和 R3）；以固定图片显示的提示仍是 Switch 图标。
 - 旷野之息 1.9.0（1.6.0 未测试）：`games/botw/scripts/botw_prompts.py` 以 Xbox（或 PlayStation）风格重绘八张按键贴图和手柄提示页上的手柄图片（见下文）。
 
 写文件之前，工具会为它改动的每个 Switch 按键打印一行，例如 `Switch A <- Xbox X`；`make_button_icons.py` 在加了 `--face-buttons` 或 `--controls` 时才打印。先核对这些行。
