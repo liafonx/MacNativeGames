@@ -138,6 +138,11 @@ class Extraction(unittest.TestCase):
             self.assertNotIn(site, found, hex(site))
         self.assertNotIn(0x8f6c60, found)               # TOTK 1.0.0 60 FPS
 
+    def test_botw_sites_skip_the_runtime_copy_of_the_list(self):
+        # g_pchtxt_reserved is TOTK_PCHTXT's copy of this list: its rows are not sites, or the parity test checks itself.
+        text = 'static const struct { uint32_t off, size; } g_pchtxt_reserved[] = {\n    {0x40, 0x4},\n};\nx = {0x80u, 1};\n'
+        self.assertEqual([site.offset for site in patch_sites.botw_sites(text, 't.c', set())], [0x80])
+
     def test_the_botw_branch_is_chosen_by_the_macros(self):
         text = '#ifdef A\none\n#else\ntwo\n#endif\n#ifndef A\nthree\n#endif\n#if defined(B)\nfour\n#elif C\nfive\n#endif\n#if X > 1\nsix\n#endif\n'
         kept = lambda defined: {line for line in patch_sites.compiled_text(text, defined).split() if line.isalpha()}
