@@ -191,6 +191,36 @@ class Drawing(unittest.TestCase):
         cx, cy = art.PIECE_LEFT['stick']
         self.assertEqual((grey[int(cy)][int(cx) + 18], alpha[int(cy)][int(cx)]), (art.DARK, 255))
 
+    def test_the_playstation_pictures_keep_every_button_in_its_switch_place(self):
+        controls = pl.prompt_controls('', 'position')
+        draw = {name: art.PICTURES[name][1](controls, Recorder(), bp.PLAYSTATION_TEXT, style='playstation') for name in art.PICTURES}
+        for name, (grey, alpha) in draw.items():
+            size = art.PICTURES[name][0]
+            self.assertEqual((len(grey[0]), len(grey)), size, name)
+            if name not in SNN[:2]:                 # the shoulder pieces differ only in their labels (checked below)
+                self.assertTrue((grey, alpha) != art.PICTURES[name][1](controls, StubLetters(), bp.XBOX_TEXT), name)
+        grey, alpha = draw[FRONT]
+        dpad = art.FRONT_DPAD
+        points = [*art.FRONT_STICKS.values(), *art.FRONT_FACE.values(), *art.FRONT_MENUS.values(),
+                  *[(dpad[0] + dx, dpad[1] + dy) for dx, dy in ((0, -17), (17, 0), (0, 17), (-17, 0))]]
+        for cx, cy in points:                       # the end of each callout line is on a dark button
+            self.assertEqual(alpha[int(cy)][int(cx)], 255, (cx, cy))
+            self.assertLess(min(grey[int(cy) + dy][int(cx) + dx] for dx in range(-3, 4) for dy in range(-3, 4)), art.RIM, (cx, cy))
+        self.assertGreater(grey[74][288], art.BODY)          # the touchpad, not the Xbox guide button, is at the top middle
+        for slot, (cx, cy) in art.FRONT_FACE.items():       # the face buttons carry light symbols on dark discs
+            ring = [grey[int(cy) + dy][int(cx) + dx] for dx in range(-6, 7) for dy in range(-6, 7)]
+            self.assertTrue(max(ring) >= art.LIGHT - 5 and min(ring) <= art.DARK + 5, slot)
+
+    def test_the_playstation_shoulders_read_l2_l1_r2_r1(self):
+        controls = pl.prompt_controls('', 'position')
+        top, left, right = Recorder(), Recorder(), Recorder()
+        art.PICTURES[TOP][1](controls, top, bp.PLAYSTATION_TEXT, style='playstation')
+        art.PICTURES[SNN[0]][1](controls, left, bp.PLAYSTATION_TEXT, style='playstation')
+        art.PICTURES[SNN[1]][1](controls, right, bp.PLAYSTATION_TEXT, style='playstation')
+        self.assertEqual(sorted(label for label, *_ in top.calls), ['L1', 'L2', 'R1', 'R2'])
+        self.assertEqual(sorted(label for label, *_ in left.calls), ['L1', 'L2'])
+        self.assertEqual(sorted(label for label, *_ in right.calls), ['R1', 'R2'])
+
     def test_canvas_blends_and_inset_shrinks(self):
         canvas = art.Canvas(20, 20)
         canvas.paint([art.rounded_rect(2, 2, 18, 18, 3)], 100)
@@ -215,7 +245,8 @@ class MakePackPictures(unittest.TestCase):
         specs = [(n, bf.R8_UNORM, 48, 48, 3, rows, None) for n, rows in self.keys.items()]
         specs += [(FRONT, bf.R8G8_UNORM, 576, 288, 4, self.front_grey, self.front_alpha),
                   (TOP, bf.R8G8_UNORM, 576, 100, 4, self.top_grey, self.top_alpha),
-                  (SNN[0], bf.R8G8_UNORM, 64, 32, 1, self.small_grey, self.small_alpha)]       # not the size of the drawing
+                  (SNN[0], bf.R8G8_UNORM, 64, 32, 1, self.small_grey, self.small_alpha),       # not the size of the drawing
+                  (SNN[1], bf.R8G8_UNORM, 228, 228, 4, noise(228, 228, 17), noise(228, 228, 18))]
         self.layout = sarc({'blyt/other.bflyt': sample(3000, 5), 'timg/__Combined.bntx': rg8_bntx(specs), 'anim/x.bflan': sample(500, 6)})
         self.pack = sarc({'Pack/other': sample(2000, 7), 'Layout/Common.sblarc': yaz0_encode(self.layout), 'Pack/tail': sample(900, 8)})
 
@@ -227,9 +258,9 @@ class MakePackPictures(unittest.TestCase):
     def test_the_two_big_pictures_are_drawn_and_nothing_else_of_the_pictures_changes(self):
         controls = pl.prompt_controls('', 'position')
         new_pack, changed, drawn, notes, sizes = bp.make_pack(self.pack, controls, StubLetters())
-        self.assertEqual(sorted(drawn), sorted([FRONT, TOP]))
+        self.assertEqual(sorted(drawn), sorted([FRONT, TOP, SNN[1]]))
         blob, textures = self.textures(new_pack)
-        for name in (FRONT, TOP):
+        for name in (FRONT, TOP, SNN[1]):
             self.assertEqual(bf.rg8_read(blob, textures[name]), art.PICTURES[name][1](controls, StubLetters(), bp.XBOX_TEXT))
         self.assertEqual(bf.rg8_read(blob, textures[SNN[0]]), (self.small_grey, self.small_alpha))
         self.assertTrue(any(n.startswith(SNN[0]) and 'stays' in n for n in notes))
@@ -253,12 +284,16 @@ class MakePackPictures(unittest.TestCase):
         self.assertEqual(sorted(changed), sorted(NAMES))
 
     @unittest.skipIf(mbi is None, 'needs fontTools (the PlayStation drawers come from make_button_icons.py)')
-    def test_playstation_has_no_drawing_so_the_switch_pictures_stay(self):
-        new_pack, _, drawn, notes, _ = bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters(), 'playstation')
-        self.assertEqual(drawn, {})
-        self.assertTrue(any('stay the Switch' in n for n in notes))
+    def test_playstation_draws_its_own_pictures(self):
+        controls = pl.prompt_controls('', 'position')
+        new_pack, _, drawn, notes, _ = bp.make_pack(self.pack, controls, StubLetters(), 'playstation')
+        self.assertEqual(sorted(drawn), sorted([FRONT, TOP, SNN[1]]))
+        self.assertFalse([n for n in notes if 'stay the Switch' in n])
         blob, textures = self.textures(new_pack)
-        self.assertEqual(bf.rg8_read(blob, textures[TOP]), (self.top_grey, self.top_alpha))
+        for name in drawn:
+            self.assertEqual(bf.rg8_read(blob, textures[name]), art.PICTURES[name][1](controls, StubLetters(), bp.PLAYSTATION_TEXT, style='playstation'))
+            if name != SNN[1]:
+                self.assertTrue(drawn[name] != art.PICTURES[name][1](controls, StubLetters(), bp.XBOX_TEXT), name)
 
     def test_a_picture_in_another_format_stops_the_tool(self):      # negative control
         bad = [(n, bf.R8_UNORM, 48, 48, 3, rows, None) for n, rows in self.keys.items()] + [(FRONT, bf.R8_UNORM, 576, 288, 4, self.front_grey, None)]

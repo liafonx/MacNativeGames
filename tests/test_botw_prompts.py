@@ -505,8 +505,8 @@ class MakePackPlayStation(unittest.TestCase):
             self.assertNotEqual(got[name], self.pics[name])       # the key got its PlayStation letter
             self.assertEqual(got[name][2], self.pics[name][2])    # the rest of the key is as it was
         self.assertEqual(sorted(changed), sorted(NAMES))
-        self.assertEqual(len(notes), 1)       # the controller pictures stay the Switch's: PlayStation has no drawing
-        self.assertIn('stay the Switch', notes[0])
+        self.assertFalse([n for n in notes if 'stay the Switch' in n])     # PlayStation has its own controller pictures now
+        self.assertTrue(all('not found' in n for n in notes))               # this made-up layout holds none of them
         before, after = bf.sarc_members(self.pack), bf.sarc_members(new_pack)
         for name in before:
             if name != 'Layout/Common.sblarc':
