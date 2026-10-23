@@ -1990,7 +1990,7 @@ uint64_t mtl_sub_commit(void) {
     rp_flush();
     usnap_finish();   // TOTK: the helper threads must be done with the copies (they are, long before this)
     g_nusnap = 0;   // TOTK: the replay is done; the uniform copies stay in this submission's arena until it completes
-    upd_flush(); BOTW_WB_STAGE()   // TOTK: renamed uniform updates reach memory here, after every draw that read them through private copies
+    upd_flush(); BOTW_WB_STAGE() BOTW_TINY_COMMIT()   // TOTK: renamed uniform updates reach memory here, after every draw that read them through private copies
     if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     rs_sub_end();   // TOTK: encode stage drained before the command buffer is ended
     up_flush();
@@ -2494,6 +2494,7 @@ static void wb_note(const tex_t *t) {
     TILELOG(t, "GPU render (owned %d)", gpu_owned(t->serial));
     if (!atomic_load(&g_wb_on) || !t->mem || !t->L.size) return;
     id o = serial_get(t->serial); if (!o) return;
+    BOTW_TINY_NOTE(t, o)
     /* CPU writes after this rendering show up in nvn_dirty_since. TOTK (#90): the stamp comes first; a write that faults while
        the pages are being protected then counts as after it (taken after, it covered that page, writable from then on). */
     uint64_t stamp = nvn_dirty_now(), k = t->serial;
@@ -15578,6 +15579,54 @@ void botw_serial_note(uint64_t serial, const char *what) {
 }
 #endif
 #ifdef GAME_BOTW
+/* Water colours (BOTW_TINY_* in nvn_obj.h): some renders are read back by the CPU without an invalidate. Breath of the
+   Wild bakes one colour per water type by drawing into a 1x1 RGBA32F target in a CPU-cached pool, flushes the range and
+   reads the pixel two frames later (main+0x147d590 on 1.6.0); on hardware the GPU wrote that memory directly, here the
+   pixel stayed in the Metal texture and the game read 0 for every water type: every pond was fully transparent. Tiny
+   targets of this kind (TINY_WB linear bytes at most) are copied into their memory as soon as the submission that
+   rendered them completes, unless the CPU changed those bytes since the rendering. Larger ones still wait for an
+   invalidate (mtl_pool_invalidate). Submit thread only, as wb_note and mtl_sub_commit. */
+#define TINY_WB 256
+#define TINY_MAX 16
+typedef struct { tex_t t; uint8_t *snap; size_t lp, lr; } tiny_ent;
+static tiny_ent g_tiny[TINY_MAX]; static __strong id<MTLTexture> g_tiny_tex[TINY_MAX]; static int g_ntiny;
+void botw_tiny_note(const void *tp, const void *op) {
+    const tex_t *t = tp; id o = (__bridge id)op;
+    int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
+    if (bpb <= 0 || bw != 1 || bh != 1 || t->d.levels != 1 || t->d.samples > 1 || t->d.target == 2 || t->L.layers > 1) return;
+    size_t lp = (size_t)t->d.width * bpb, lr = t->d.height;
+    if (lp * lr > TINY_WB || t->L.size > 4096) return;
+    id<MTLTexture> mt = [o isKindOfClass:[NvPkg class]] ? ((NvPkg *)o)->tex : o; if (!mt) return;
+    int i = 0; while (i < g_ntiny && g_tiny[i].t.serial != t->serial) i++;
+    if (i == g_ntiny) { if (g_ntiny == TINY_MAX) { static int said; if (!said++) MLOG("more than %d tiny GPU renders read by the CPU in one submission", TINY_MAX); return; } g_ntiny++; }
+    else free(g_tiny[i].snap);
+    g_tiny[i] = (tiny_ent){*t, malloc(t->L.size), lp, lr}; g_tiny_tex[i] = mt;
+    if (g_tiny[i].snap) memcpy(g_tiny[i].snap, t->mem, t->L.size);
+}
+static __strong id<MTLBuffer> g_tiny_buf[64];
+void botw_tiny_commit(void) {   // in mtl_sub_commit, after the last render pass: copy the tiny targets out, then into memory on completion
+    if (!g_ntiny) return;
+    uint64_t fence = g_fence + 1;
+    id<MTLBuffer> buf = g_tiny_buf[fence % 64];
+    if (!buf) { buf = g_tiny_buf[fence % 64] = [g_dev newBufferWithLength:TINY_WB * TINY_MAX options:MTLResourceStorageModeShared]; if (!buf) MDIE("tiny write-back buffer"); res_add(buf); res_commit(); }
+    for (int i = 0; i < g_ntiny; i++) {
+        tiny_ent *e = &g_tiny[i];
+        enc_b_copy_texture_buffer(blit(), g_tiny_tex[i], 0, 0, MTLOriginMake(0, 0, 0), MTLSizeMake(e->t.d.width, e->t.d.height, 1), buf, (NSUInteger)i * TINY_WB, e->lp, e->lp * e->lr);
+        g_tiny_tex[i] = nil;
+    }
+    int n = g_ntiny; tiny_ent *l = malloc(n * sizeof *l); if (!l) MDIE("tiny write-back list"); memcpy(l, g_tiny, n * sizeof *l); g_ntiny = 0;
+    [g_commit_blocks addObject:^{
+        for (int i = 0; i < n; i++) { tiny_ent *e = &l[i]; const tex_t *t = &e->t;
+            if (e->snap && !memcmp(e->snap, t->mem, t->L.size)) {   // the CPU has not written these bytes since the rendering
+                void *tok = nvn_dirty_tracked(t->mem, t->L.size) ? nvn_dirty_gpu_write_begin(t->mem, t->L.size) : NULL;
+                if (!tok) dm_guest_write_prepare(t->mem, t->L.size);
+                if (nvn_swizzle(&t->d, 0, 0, (const uint8_t *)buf.contents + (size_t)i * TINY_WB, e->lp, t->mem)) RED_ONCE(122, "tiny write-back: unsupported layout");
+                nvn_dirty_gpu_write_end(tok);
+                TILELOG(t, "tiny write-back on completion");
+            } else TILELOG(t, "tiny write-back skipped: the CPU wrote since the render");
+            free(e->snap); }
+        free(l); }];
+}
 /* Write-back staging (BOTW_WB_* in nvn_obj.h; docs/botw-v1.9.0-port.md). Serials rendered in this submission are noted on the submit
    thread; at the submission's end each small one (WB_STAGE_MAX) is copied into its stage buffer in the same command
    buffer, so the invalidate waits for that fence only and swizzles from the stage without a read-back blit. */
