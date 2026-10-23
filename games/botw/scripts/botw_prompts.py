@@ -53,6 +53,9 @@ STYLES = {'xbox': (XBOX_TEXT, 'Xbox'), 'playstation': (PLAYSTATION_TEXT, 'PlaySt
 FONT = 'shared-fonts/0-standard.bfttf'
 BFTTF_MAGIC = 0x7f9a0218
 SIZE = 48
+HINT = 'blyt/PaMessageTipsDrcImageNN_00.bflyt'          # the hint boxes: a ring and a dot on the button of a hint
+HINT_PIECE = 'Nt_GamePadIllustSnn_02^f'                  # their picture of the face buttons
+SPOT = {pad: spot for spot, pad in art.FACE_LAYOUT.items()}     # pad face button -> the Switch button's spot that our diamond draws it at
 
 
 def bfttf_decode(blob):
@@ -252,11 +255,38 @@ def plan_pictures(bntx, textures, controls, letters, style='xbox'):
     return new, notes
 
 
+def ring_edits(layout, inner, controls):
+    """(offset, new bytes) edits of the layout archive `layout` (members `inner`) that move the ring and the dot of each hint box
+    face button (panes N_A_00 to N_Y_00 of HINT) to the spot of the button the player presses for it (controls[slot]) on our
+    drawn diamond (art.FACE_LAYOUT), and notes. The spots are the layout's own: where the Switch button's pane sits. A button
+    that stays where it is, or that no face button drives, is not edited."""
+    if HINT not in inner:
+        return [], [f'{HINT}: not found; the hint box rings stay on the Switch buttons']
+    lo, hi = inner[HINT]
+    panes, groups = bf.bflyt_panes(layout[lo:hi]), {}
+    for offset, name, parent in panes:
+        if parent and parent.startswith('N_') and parent[2:-3].lower() in FACE:
+            groups.setdefault(parent[2:-3].lower(), {})[name.split('_')[1]] = offset      # slot -> {'Color': ring, 'Point': dot}
+    if sorted(groups) != sorted(FACE) or any(sorted(g) != ['Color', 'Point'] for g in groups.values()):
+        return [], [f'{HINT}: ring panes not found; the hint box rings stay on the Switch buttons']
+    edits, notes = [], []
+    for slot in FACE:
+        pad = controls[slot]
+        if pad not in SPOT:
+            notes.append(f'{slot.upper()}: {pad or "nothing"} has no face button; its hint box ring stays')
+        elif SPOT[pad] != slot:
+            for part, offset in groups[slot].items():
+                source = lo + groups[SPOT[pad]][part] + bf.PANE_TRANSLATION
+                edits.append((lo + offset + bf.PANE_TRANSLATION, bytes(layout[source:source + 8])))
+    return edits, notes
+
+
 def make_pack(pack, controls, letters, style='xbox', pictures=True):
     """Pack/Bootup.pack with the prompts of `controls` (prompt_layout.prompt_controls) redrawn, and with `pictures` the controller
     pictures of the controller tips page too. Returns (the new pack, texture name -> new pixel rows, texture name -> (grey rows,
     alpha rows) of the pictures, notes, (Common.sblarc size before, after, decompressed size)). Only the changed textures' bytes
-    differ: every other byte of the decompressed layout archive, and every other member of the pack, is the original."""
+    (and, with a remap and the redrawn face picture, the hint box ring positions: ring_edits) differ: every other byte of the
+    decompressed layout archive, and every other member of the pack, is the original."""
     members = bf.sarc_members(pack)
     stream = pack[slice(*members[LAYOUT])]
     layout = bf.yaz0_decode(stream)
@@ -267,6 +297,9 @@ def make_pack(pack, controls, letters, style='xbox', pictures=True):
     new, notes = plan(bntx, textures, controls, letters, style)
     drawn, more = plan_pictures(bntx, textures, controls, letters, style) if pictures else ({}, [])
     edits = [(start + textures[name].offset, bf.r8_image(bntx, textures[name], rows)) for name, rows in sorted(new.items())]
+    if HINT_PIECE in drawn:       # the diamond is ours: the rings of the hint boxes go to the buttons the player presses
+        moved, more_notes = ring_edits(layout, inner, controls)
+        edits, more = edits + moved, more + more_notes
     edits += [(start + textures[name].offset, bf.rg8_image(bntx, textures[name], *drawn[name])) for name in sorted(drawn)]
     spliced = bf.yaz0_splice(stream, layout, edits)
     new_pack = bf.sarc_replace(pack, LAYOUT, spliced)

@@ -387,7 +387,9 @@ buttons from the game, so the lines still end on a button of the same kind:
   ZR and R. This puts the guide button, grips and body in an Xbox shape; they are not the Switch's shape.
 - The four face buttons keep the controller's own layout: Y at the top, X on the left, B on the right and A at the bottom
   (Triangle, Square, Circle and Cross with `--style playstation`). A `controls.txt` changes only which action a button does,
-  so it changes the prompts in the text, not the diamond. Each shoulder button shows the button you press for the Switch
+  so it changes the prompts in the text, not the diamond. The ring and dot of a hint box (panes `N_A_00` to `N_Y_00` of
+  `PaMessageTipsDrcImageNN_00`) move to the diamond button you press for that Switch button (a button no face button drives keeps
+  its ring, and the tool prints a note). Each shoulder button shows the button you press for the Switch
   button of that place, the same chain as for the prompts; one that nothing drives stays blank.
 - The Pro Controller picture (`amiiboProConNN_00`) is only in the amiibo scan hint, and the Wii U GamePad pictures
   (`Nt_GamePadIllustS_*`, `amiiboDRCNN_00`) are for the Wii U layouts. The tool leaves them as they are.
@@ -395,7 +397,7 @@ buttons from the game, so the lines still end on a button of the same kind:
   is four arrow buttons whose middles are the Switch's four d-pad buttons; a real DualSense has its d-pad above the left
   stick, but the lines end where the Switch has it. The face buttons carry Cross, Circle, Square and Triangle, Options and
   Create are small upright buttons in the places of + and −, and the shoulders read L2, L1, R2 and R1.
-- `--keep-switch-pictures` leaves all six pictures as the Switch's. A picture whose texture is not the size of the drawing
+- `--keep-switch-pictures` leaves all six pictures as the Switch's, and the rings of the hint boxes where the Switch has them. A picture whose texture is not the size of the drawing
   stays too (another game version), and the tool prints a note.
 - Tested in play on 1.9.0 (Mac, keyboard input, US and Japanese fonts). With both styles every line of the controls page
   and every ring of the hint boxes ends on a drawn button of the right kind, also in frames 0.3 s apart. Position mode
@@ -412,7 +414,8 @@ These prompts keep the Switch look:
 The game's face pictures carry Xbox letters, so the tool draws the Cross, Circle, Square and Triangle again, on a disc of the same
 size and place as the game's. It was tested in play with the controller pictures (see above).
 
-Only the bytes of the changed textures differ. Every other member and byte of the pack is the original, and the
+Only the bytes of the changed textures and, with a remapped face button, the positions of the hint box rings (eight bytes
+of a ring or dot pane) differ. Every other member and byte of the pack is the original, and the
 decompressed `Layout/Common.sblarc` keeps its size. The tool writes only `Pack/Bootup.pack`, the seven `Font/Font_*.sbfarc` and `manifest.tsv`. The other
 files in the folder stay and go into the manifest too. It stops when the folder already has one of these files
 (another mod's, or an earlier run). `--replace` overwrites it, and that other mod's changes to the pack are lost: the
@@ -843,14 +846,15 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 - 左摇杆、十字键（Switch 是四个圆键，这里画成十字）、右摇杆和四个面键在 Switch 按键的位置。View 和 Menu 在 − 和 + 的位置，
   LT、LB、RT、RB 在 ZL、L、ZR、R 的位置。中间的 Guide 键、握把和机身是 Xbox 的形状，不是 Switch 的形状。
 - 四个面键保持手柄本身的布局：上 Y、左 X、右 B、下 A（`--style playstation` 时是三角、方、圆、叉）。`controls.txt` 只改变按键
-  执行的动作，所以它改变文字里的按键提示，不改变菱形。每个肩键上写的是这个位置上的 Switch 按键你实际要按的按键（和按键提示是同一条
+  执行的动作，所以它改变文字里的按键提示，不改变菱形。提示框（`PaMessageTipsDrcImageNN_00` 的 `N_A_00` 到 `N_Y_00`）里的圆环和圆点会移到你为
+  这个 Switch 按键实际要按的菱形按键上（没有任何面键对应的按键，圆环留在原处，工具会打印一行说明）。每个肩键上写的是这个位置上的 Switch 按键你实际要按的按键（和按键提示是同一条
   规则）；没有任何按键对应的肩键留空。
 - Pro 手柄图（`amiiboProConNN_00`）只出现在 amiibo 扫描提示里，Wii U GamePad 图（`Nt_GamePadIllustS_*`、`amiiboDRCNN_00`）属于
   Wii U 版的界面，工具都不改。
 - DualSense 也保持这些位置。触控板、一个不带标志的 PS 键和静音键在两个摇杆之间。十字键是四个箭头键，每个箭头键的中心就是 Switch
   四个十字键的位置；真正的 DualSense 十字键在左摇杆上方，但引线指向 Switch 的位置。面键上是叉、圆、方、三角，Options 和 Create
   是 + 和 − 位置上的竖直小键，肩键写 L2、L1、R2、R1。
-- `--keep-switch-pictures` 让这六张图保持 Switch 的样子。贴图尺寸与图案不符时（别的游戏版本）也保持原样，工具会打印一行说明。
+- `--keep-switch-pictures` 让这六张图保持 Switch 的样子，提示框的圆环也留在 Switch 的位置。贴图尺寸与图案不符时（别的游戏版本）也保持原样，工具会打印一行说明。
 - 已在 1.9.0 游戏里测试（Mac，键盘输入，美版和日文字体）。两种风格下，操作说明页的每条引线和提示框的每个圆环都指在画出的同类按键上，
   相隔 0.3 秒的几帧里也是如此。按位置模式加 `controls.txt` 和按标签模式都显示你实际要按的按键。
   用蓝牙连接的真实 Xbox 手柄和同一个 `controls.txt` 测试时，按下的每个按键都做了图标上写的动作。没有用真实的 PlayStation 手柄测试。
@@ -863,7 +867,7 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 加 `--style playstation` 则显示 PlayStation 按键：L1、L2、L3（字体里还有 R1、R2、R3），+ 和 − 变成 Options 和 Create。游戏的面键图案带
 Xbox 字母，所以工具重新画叉、圆、方、三角，放在与游戏原图同样大小和位置的圆盘上。它和手柄图片一起在游戏里测试过（见上文）。
 
-只有改动的贴图字节不同：包里其余每个成员、每个字节都是原版，解压后的 `Layout/Common.sblarc` 大小不变。工具只写
+只有改动的贴图字节，以及面键被重映射时提示框圆环的位置（圆环或圆点图层的八个字节）不同：包里其余每个成员、每个字节都是原版，解压后的 `Layout/Common.sblarc` 大小不变。工具只写
 `Pack/Bootup.pack`、七个 `Font/Font_*.sbfarc` 和 `manifest.tsv`；目录里的其他文件保留，也会写进清单。目录里已经有这些文件之一（别的模组的，
 或者上次生成的）时工具会停下。加 `--replace` 会覆盖它，那个模组对这个包的改动也就没了：工具总是从游戏原版的包开始改。
 `--preview <图片.png>` 另外写一张改动贴图的图片，以及带手柄图片的 `<图片>-pictures.png`。
