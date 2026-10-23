@@ -131,6 +131,9 @@ class Extraction(unittest.TestCase):
                      0x18216c8):                        # the phone's handheld render size (three instructions)
             self.assertIn(site, found, hex(site))
         sizes = {site.offset: site.size for site in reserved}
+        self.assertEqual(sizes[0x15c2118], 4 * 14)       # the ultrawide aspect writer, 14 instructions rewritten in place
+        self.assertTrue(patch_sites.overlaps([(0x15c2118 + 4 * 13, 4)], reserved))   # its last word, the aspect store
+        self.assertFalse(patch_sites.overlaps([(0x15c2118 + 4 * 14, 4)], reserved))
         for word in (0x18216cc, 0x18216d0):
             self.assertTrue(patch_sites.overlaps([(word, 4)], reserved), hex(word))
         self.assertEqual(sizes[0x126e490], 4 * 38)      # the pad loop, 38 instructions rewritten in place
