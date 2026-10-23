@@ -307,5 +307,104 @@ class MakePackPictures(unittest.TestCase):
             bp.make_pack(pack, pl.prompt_controls('', 'position'), StubLetters(), 'xbox', pictures=True)
 
 
+def hint_bflyt():
+    """A made-up hint box layout (FLYT): the four face button panes with a ring and a dot at the Switch spots, and an L pane."""
+    def pane(magic, name, x, y):
+        body = magic + struct.pack('<I', 92) + bytes(4) + name.encode().ljust(24, b'\0') + bytes(8) + struct.pack('<3f', x, y, 0) + bytes(36)
+        return body
+    spots = {'A': (13.5, 9.5), 'B': (-0.5, -4.0), 'X': (-0.5, 23.0), 'Y': (-15.0, 9.5)}
+    sections = [pane(b'pan1', 'RootPane', 0, 0), b'pas1' + struct.pack('<I', 8)]
+    for number, (slot, (x, y)) in enumerate(spots.items()):
+        sections += [pane(b'pan1', f'N_{slot}_00', 0, 0), b'pas1' + struct.pack('<I', 8), pane(b'pic1', f'P_Color_{number}', x, y),
+                     pane(b'pic1', f'P_Point_{number}', x, y), b'pae1' + struct.pack('<I', 8)]
+    sections += [pane(b'pan1', 'N_L_00', 0, 0), b'pas1' + struct.pack('<I', 8), pane(b'pic1', 'P_Color_9', -13, -3), b'pae1' + struct.pack('<I', 8),
+                 b'pae1' + struct.pack('<I', 8)]
+    body = b''.join(sections)
+    return b'FLYT' + b'\xff\xfe' + struct.pack('<HIIHH', 0x14, 0, 0x14 + len(body), len(sections), 0) + body
+
+
+@unittest.skipIf(bf is None, 'needs Python 3.14')
+class HintRings(unittest.TestCase):
+    """The rings of the hint boxes follow the button the player presses (the hint piece Nt_GamePadIllustSnn_02 is drawn by us)."""
+    OWNER = 'north = a\nsouth = x\nwest = y\neast = b\n'
+
+    def setUp(self, bflyt=True, piece=True):
+        MakePackPictures.setUp(self)
+        specs = [(n, bf.R8_UNORM, 48, 48, 3, rows, None) for n, rows in self.keys.items()]
+        specs += [(FRONT, bf.R8G8_UNORM, 576, 288, 4, self.front_grey, self.front_alpha), (TOP, bf.R8G8_UNORM, 576, 100, 4, self.top_grey, self.top_alpha),
+                  (SNN[2], bf.R8G8_UNORM, 228, 228, 4, noise(228, 228, 19), noise(228, 228, 20)),
+                  (bp.DPAD_TEXTURE, bf.R8_UNORM, 64, 64, 3, DOTS, None)]
+        if not piece:
+            specs[-2] = (SNN[2], bf.R8G8_UNORM, 64, 32, 1, self.small_grey, self.small_alpha)       # not the size of the drawing
+        members = {'blyt/other.bflyt': sample(3000, 5), 'timg/__Combined.bntx': rg8_bntx(specs), 'anim/x.bflan': sample(500, 6)}
+        if bflyt:
+            members[bp.HINT] = hint_bflyt()
+        self.layout = sarc(members)
+        self.pack = sarc({'Pack/other': sample(2000, 7), 'Layout/Common.sblarc': yaz0_encode(self.layout), 'Pack/tail': sample(900, 8)})
+
+    def rings(self, pack):
+        """slot -> {'Color': (x, y), 'Point': (x, y)} of the hint layout in `pack`."""
+        layout = bf.yaz0_decode(pack[slice(*bf.sarc_members(pack)['Layout/Common.sblarc'])])
+        lo, hi = bf.sarc_members(layout)[bp.HINT]
+        out = {}
+        for offset, name, parent in bf.bflyt_panes(layout[lo:hi]):
+            if parent and parent[2:-3] in 'ABXY':
+                out.setdefault(parent[2:-3].lower(), {})[name.split('_')[1]] = struct.unpack_from('<2f', layout, lo + offset + bf.PANE_TRANSLATION)
+        return out
+
+    SPOTS = {'a': (13.5, 9.5), 'b': (-0.5, -4.0), 'x': (-0.5, 23.0), 'y': (-15.0, 9.5)}
+
+    def test_the_default_layout_is_byte_identical(self):
+        new_pack, _, _, notes, _ = bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters())
+        old = bf.yaz0_decode(self.pack[slice(*bf.sarc_members(self.pack)['Layout/Common.sblarc'])])
+        new = bf.yaz0_decode(new_pack[slice(*bf.sarc_members(new_pack)['Layout/Common.sblarc'])])
+        a, b = bf.sarc_members(old), bf.sarc_members(new)
+        self.assertEqual(old[slice(*a[bp.HINT])], new[slice(*b[bp.HINT])])
+        self.assertEqual({k: v['Color'] for k, v in self.rings(new_pack).items()}, self.SPOTS)
+        self.assertFalse([n for n in notes if 'ring' in n])
+
+    def test_a_remap_moves_the_ring_and_the_dot_to_the_button_pressed(self):
+        for style in ('xbox', 'playstation') if mbi else ('xbox',):
+            new_pack, *_ = bp.make_pack(self.pack, pl.prompt_controls(self.OWNER, 'label'), StubLetters(), style)
+            got = self.rings(new_pack)
+            # label mode: Switch A <- pad X (diamond left, the Y spot), B <- A (diamond bottom, the B spot), X <- B (right: A spot), Y <- Y (top: X spot)
+            want = {'a': self.SPOTS['y'], 'b': self.SPOTS['b'], 'x': self.SPOTS['a'], 'y': self.SPOTS['x']}
+            for slot in 'abxy':
+                self.assertEqual(got[slot], {'Color': want[slot], 'Point': want[slot]}, (style, slot))
+
+    def test_only_the_ring_positions_change(self):
+        new_pack, *_ = bp.make_pack(self.pack, pl.prompt_controls(self.OWNER, 'label'), StubLetters())
+        old = bf.yaz0_decode(self.pack[slice(*bf.sarc_members(self.pack)['Layout/Common.sblarc'])])
+        new = bf.yaz0_decode(new_pack[slice(*bf.sarc_members(new_pack)['Layout/Common.sblarc'])])
+        self.assertEqual(len(old), len(new))
+        a, b = bf.sarc_members(old), bf.sarc_members(new)
+        lo = a[bp.HINT][0]
+        diff = [i - lo for i in range(*a[bp.HINT]) if old[i] != new[i]]
+        panes = {offset: name for offset, name, _ in bf.bflyt_panes(old[slice(*a[bp.HINT])])}
+        self.assertTrue(diff)
+        self.assertTrue(all(any(o + bf.PANE_TRANSLATION <= d < o + bf.PANE_TRANSLATION + 8 and n.startswith('P_') for o, n in panes.items()) for d in diff))
+
+    def test_a_button_no_face_button_drives_keeps_its_ring(self):
+        controls = {**pl.prompt_controls('', 'position'), 'a': 'l1'}
+        new_pack, _, _, notes, _ = bp.make_pack(self.pack, controls, StubLetters())
+        self.assertEqual(self.rings(new_pack)['a']['Color'], self.SPOTS['a'])
+        self.assertTrue(any(n.startswith('A:') and 'ring stays' in n for n in notes))
+
+    def test_a_layout_without_the_hint_boxes_is_left_alone(self):
+        self.setUp(bflyt=False)
+        _, _, _, notes, _ = bp.make_pack(self.pack, pl.prompt_controls(self.OWNER, 'label'), StubLetters())
+        self.assertTrue(any(bp.HINT in n and 'not found' in n for n in notes))
+
+    def test_the_switch_pictures_keep_the_switch_rings(self):
+        new_pack, *_ = bp.make_pack(self.pack, pl.prompt_controls(self.OWNER, 'label'), StubLetters(), 'xbox', pictures=False)
+        self.assertEqual({k: v['Color'] for k, v in self.rings(new_pack).items()}, self.SPOTS)
+
+    def test_a_hint_picture_of_another_size_keeps_the_switch_rings(self):
+        self.setUp(piece=False)
+        new_pack, _, drawn, _, _ = bp.make_pack(self.pack, pl.prompt_controls(self.OWNER, 'label'), StubLetters())
+        self.assertNotIn(SNN[2], drawn)
+        self.assertEqual({k: v['Color'] for k, v in self.rings(new_pack).items()}, self.SPOTS)
+
+
 if __name__ == '__main__':
     unittest.main()

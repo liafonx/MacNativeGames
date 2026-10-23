@@ -95,6 +95,34 @@ def yaz0_splice(data, decoded, edits):
     return result
 
 
+# ---- BFLYT ------------------------------------------------------------------------------------------------------------
+
+
+PANE_MAGICS = (b'pan1', b'pic1', b'txt1', b'wnd1', b'bnd1', b'prt1', b'ali1', b'scr1')
+PANE_TRANSLATION = 44       # a pane section's (x, y, z) floats start this far into the section
+
+
+def bflyt_panes(blob):
+    """The panes of a layout (FLYT) as (section offset, name, parent name or None) in file order: a pas1 section opens the
+    children of the pane before it and a pae1 closes them. A pane's translation (x, y) is the two floats at
+    offset + PANE_TRANSLATION."""
+    if blob[:4] != b'FLYT':
+        raise ValueError('not a bflyt')
+    head, count = struct.unpack_from('<H', blob, 6)[0], struct.unpack_from('<H', blob, 0x10)[0]
+    pos, stack, last, panes = head, [], None, []
+    for _ in range(count):
+        magic, size = bytes(blob[pos:pos + 4]), struct.unpack_from('<I', blob, pos + 4)[0]
+        if magic in PANE_MAGICS:
+            last = bytes(blob[pos + 12:pos + 36]).split(b'\0')[0].decode()
+            panes.append((pos, last, stack[-1] if stack else None))
+        elif magic == b'pas1':
+            stack.append(last)
+        elif magic == b'pae1' and stack:
+            stack.pop()
+        pos += size
+    return panes
+
+
 # ---- BNTX -------------------------------------------------------------------------------------------------------------
 R8_UNORM = 0x201
 R8G8_UNORM = 0x901      # two bytes a pixel: grey shading, then alpha (the controller pictures)
