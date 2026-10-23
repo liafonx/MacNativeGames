@@ -588,23 +588,29 @@ static uint32_t native_word(uint32_t original, int kind, int k) {   /* the same 
      main+0x18216cc  movk x8, #0x44a0, lsl #48        (1280.0, the render width) -> movk x8, #0x4470, lsl #48 (960.0)
    The renderer scales its targets by render / screen width, as docked play does at 1600 / 1920, so the scene is drawn at
    960x540 and the game's own upscale draws it into the 1280x720 canvas (MetalFX does not replace it on the phone:
-   totk_mfx_up.m mfxup_enabled). Not done for 1.9.0 yet (its display-mode routine has more branches storing the pair). */
-static void patch_phone_render(Module *m) {
+   totk_mfx_up.m mfxup_enabled).
+   1.9.0: the display-mode routine main+0x1266074 jumps by a byte table (main+0x1725916, base main+0x12660bc): mode 1 ->
+   main+0x1266114, the same pair (str x8, [x19, #0x1210]); mode 3 (VR) computes its own and is left alone:
+     main+0x1266114  mov x8, #0x44a00000
+     main+0x1266118  movk x8, #0x44a0, lsl #48        -> movk x8, #0x4470, lsl #48 (960.0)
+   (its dynamic-resolution scale, main+0x12661e8, divides the render width +0x1214 by 1280.0 in handheld: 0.75). */
 #ifdef GAME_BOTW160
+enum { PHONE_RENDER = 0x18216c8u, PHONE_RENDER_STR = 0xf9094b88u };   /* str x8, [x28, #0x1290] */
+#else
+enum { PHONE_RENDER = 0x1266114u, PHONE_RENDER_STR = 0xf9090a68u };   /* str x8, [x19, #0x1210] */
+#endif
+static void patch_phone_render(Module *m) {
     if (!ios_code()) return;
-    static const struct { uint32_t off, original; } check[] = {{0x18216c8u, 0xd2a89408u}, {0x18216ccu, 0xf2e89408u}, {0x18216d0u, 0xf9094b88u}};
+    const struct { uint32_t off, original; } check[] = {{PHONE_RENDER, 0xd2a89408u}, {PHONE_RENDER + 4, 0xf2e89408u}, {PHONE_RENDER + 8, PHONE_RENDER_STR}};
     for (size_t i = 0; !CODE_PATCHED_AT_BUILD && i < sizeof check / sizeof *check; i++) {
         uint32_t w; memcpy(&w, m->base + check[i].off, 4);
         if (w != check[i].original) {
             fprintf(stderr, "[botw] handheld render size main+%#x: found %08x expected %08x\n", check[i].off, w, check[i].original);
-            runtime_fail("the phone's render size requires the 1.6.0 handheld display-mode instructions");
+            runtime_fail("the phone's render size requires the " TOTK_GAME_VERSION " handheld display-mode instructions");
         }
     }
-    put_word(m, 0x18216ccu, 0xf2e88e08u, "handheld render size");   /* movk x8, #0x4470, lsl #48: 960.0 */
+    put_word(m, PHONE_RENDER + 4, 0xf2e88e08u, "handheld render size");   /* movk x8, #0x4470, lsl #48: 960.0 */
     fprintf(stderr, "[botw] handheld render size 960x540, the game's own upscale to the 1280x720 canvas (phone)\n");
-#else
-    (void)m;
-#endif
 }
 void runtime_game_patches(Module *m) {
     fprintf(stderr, "[botw] %s game-code patches\n", TOTK_GAME_VERSION);

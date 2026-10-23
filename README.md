@@ -226,7 +226,7 @@ What works on 1.9.0 (October 20, an M1 Pro Mac with its built-in 120 Hz display,
 
 ### iPhone and iPad
 
-Version 1.4.3 has been played on an **iPhone 14 (iOS 26.6.1)** and an **iPad with the A16 chip (iPadOS 26.7.1)**, both signed with a personal development team in Xcode. Versions 1.0.0, 1.1.2 and 1.2.1 have not been tested on iOS. Breath of the Wild 1.6.0 has been played on the iPhone 14 (title, loading a save, walking around; October 23): build it with `--platform ios --ios-game-data documents` and install it with `games/totk/ios/tools/install_device.py` like Tears of the Kingdom. It fills the screen and renders at 960x540 with the game's own upscale to 1280x720, as Tears of the Kingdom does on the phone. Not yet: the 1.9.0 phone render size, a 30 fps lock on the phone.
+Version 1.4.3 has been played on an **iPhone 14 (iOS 26.6.1)** and an **iPad with the A16 chip (iPadOS 26.7.1)**, both signed with a personal development team in Xcode. Versions 1.0.0, 1.1.2 and 1.2.1 have not been tested on iOS. Breath of the Wild 1.6.0 has been played on the iPhone 14 (title, loading a save, walking around; October 23): build it with `--platform ios --ios-game-data documents` and install it with `games/totk/ios/tools/install_device.py` like Tears of the Kingdom. It fills the screen and renders at 960x540 with the game's own upscale to 1280x720, as Tears of the Kingdom does on the phone. 1.9.0 builds for the iPhone the same way (960x540 too) but has not been played on one yet. On the phone both games run at up to 60 fps, the screen's rate.
 
 - **First launch:** the app checks the game data (about 15 seconds) and imports the shaders it carries, with a progress bar. On an iPhone 14 this takes about 3 minutes before the title appears. Later launches show the title in about 8 seconds.
 - **Picture:** the game runs in handheld mode, as a Switch does without its dock: 1280×720.
@@ -524,7 +524,7 @@ python3.14 build_app.py ~/Games/botw-base.nsp -k ~/keys/prod.keys --update ~/Gam
 
 ### iPhone 和 iPad
 
-1.4.3 已在 **iPhone 14（iOS 26.6.1）** 和 **A16 芯片的 iPad（iPadOS 26.7.1）** 上实际游玩，两台都是在 Xcode 里用个人开发团队签名安装的。1.0.0、1.1.2 和 1.2.1 没有在 iOS 上测过。旷野之息 1.6.0 已在 iPhone 14 上实际游玩（标题、读档、走动；10 月 23 日）：加 `--platform ios --ios-game-data documents` 构建，和王国之泪一样用 `games/totk/ios/tools/install_device.py` 安装。画面铺满屏幕，内部 960×540，用游戏自己的放大到 1280×720，和王国之泪在手机上一样。还没有：1.9.0 的手机渲染尺寸、手机上锁 30 帧。
+1.4.3 已在 **iPhone 14（iOS 26.6.1）** 和 **A16 芯片的 iPad（iPadOS 26.7.1）** 上实际游玩，两台都是在 Xcode 里用个人开发团队签名安装的。1.0.0、1.1.2 和 1.2.1 没有在 iOS 上测过。旷野之息 1.6.0 已在 iPhone 14 上实际游玩（标题、读档、走动；10 月 23 日）：加 `--platform ios --ios-game-data documents` 构建，和王国之泪一样用 `games/totk/ios/tools/install_device.py` 安装。画面铺满屏幕，内部 960×540，用游戏自己的放大到 1280×720，和王国之泪在手机上一样。1.9.0 也能同样打包（也是 960×540），但还没在手机上玩过。手机上两款游戏都是最高 60 帧（屏幕刷新率）。
 
 - **第一次启动：** App 先校验游戏数据（约 15 秒），再导入随 App 准备的着色器，有进度条。iPhone 14 上约 3 分钟后出现标题画面；之后的启动约 8 秒出标题。
 - **画面：** 游戏以掌机模式运行，和 Switch 不接底座时一样：1280×720。
