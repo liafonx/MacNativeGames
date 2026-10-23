@@ -85,6 +85,18 @@ static inline int gamepad_type_face_by_position(int type, const char *category, 
     return gamepad_face_by_position(category, vendor);
 }
 
+/* The button icons drawn in the game's prompts (app/launcher.m picks them at start, docs/mods.md): GAMEPAD_TYPE_XBOX or
+   GAMEPAD_TYPE_PLAYSTATION, or -1 for the game's own Switch icons. type: the picked type (key 6); detected: what auto takes
+   the connected controller for (gamepad_type_detect), or the last one seen, -1 none. *by_position: the face mode the
+   icons are drawn for, as gamepad_type_face_by_position maps the buttons. */
+static inline int gamepad_icon_style(int type, int detected, int *by_position) {
+    int style = type == GAMEPAD_TYPE_AUTO ? detected : type;
+    if (style != GAMEPAD_TYPE_XBOX && style != GAMEPAD_TYPE_PLAYSTATION) return -1;
+    const char *e = getenv("TOTK_FACE_BUTTONS");
+    *by_position = type != GAMEPAD_TYPE_AUTO || !e || strcmp(e, "label");
+    return style;
+}
+
 /* The physical positions of GameController's buttonA, buttonB, buttonX, buttonY (bits 0 south, 1 east, 2 west, 3 north:
    runtime/controller_map.h). By position they sit as on an Xbox controller (A bottom, B right, X left, Y top); by label
    they name a Nintendo layout (A right, B bottom, X top, Y left). controller_map.h's default layout turns positions into

@@ -267,6 +267,34 @@ Two tools redraw the game's button prompts, so that each prompt shows the contro
 button. Both read the art from your own app and write a RomFS mod with its `manifest.tsv` into the folder you name.
 Nothing of the game is in the project.
 
+#### Automatic icons (Breath of the Wild 1.9.0)
+
+A Breath of the Wild 1.9.0 app draws the prompts itself, with no tool to run. At each start the launcher picks the icons:
+
+| Key 6 (`controller-type.txt`) | Icons |
+| --- | --- |
+| Xbox | Xbox, by position |
+| PlayStation | PlayStation, by position |
+| Switch | the game's own Switch icons |
+| auto | the controller connected at start; with none, the last one the game saw (`controller-detected.txt`). Xbox and other controllers: Xbox; DualSense and DualShock: PlayStation; Nintendo controllers and no controller yet: Switch. `TOTK_FACE_BUTTONS=label` draws them by label |
+
+The icons follow your `controls.txt` too: each prompt shows the button you press on that controller, by its own name for
+each position (`south` is Xbox A or Cross). The first start with a new type, controller or `controls.txt` makes the set
+once from the app's own RomFS (about 8 seconds on an M1 Pro, before the window opens) and keeps it in
+`button-icons/botw190/` next to `controls.txt`, at most four sets (about 37 MB each). Later starts reuse it. The game reads
+the icons at start only: after key 6 or a new controller during play, the log says
+`button icons: xbox-position now, playstation-position from the next start`, and the new icons show at the next start.
+
+- A mod in `mods/botw190` with its own `Pack/Bootup.pack` or `Font/Font_*.sbfarc` (for example one made with
+  `botw_prompts.py` below) wins: the automatic icons are left out, and the log says so. Delete those files to use them.
+- If the set cannot be made (the work folder's Python is gone, for example), the game starts with the Switch icons and
+  the log names the cause. The tools run with the Python of the work folder the app was built from (fontTools comes with
+  `games/totk/requirements.txt`).
+- `build_app.py --no-button-icons` builds the app without them; `--button-icons` adds them to a Tears of the Kingdom or
+  1.6.0 app (not tested on those yet).
+
+The tools below make the same icons by hand, into the mods folder.
+
 - Tears of the Kingdom: `games/totk/scripts/make_button_icons.py` redraws the icon font. The `xbox` and `playstation`
   styles follow your setup with `--face-buttons position|label` and `--controls <controls.txt>` (`--controls` needs
   `--face-buttons`). Without the two options the output is the same as before: the default layout by position. The stick
@@ -686,6 +714,32 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
 
 有两个工具可以重绘游戏的按键提示，让每个提示显示这个 Switch 按键实际要按的手柄按键。两个工具都从你自己的 App 读取
 图案，把一个 RomFS 模组和它的 `manifest.tsv` 写进你指定的目录。项目里不含任何游戏内容。
+
+#### 自动图标（旷野之息 1.9.0）
+
+旷野之息 1.9.0 的 App 自己绘制按键提示，不用运行任何工具。每次启动时，启动器这样选图标：
+
+| 6 键（`controller-type.txt`） | 图标 |
+| --- | --- |
+| Xbox | Xbox，按位置 |
+| PlayStation | PlayStation，按位置 |
+| Switch | 游戏自己的 Switch 图标 |
+| 自动 | 启动时连接的手柄；没有时用游戏上次见到的手柄（`controller-detected.txt`）。Xbox 和其他手柄：Xbox；DualSense 和 DualShock：PlayStation；任天堂手柄和还没连过手柄时：Switch。`TOTK_FACE_BUTTONS=label` 时按标签绘制 |
+
+图标也跟随你的 `controls.txt`：每个提示显示在这个手柄上实际要按的按键，用这个手柄自己对每个位置的叫法（`south` 是 Xbox
+的 A 或 PlayStation 的 Cross）。换了类型、手柄或 `controls.txt` 后的第一次启动，会用 App 自己的 RomFS 生成一套图标
+（M1 Pro 上约 8 秒，在窗口打开之前），保存在 `controls.txt` 旁边的 `button-icons/botw190/`，最多保留四套（每套约
+37 MB）。以后的启动直接沿用。游戏只在启动时读取图标：游戏中按了 6 键或换了手柄时，日志会写
+`button icons: xbox-position now, playstation-position from the next start`，新图标在下次启动时显示。
+
+- `mods/botw190` 里的模组如果带有自己的 `Pack/Bootup.pack` 或 `Font/Font_*.sbfarc`（例如用下面的 `botw_prompts.py`
+  生成的），以模组为准：不加载自动图标，日志会写明。删掉这些文件即可使用自动图标。
+- 生成失败时（例如构建用的工作目录里的 Python 已删除），游戏以 Switch 图标启动，日志写明原因。工具用构建这个 App 的
+  工作目录里的 Python 运行（fontTools 随 `games/totk/requirements.txt` 安装）。
+- `build_app.py --no-button-icons` 构建不带自动图标的 App；`--button-icons` 给王国之泪或 1.6.0 的 App 加上（这些版本
+  还没测试）。
+
+下面的工具可以手动生成同样的图标，写进模组目录。
 
 - 王国之泪：`games/totk/scripts/make_button_icons.py` 重绘图标字体。`xbox` 和 `playstation` 风格加上
   `--face-buttons position|label` 和 `--controls <controls.txt>` 后按你的设置显示（`--controls` 必须同时给

@@ -4,6 +4,8 @@
 //   ~/Library/Logs/MacNativeGames/totk.log             this run, only with the debug log on (totk.previous.log: the one before; botw.log for Breath of the Wild)
 // If the game is already running, the launcher only brings it to the front.
 #import <AppKit/AppKit.h>
+#import <CommonCrypto/CommonDigest.h>
+#import <GameController/GameController.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <libproc.h>
@@ -16,6 +18,7 @@
 #include "dmsh_chain.h"   // DMSH_CHAIN: the shader translation chain the cache folder is named after
 #include "game_version.h"
 #include "controller_map.h"
+#include "gamepad_layout.h"   // gamepad_icon_style: the button icons for key 6's type and the connected controller
 #include "include/totk_ui_lang.h"
 #include "totk_shader_contrib.h"   // the shared shader list contribution and its reminder
 
@@ -178,6 +181,84 @@ static BOOL make_dir(NSString *path) {
     return [NSFileManager.defaultManager createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:nil];
 }
 
+/* Button icons (docs/mods.md, Button prompts): an app built with them (build_app.py: button-icons/kit.txt) draws the game's
+   prompts for the controller in use. The style comes from key 6's type in controller-type.txt, or for auto from the
+   controller connected now, else the last one the game saw (controller-detected.txt, runtime/gamepad.m); the face mode
+   and controls.txt as the game maps them. Each style, face mode and controls.txt gets its own folder of RomFS files under
+   <controls folder>/button-icons/<version>/<key>, made once by the bundled tool from this app's RomFS (seconds) and
+   then reused; runtime/romfs.c loads it like a mod (TOTK_ROMFS_BUTTON_ICONS). The game reads it at start only, so a
+   new pick shows from the next start. Any failure starts the game with its own Switch icons. Returns the style word for
+   TOTK_BUTTON_ICONS, and *folder the folder to load or nil. */
+static NSString *button_icons(NSString *root, NSString *controls, NSString **folder) {
+    *folder = nil;
+    NSString *kit = [root stringByAppendingPathComponent:@"button-icons"];
+    NSDictionary *info = kv_read([kit stringByAppendingPathComponent:@"kit.txt"]);
+    if (!info[@"python"] || !info[@"tool"] || !info[@"id"]) return nil;
+    NSString *settings = controls.stringByDeletingLastPathComponent;
+    NSString *(^word)(NSString *) = ^NSString *(NSString *name) {
+        NSString *text = [NSString stringWithContentsOfFile:[settings stringByAppendingPathComponent:name] encoding:NSUTF8StringEncoding error:nil];
+        return text ?: @""; };
+    int type = gamepad_type_parse(word(@"controller-type.txt").UTF8String);
+    if (type < 0) type = GAMEPAD_TYPE_AUTO;
+    int detected = -1;
+    if (type == GAMEPAD_TYPE_AUTO) {
+        /* controllers macOS already knows show up within a few run loop turns */
+        for (int i = 0; i < 5 && detected < 0; i++) {
+            for (GCController *c in GCController.controllers)
+                if (c.extendedGamepad) { detected = gamepad_type_detect(c.productCategory.UTF8String, c.vendorName.UTF8String); break; }
+            if (detected < 0) [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+        }
+        if (detected < 0) detected = gamepad_type_parse(word(@"controller-detected.txt").UTF8String);
+    }
+    int by_position = 1, style = gamepad_icon_style(type, detected, &by_position);
+    if (style < 0) return @"none";
+    NSString *name = [NSString stringWithFormat:@"%s-%s", gamepad_type_name(style), by_position ? "position" : "label"];
+    NSData *layout = [NSData dataWithContentsOfFile:controls];
+    NSMutableData *keyed = [[[NSString stringWithFormat:@"%@\n%@\n", info[@"id"], name] dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
+    if (layout) [keyed appendData:layout];
+    uint8_t digest[CC_SHA256_DIGEST_LENGTH]; CC_SHA256(keyed.bytes, (CC_LONG)keyed.length, digest);
+    NSMutableString *key = [NSMutableString string];
+    for (int i = 0; i < 8; i++) [key appendFormat:@"%02x", digest[i]];
+    NSString *cache = [settings stringByAppendingPathComponent:@"button-icons/" TOTK_GAME_DIR];
+    NSString *target = [cache stringByAppendingPathComponent:key];
+    NSFileManager *fm = NSFileManager.defaultManager;
+    if (![fm fileExistsAtPath:[target stringByAppendingPathComponent:@"manifest.tsv"]]) {
+        NSString *temporary = [target stringByAppendingFormat:@".tmp-%d", getpid()];
+        [fm removeItemAtPath:temporary error:nil];
+        if (![fm createDirectoryAtPath:temporary withIntermediateDirectories:YES attributes:nil error:nil]) return @"none";
+        NSMutableArray *arguments = [@[[kit stringByAppendingPathComponent:info[@"tool"]], temporary, @"--romfs", @"extracted/" TOTK_GAME_DIR "/romfs",
+                                       @"--version", @TOTK_GAME_DIR, @"--style", @(gamepad_type_name(style)), @"--face-buttons", by_position ? @"position" : @"label"] mutableCopy];
+        if (layout) [arguments addObjectsFromArray:@[@"--controls", controls]];
+        fprintf(stderr, "[launcher] button icons: making %s (%s) in %s\n", name.UTF8String, layout ? "controls.txt" : "default layout", target.fileSystemRepresentation);
+        NSTask *task = [NSTask new];
+        task.executableURL = [NSURL fileURLWithPath:info[@"python"]];
+        task.arguments = arguments;
+        NSDate *start = NSDate.date;
+        NSError *error = nil;
+        BOOL ok = [task launchAndReturnError:&error];
+        if (ok) { [task waitUntilExit]; ok = task.terminationStatus == 0; }
+        if (!ok || ![fm moveItemAtPath:temporary toPath:target error:&error]) {
+            fprintf(stderr, "[launcher] button icons: could not make them (%s); the game's own icons this time\n",
+                    error ? error.localizedDescription.UTF8String : "the tool failed, see above");
+            [fm removeItemAtPath:temporary error:nil];
+            return @"none";
+        }
+        fprintf(stderr, "[launcher] button icons: made in %.1f s\n", -start.timeIntervalSinceNow);
+        /* keep the four newest sets (a few tens of MB each) */
+        NSArray<NSURL *> *sets = [fm contentsOfDirectoryAtURL:[NSURL fileURLWithPath:cache] includingPropertiesForKeys:@[NSURLContentModificationDateKey] options:0 error:nil];
+        sets = [sets sortedArrayUsingComparator:^NSComparisonResult(NSURL *a, NSURL *b) {
+            NSDate *x = nil, *y = nil;
+            [a getResourceValue:&x forKey:NSURLContentModificationDateKey error:nil]; [b getResourceValue:&y forKey:NSURLContentModificationDateKey error:nil];
+            return [y compare:x ?: NSDate.distantPast]; }];
+        for (NSUInteger i = 4; i < sets.count; i++) [fm removeItemAtURL:sets[i] error:nil];
+    } else {
+        fprintf(stderr, "[launcher] button icons: %s (%s)\n", name.UTF8String, target.fileSystemRepresentation);
+        [fm setAttributes:@{NSFileModificationDate: NSDate.date} ofItemAtPath:target error:nil];   /* newest for the four kept */
+    }
+    *folder = target;
+    return name;
+}
+
 int main(int argc, char **argv) {
     @autoreleasepool {
         NSString *root = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"totk"];
@@ -294,6 +375,9 @@ int main(int argc, char **argv) {
             dup2(fileno(lf), STDERR_FILENO);
             fclose(lf);
         }
+        NSString *icons = nil, *style = button_icons(root, controls, &icons);
+        if (style) setenv("TOTK_BUTTON_ICONS", style.UTF8String, 1);
+        if (icons) setenv("TOTK_ROMFS_BUTTON_ICONS", icons.fileSystemRepresentation, 1);
         char *const arguments[] = {(char *)binary.fileSystemRepresentation, "rewritten/" TOTK_GAME_DIR, "boot", NULL};
         execv(arguments[0], arguments);
         int failed = errno;
