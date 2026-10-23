@@ -279,7 +279,7 @@ A Breath of the Wild 1.9.0 app draws the prompts itself, with no tool to run. At
 | auto | the controller connected at start; with none, the last one the game saw (`controller-detected.txt`). Xbox and other controllers: Xbox; DualSense and DualShock: PlayStation; Nintendo controllers and no controller yet: Switch. `TOTK_FACE_BUTTONS=label` draws them by label |
 
 The icons follow your `controls.txt` too: each prompt shows the button you press on that controller, by its own name for
-each position (`south` is Xbox A or Cross). The first start with a new type, controller or `controls.txt` makes the set
+each position (by position, `south` is Xbox A or Cross). The first start with a new type, controller or `controls.txt` makes the set
 once from the app's own RomFS (about 8 seconds on an M1 Pro, before the window opens) and keeps it in
 `button-icons/botw190/` next to `controls.txt`, at most four sets (about 37 MB each). Later starts reuse it. The game reads
 the icons at start only: after key 6 or a new controller during play, the log says
@@ -726,7 +726,7 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
 | Switch | 游戏自己的 Switch 图标 |
 | 自动 | 启动时连接的手柄；没有时用游戏上次见到的手柄（`controller-detected.txt`）。Xbox 和其他手柄：Xbox；DualSense 和 DualShock：PlayStation；任天堂手柄和还没连过手柄时：Switch。`TOTK_FACE_BUTTONS=label` 时按标签绘制 |
 
-图标也跟随你的 `controls.txt`：每个提示显示在这个手柄上实际要按的按键，用这个手柄自己对每个位置的叫法（`south` 是 Xbox
+图标也跟随你的 `controls.txt`：每个提示显示在这个手柄上实际要按的按键，用这个手柄自己对每个位置的叫法（按位置映射时，`south` 是 Xbox
 的 A 或 PlayStation 的 Cross）。换了类型、手柄或 `controls.txt` 后的第一次启动，会用 App 自己的 RomFS 生成一套图标
 （M1 Pro 上约 8 秒，在窗口打开之前），保存在 `controls.txt` 旁边的 `button-icons/botw190/`，最多保留四套（每套约
 37 MB）。以后的启动直接沿用。游戏只在启动时读取图标：游戏中按了 6 键或换了手柄时，日志会写

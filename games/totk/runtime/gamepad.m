@@ -302,6 +302,10 @@ static void hid_pad_attach(IOHIDDeviceRef device) {
     hidPad.present = 1;
     fprintf(stderr, "[totk-input] HID gamepad connected: %s (%s)\n", name ? name : "unknown", manufacturer ? manufacturer : "unknown");
     refresh_gamepads();
+    if (getenv("TOTK_BUTTON_ICONS")) {   /* Switch-style (runtime_gamepad_type): the game's own icons at the next start in auto */
+        setting_write("controller-detected.txt", gamepad_type_name(GAMEPAD_TYPE_SWITCH), "connected controller");
+        button_icons_report("controller connected");
+    }
 }
 
 static void hid_matched(void *context, IOReturn result, void *sender, IOHIDDeviceRef device) {

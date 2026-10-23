@@ -226,7 +226,7 @@ static NSString *button_icons(NSString *root, NSString *controls, NSString **fol
         NSString *temporary = [target stringByAppendingFormat:@".tmp-%d", getpid()];
         [fm removeItemAtPath:temporary error:nil];
         if (![fm createDirectoryAtPath:temporary withIntermediateDirectories:YES attributes:nil error:nil]) return @"none";
-        NSMutableArray *arguments = [@[[kit stringByAppendingPathComponent:info[@"tool"]], temporary, @"--romfs", @"extracted/" TOTK_GAME_DIR "/romfs",
+        NSMutableArray *arguments = [@[@"-B", [kit stringByAppendingPathComponent:info[@"tool"]], temporary,   /* -B: nothing written into the signed app */ @"--romfs", @"extracted/" TOTK_GAME_DIR "/romfs",
                                        @"--version", @TOTK_GAME_DIR, @"--style", @(gamepad_type_name(style)), @"--face-buttons", by_position ? @"position" : @"label"] mutableCopy];
         if (layout) [arguments addObjectsFromArray:@[@"--controls", controls]];
         fprintf(stderr, "[launcher] button icons: making %s (%s) in %s\n", name.UTF8String, layout ? "controls.txt" : "default layout", target.fileSystemRepresentation);
