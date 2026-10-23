@@ -404,6 +404,100 @@ class FontGlyphs(unittest.TestCase):
             same_disc(self, font.get(new_rows, code), font.get(old_rows, code))
 
 
+def stick_glyph(size=50):
+    """A stick press glyph like the game's: a white body (centre 17, 21.5, radius 16) with a grey ring on it, and a dark letter L
+    on its cap that opens upwards out of the glyph, so no mark of it is enclosed."""
+    rows = [bytearray(size) for _ in range(size)]
+    for y in range(size):
+        for x in range(size):
+            d = ((x + 0.5 - 17) ** 2 + (y + 0.5 - 21.5) ** 2) ** 0.5
+            rows[y][x] = 0 if d > 16 else 140 if 12.5 <= d <= 14 else 255
+    for y in range(0, 26):          # the letter's upright stroke, open to the top edge
+        rows[y][14] = rows[y][15] = 0
+    for x in range(14, 21):
+        rows[24][x] = rows[25][x] = 0
+    return [bytes(r) for r in rows]
+
+
+class StubFont:
+    """The part of botw_formats.Bffnt that font_cells uses: cells by code point."""
+    def __init__(self, cells, cell=50):
+        self.cells, self.cell = cells, cell
+
+    def get(self, sheet_rows, code):
+        return self.cells[code]
+
+
+@unittest.skipIf(bf is None, 'needs Python 3.14')
+class StickGlyphs(unittest.TestCase):
+    def test_the_glyph_becomes_a_disc_with_the_label_on_the_stick_s_place(self):
+        old = stick_glyph()
+        with self.assertRaises(ValueError):
+            bp.relabel(old, 'LS', StubLetters())                 # its letter is not enclosed: relabel finds nothing
+        new = bp.stick_cell(old, 'LS', StubLetters())
+        self.assertLess(new[21][17], 64)                           # the label is cut out in the middle of the stick's body
+        self.assertEqual((new[21][4], new[8][17]), (255, 255))     # the disc fills the body, ring included
+        self.assertEqual((new[21][40], new[45][17], new[2][14]), (0, 0, 0))      # nothing outside it, the old letter's tail gone
+        xs = [x for row in new for x, v in enumerate(row) if v > 128]
+        self.assertEqual((min(xs), max(xs)), (1, 32))              # as wide as the body
+
+    def test_dpad_cross_fills_the_box_of_the_dots_and_cuts_the_lit_arrows(self):
+        dots = [bytes(255 if any((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= 36 for cx, cy in ((32, 14), (14, 32), (50, 32), (32, 50))) else 0
+                      for x in range(64)) for y in range(64)]
+        all_lit, up = bp.dpad_cross(dots), bp.dpad_cross(dots, ('up',))
+        self.assertEqual((all_lit[32][32], all_lit[32][10], all_lit[32][4], all_lit[10][10]), (255, 255, 0, 0))     # middle, arm's end, outside the box, a corner
+        self.assertLess(all_lit[16][32], 64)                      # the up arrow is cut out of the top arm
+        self.assertEqual((up[16][32] < 64, up[48][32]), (True, 255))   # only the up arrow when only up is lit
+        with self.assertRaises(ValueError):
+            bp.dpad_cross([bytes(64)] * 64)                      # negative control: no shape to cover
+
+    def test_a_cell_without_a_stick_is_refused(self):     # negative control
+        with self.assertRaises(ValueError):
+            bp.stick_cell([bytes(50)] * 50, 'LS', StubLetters())
+
+    @unittest.skipIf(mbi is None, 'needs fontTools (the Menu and View drawers come from make_button_icons.py)')
+    def test_font_cells_redraw_both_stick_glyphs_for_both_styles(self):
+        disc = disc_picture(25, 22, 13, 50)
+        cells = {code: disc for code in (*bp.FONT_FACE.values(), *bp.FONT_SHAPE.values(), *bp.FONT_MENU.values())}
+        cells[0xE056] = cells[0xE057] = stick_glyph()
+        for style, labels in (('xbox', ('LS', 'RS')), ('playstation', ('L3', 'R3'))):
+            letters = Recorder()
+            new, notes = bp.font_cells(StubFont(cells), None, pl.prompt_controls('', 'position'), letters, style)
+            self.assertIn(0xE056, new)
+            self.assertIn(0xE057, new)
+            self.assertFalse([n for n in notes if 'STICK' in n], style)
+            self.assertTrue(set(labels) <= {label for label, *_ in letters.calls}, style)
+
+    @unittest.skipIf(mbi is None, 'needs fontTools (the Menu and View drawers come from make_button_icons.py)')
+    def test_the_d_pad_glyphs_become_a_cross_in_the_place_of_the_four_dots(self):
+        dots = [bytearray(50) for _ in range(50)]
+        for cx, cy in ((16, 12), (8, 20), (24, 20), (16, 28)):       # four dots round (16, 20), in the left part of the cell
+            for y in range(50):
+                for x in range(50):
+                    if (x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= 16:
+                        dots[y][x] = 255
+        dots = [bytes(r) for r in dots]
+        disc = disc_picture(25, 22, 13, 50)
+        cells = {code: disc for code in (*bp.FONT_FACE.values(), *bp.FONT_SHAPE.values(), *bp.FONT_MENU.values())}
+        cells.update({0xE056: stick_glyph(), 0xE057: stick_glyph(), 0xE049: dots, 0xE060: dots})
+        new, notes = bp.font_cells(StubFont(cells), None, pl.prompt_controls('', 'position'), StubLetters())
+        self.assertTrue({0xE049, 0xE060} <= set(new))
+        self.assertFalse([n for n in notes if 'd-pad' in n])
+        self.assertEqual(new[0xE049][20][16], 255)                  # the middle of the cross is filled (between the dots it was empty)
+        self.assertNotEqual(new[0xE049], new[0xE060])               # E060 lights the up arrow
+        xs = [x for row in new[0xE049] for x, v in enumerate(row) if v > 128]
+        self.assertLess(max(xs), 30)                                 # it stays in the place of the dots
+
+
+class Recorder(StubLetters):
+    def __init__(self):
+        self.calls = []
+
+    def text(self, label, cap, cx, cy, max_width):
+        self.calls.append((label, cx, cy))
+        return super().text(label, cap, cx, cy, max_width)
+
+
 @unittest.skipIf(bf is None, 'needs Python 3.14')
 class SystemFont(unittest.TestCase):
     def test_bfttf_decodes_to_the_font_inside(self):

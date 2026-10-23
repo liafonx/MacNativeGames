@@ -309,7 +309,8 @@ eight 48x48 key textures in `Pack/Bootup.pack` > `Layout/Common.sblarc`, and six
 
 The icons inside text (the controller tips, the pick-up window, camera mode, and R, ZR, + and − in messages) are glyphs of the
 button font, `External_00.bffnt` in every `Font/Font_*.sbfarc` (a BC4 glyph sheet). The tool changes them the same way: A, B,
-X and Y trade places, L, R, ZL and ZR become LB, RB, LT and RT, and + and − become the Xbox Menu and View buttons.
+X and Y trade places, L, R, ZL and ZR become LB, RB, LT and RT, and + and − become the Xbox Menu and View buttons. The two stick
+press glyphs become plain LS and RS icons: the game's drawing (a stick with an arrow and a small L or R) has no room for two letters.
 
 #### The controller pictures of the controller tips page
 
@@ -342,12 +343,11 @@ buttons from the game, so the lines still end on a button of the same kind:
 
 These prompts keep the Switch look:
 
-- The right stick press (it has no texture of its own) and both stick press glyphs of the font: the letter of the font glyph
-  touches its ring, so the tool does not find it. The tool prints a note.
+- The right stick press texture: the game has no texture of its own for it.
 - A prompt whose button has no Xbox picture or letter here, for example Switch A on a shoulder button. The tool prints a
   note for it.
 
-`--style playstation` shows PlayStation buttons instead: L1, L2 and L3 (R1 and R2 in the font), and Options and Create for + and −.
+`--style playstation` shows PlayStation buttons instead: L1, L2 and L3 (R1, R2 and R3 in the font), and Options and Create for + and −.
 The game's face pictures carry Xbox letters, so the tool draws the Cross, Circle, Square and Triangle again, on a disc of the same
 size and place as the game's. The output was checked by eye on a decoded picture of the 1.9.0 textures. It is not yet tested
 in play.
@@ -724,7 +724,8 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 
 文字里的图标（手柄提示、拾取窗口、相机模式，以及消息里的 R、ZR、+、−）是按键字体的字形，即每个 `Font/Font_*.sbfarc` 里的
 `External_00.bffnt`（一张 BC4 字形表）。工具用同样的办法改它们：A、B、X、Y 互换位置，L、R、ZL、ZR 变成 LB、RB、LT、RT，
-+ 和 − 变成 Xbox 的 Menu 和 View 按键。
++ 和 − 变成 Xbox 的 Menu 和 View 按键。两个摇杆按下的字形换成简单的 LS 和 RS 图标：游戏原来的图（摇杆、箭头和一个小 L 或 R）
+放不下两个字母。
 
 #### 手柄提示页上的手柄图片
 
@@ -750,10 +751,10 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 
 下面这些提示仍是 Switch 样式：
 
-- 右摇杆按下（它没有自己的贴图），以及字体里两个摇杆按下的字形：字形里的字母和圆环相连，工具找不到它，会打印一行说明。
+- 右摇杆按下的贴图：游戏没有它自己的贴图。
 - 对应按键在这里没有 Xbox 图案或字母的提示，例如把 Switch A 放在肩键上。工具会为它打印一行说明。
 
-加 `--style playstation` 则显示 PlayStation 按键：L1、L2、L3（字体里还有 R1、R2），+ 和 − 变成 Options 和 Create。游戏的面键图案带
+加 `--style playstation` 则显示 PlayStation 按键：L1、L2、L3（字体里还有 R1、R2、R3），+ 和 − 变成 Options 和 Create。游戏的面键图案带
 Xbox 字母，所以工具重新画叉、圆、方、三角，放在与游戏原图同样大小和位置的圆盘上。输出只在解码后的 1.9.0 贴图图片上用肉眼核对过，
 还没有在游戏里测试。
 
