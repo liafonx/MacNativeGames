@@ -3,6 +3,7 @@ and 1.6.0) reads a pchtxt the way the build's --mod does (games/totk/scripts/mod
 applied, @flag print_values is accepted, and "@flag offset_shift 0x100" is required before the first patch line."""
 from pathlib import Path
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -85,18 +86,63 @@ class RuntimePchtxt(PchtxtCases, unittest.TestCase):
     pass
 
 
+class BotwChecks:
+    """Breath of the Wild's reader also refuses a line on a site the app patches or checks itself, a line whose end
+    overflows past main, and bytes that are not two hex digits (the build's --mod refuses all three as well)."""
+    RESERVED = 0       # the first byte of a reserved site (main's ShowKeyboard GOT slot, 8 bytes)
+    IMAGE = 0x3000000  # the probe's main (tests/pchtxt_probe.c)
+
+    def test_reserved_site_stops(self):
+        for start in (self.RESERVED, self.RESERVED + 4, self.RESERVED - 1):
+            code, out = self.run_patch(HEADER + f'@enabled\n{start:X} 0000\n@stop\n')
+            self.assertEqual(code, 3, (start, out))
+            self.assertIn('touches a site the app patches or checks itself', out)
+
+    def test_next_to_a_reserved_site_is_applied(self):
+        code, out = self.run_patch(HEADER + f'@enabled\n{self.RESERVED + 8:X} 00\n{self.RESERVED - 2:X} 0000\n40 aa\n@stop\n')
+        self.assertEqual(code, 0, out)
+
+    def test_bounds(self):
+        for line, ok in ((f'{self.IMAGE - 1:X} aa', True), (f'{self.IMAGE:X} aa', False), (f'{self.IMAGE - 1:X} aabb', False),
+                         ('FFFFFFFFFFFFFFFF aa', False), ('FFFFFFFFFFFFFFFF aabb', False)):
+            code, out = self.run_patch(HEADER + f'@enabled\n{line}\n@stop\n')
+            self.assertEqual(code, 0 if ok else 3, (line, out))
+            if not ok:
+                self.assertIn('malformed or outside main', out)
+
+    def test_bytes_that_are_not_hex_stop(self):
+        for value in ('AQ', 'GG', 'aa0x', '+1'):
+            code, out = self.run_patch(HEADER + f'@enabled\n40 {value}\n@stop\n')
+            self.assertEqual(code, 3, (value, out))
+            self.assertIn('not hex digits', out)
+
+    def test_reserved_table_matches_patch_sites(self):
+        sys.path.insert(0, str(ROOT / 'games/totk/scripts'))
+        import patch_sites
+        text = patch_sites.compiled_text((ROOT / 'games/totk/runtime/game_patches_botw.c').read_text(),
+                                         patch_sites.BOTW_DEFINED[self.VERSION])
+        table = re.search(r'g_pchtxt_reserved\[\] = \{(.*?)\n\};', text, re.S).group(1)
+        runtime = {o + i for o, n in ((int(a, 16), int(b, 16)) for a, b in re.findall(r'\{(0x[0-9a-f]+), (0x[0-9a-f]+)\}', table))
+                   for i in range(n)}
+        build = {s.offset + i for s in patch_sites.sites(self.VERSION) for i in range(s.size)}
+        got = set(range(self.RESERVED, self.RESERVED + 8))      # the build reserves the slot's first word; the runtime all 8 bytes
+        self.assertEqual(runtime - got, build - got)
+
+
 @unittest.skipUnless(sys.platform == 'darwin', 'the runtime builds on macOS only')
-class RuntimePchtxtBotw190(PchtxtCases, unittest.TestCase):
+class RuntimePchtxtBotw190(BotwChecks, PchtxtCases, unittest.TestCase):
     """Breath of the Wild 1.9.0 has its own copy of the reader (game_patches_botw.c): the same reading, its own folder."""
     DEFINES = ['-DGAME_BOTW190']
-    GAME_DIR = 'botw190'
+    GAME_DIR = VERSION = 'botw190'
+    RESERVED = 0x1d78198
 
 
 @unittest.skipUnless(sys.platform == 'darwin', 'the runtime builds on macOS only')
-class RuntimePchtxtBotw160(PchtxtCases, unittest.TestCase):
+class RuntimePchtxtBotw160(BotwChecks, PchtxtCases, unittest.TestCase):
     """1.6.0 compiles the same reader (game_patches_botw.c) and reads main's build id from extracted/botw160."""
     DEFINES = ['-DGAME_BOTW160']
-    GAME_DIR = 'botw160'
+    GAME_DIR = VERSION = 'botw160'
+    RESERVED = 0x2c7ef90
 
 
 if __name__ == '__main__':

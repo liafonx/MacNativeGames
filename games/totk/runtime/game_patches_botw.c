@@ -591,8 +591,22 @@ static void patch_phone_render(Module *m) {
    from the extracted ExeFS (extracted/botw190/exefs/main or extracted/botw160/exefs/main at 0x40); the lines after @enabled are "<main address> <bytes>", @disabled switches the lines that follow off again, @stop ends
    the file, "@flag offset_shift 0x100" must come before the first patch line (the addresses leave out the NSO header only the
    IPS form counts), "@flag print_values" is accepted and any other flag stops the start. The bytes are written into the
-   rewritten main the app runs, before this file's own patches, whose checks of the original words then refuse a file that
-   overlaps them. */
+   rewritten main the app runs, before this file's own patches. A line that touches a site the app patches or checks itself
+   (g_pchtxt_reserved, the sites scripts/patch_sites.py reserves for the build's --mod; tests/test_runtime_pchtxt.py keeps
+   the two lists equal) stops the start, as do a line outside main and a byte that is not two hex digits. */
+static const struct { uint32_t off, size; } g_pchtxt_reserved[] = {
+#ifdef GAME_BOTW160
+    {0xe53f8c, 0x4}, {0x1214474, 0x24}, {0x126e490, 0x98}, {0x12c1010, 0x4}, {0x12c1020, 0x4}, {0x13a0378, 0x4},
+    {0x13a0438, 0x4}, {0x13a0440, 0x4}, {0x13a0508, 0x4}, {0x161847c, 0xc}, {0x1821564, 0x2c}, {0x1821670, 0xc},
+    {0x18522ec, 0x1c}, {0x1c0120c, 0x10}, {0x2128690, 0x4}, {0x2c7ef90, 0x8},
+#else
+    {0xc617e8, 0x4}, {0xeb0f78, 0x14}, {0x125f114, 0x20}, {0x12660bc, 0x14}, {0x1280ec8, 0x24}, {0x1281064, 0x10},
+    {0x1281080, 0x8}, {0x151d484, 0x10}, {0x15a01a0, 0x4}, {0x1d78198, 0x8},
+#endif
+};
+static int hex_digit(char c) {
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
 static void patch_pchtxt(Module *m) {
     const char *path = getenv("TOTK_PCHTXT");
     if (!path || !*path) return;
@@ -626,8 +640,15 @@ static void patch_pchtxt(Module *m) {
         size_t len = strlen(hex);
         if (!matched) runtime_fail("TOTK_PCHTXT: patches before its @nsobid line");
         if (!shifted) runtime_fail("TOTK_PCHTXT: no @flag offset_shift 0x100 before the first patch line");
-        if (len % 2 || at + len / 2 > m->file_size) runtime_fail("TOTK_PCHTXT: a patch line is malformed or outside main");
-        for (size_t i = 0; i < len / 2; i++) { unsigned v; sscanf(hex + 2 * i, "%2x", &v); m->base[at + i] = (uint8_t)v; }
+        if (len % 2 || at > m->file_size || len / 2 > m->file_size - at) runtime_fail("TOTK_PCHTXT: a patch line is malformed or outside main");
+        for (size_t i = 0; i < len; i++)
+            if (hex_digit(hex[i]) < 0) runtime_fail("TOTK_PCHTXT: a patch line's bytes are not hex digits");
+        for (size_t i = 0; i < sizeof g_pchtxt_reserved / sizeof *g_pchtxt_reserved; i++)
+            if (at < g_pchtxt_reserved[i].off + g_pchtxt_reserved[i].size && g_pchtxt_reserved[i].off < at + len / 2) {
+                fprintf(stderr, "[botw] TOTK_PCHTXT: main+%#llx touches main+%#x, which the app patches or checks itself\n", at, g_pchtxt_reserved[i].off);
+                runtime_fail("TOTK_PCHTXT: a patch line touches a site the app patches or checks itself");
+            }
+        for (size_t i = 0; i < len / 2; i++) m->base[at + i] = (uint8_t)(hex_digit(hex[2 * i]) << 4 | hex_digit(hex[2 * i + 1]));
         count++; bytes += (unsigned)(len / 2);
     }
     fclose(f);
