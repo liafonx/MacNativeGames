@@ -21,6 +21,8 @@ import prompt_layout as pl      # noqa: E402
 
 FRONT, TOP = 'Nt_NNillust_00^f', 'Nt_NNillust_01^f'
 SNN = ['Nt_GamePadIllustSnn_0%d^f' % i for i in range(4)]
+DOTS = [bytes(255 if any((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= 36 for cx, cy in ((32, 14), (14, 32), (50, 32), (32, 50))) else 0
+              for x in range(64)) for y in range(64)]       # the four dots of the screen's d-pad icon
 
 
 class Recorder:
@@ -246,7 +248,8 @@ class MakePackPictures(unittest.TestCase):
         specs += [(FRONT, bf.R8G8_UNORM, 576, 288, 4, self.front_grey, self.front_alpha),
                   (TOP, bf.R8G8_UNORM, 576, 100, 4, self.top_grey, self.top_alpha),
                   (SNN[0], bf.R8G8_UNORM, 64, 32, 1, self.small_grey, self.small_alpha),       # not the size of the drawing
-                  (SNN[1], bf.R8G8_UNORM, 228, 228, 4, noise(228, 228, 17), noise(228, 228, 18))]
+                  (SNN[1], bf.R8G8_UNORM, 228, 228, 4, noise(228, 228, 17), noise(228, 228, 18)),
+                  (bp.DPAD_TEXTURE, bf.R8_UNORM, 64, 64, 3, DOTS, None)]
         self.layout = sarc({'blyt/other.bflyt': sample(3000, 5), 'timg/__Combined.bntx': rg8_bntx(specs), 'anim/x.bflan': sample(500, 6)})
         self.pack = sarc({'Pack/other': sample(2000, 7), 'Layout/Common.sblarc': yaz0_encode(self.layout), 'Pack/tail': sample(900, 8)})
 
@@ -264,7 +267,7 @@ class MakePackPictures(unittest.TestCase):
             self.assertEqual(bf.rg8_read(blob, textures[name]), art.PICTURES[name][1](controls, StubLetters(), bp.XBOX_TEXT))
         self.assertEqual(bf.rg8_read(blob, textures[SNN[0]]), (self.small_grey, self.small_alpha))
         self.assertTrue(any(n.startswith(SNN[0]) and 'stays' in n for n in notes))
-        self.assertEqual(sorted(changed), sorted(NAMES))
+        self.assertEqual(sorted(changed), sorted(NAMES + [bp.DPAD_TEXTURE]))
         self.assertEqual(sizes[2], len(self.layout))
         old_blob, old_textures = self.textures(self.pack)
         for name in old_textures:     # every other texture, and every other byte of the pack, is the original
@@ -281,7 +284,8 @@ class MakePackPictures(unittest.TestCase):
         self.assertEqual(drawn, {})
         blob, textures = self.textures(new_pack)
         self.assertEqual(bf.rg8_read(blob, textures[FRONT]), (self.front_grey, self.front_alpha))
-        self.assertEqual(sorted(changed), sorted(NAMES))
+        self.assertEqual(bf.r8_read(blob, textures[bp.DPAD_TEXTURE]), bp.dpad_cross(DOTS))     # the screen's d-pad is a cross
+        self.assertEqual(sorted(changed), sorted(NAMES + [bp.DPAD_TEXTURE]))
 
     @unittest.skipIf(mbi is None, 'needs fontTools (the PlayStation drawers come from make_button_icons.py)')
     def test_playstation_draws_its_own_pictures(self):

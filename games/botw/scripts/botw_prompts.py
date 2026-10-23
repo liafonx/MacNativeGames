@@ -15,10 +15,13 @@ Letters are drawn from the Switch's own system font, which your Breath of the Wi
 only into the mod folder you name (then manifest.tsv, made with make_mod_manifest.py; runtime/romfs.c checks it at start).
 The icons inside text (controller tips, the pick-up window, camera mode) are glyphs of the button font in Font/Font_*.sbfarc
 (External_00.bffnt, a BC4 glyph sheet): the same changes are made there for A B X Y, L R ZL ZR (as LB RB LT RT), and + and -
-(as the Menu and View buttons, or Options and Create). The stick press glyphs keep their Switch look: their letter touches the ring and is not found.
-With --style xbox the controller pictures of the controller tips page are drawn again too: the handheld Switch (Nt_NNillust_00, _01) and the
-four pieces of the hint boxes (Nt_GamePadIllustSnn_00 to _03) become an Xbox controller drawn by botw_controller_art.py, with the buttons in
-the places of the Switch's, so the game's callout lines still end on a button of the same kind. --keep-switch-pictures leaves them alone.
+(as the Menu and View buttons, or Options and Create), the two stick press glyphs become plain LS and RS (or L3, R3)
+icons, and the d-pad glyphs (four dots) become a d-pad cross, as does the d-pad of the shortcut icons on the screen
+(ButtonIconL46NN_00). The glyphs of a stick being moved keep their Switch look.
+The controller pictures of the controller tips page are drawn again too: the handheld Switch (Nt_NNillust_00, _01) and the four pieces
+of the hint boxes (Nt_GamePadIllustSnn_00 to _03) become an Xbox controller (or with --style playstation a DualSense) drawn by
+botw_controller_art.py, with the buttons in the places of the Switch's, so the game's callout lines still end on a button of the same
+kind. --keep-switch-pictures leaves them alone.
 
 Needs Python 3.14 and fontTools (python3.14 -m pip install fonttools). An existing Pack/Bootup.pack in the mod folder (another
 mod's, or an earlier run) is only overwritten with --replace.
@@ -27,6 +30,7 @@ usage: botw_prompts.py <mod folder> (--app <Breath of the Wild.app> | --romfs <f
 """
 import argparse
 import io
+import math
 import struct
 import sys
 import zlib
@@ -111,13 +115,37 @@ def relabel(rows, label, letters, dark=0xE0, grow=1):   # rows: a square picture
             for dx in range(-grow, grow + 1):
                 if 0 <= y + dy < size and 0 <= x + dx < size:
                     out[y + dy][x + dx] = 255
-    cx, cy = (min(xs) + max(xs) + 1) / 2, (min(ys) + max(ys) + 1) / 2
-    cut = bf.coverage(letters.text(label, (max(ys) - min(ys) + 1) * 0.7, cx, cy, 26), size)
-    # The game's letters are bold and the system font's regular: thicken the cut by about half a pixel.
-    cut = [bytes(max(c, int(0.6 * max(cut[yy + dy][xx + dx] for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0))
+    return cut_label(out, label, letters, (min(xs) + max(xs) + 1) / 2, (min(ys) + max(ys) + 1) / 2, (max(ys) - min(ys) + 1) * 0.7, 26)
+
+
+def cut_label(out, label, letters, cx, cy, cap, max_width, bold=0.6):
+    """The square picture `out` (rows of bytes) with `label` cut out, centred on (cx, cy), capital height `cap` pixels, the
+    strokes thickened by `bold` pixels."""
+    size = len(out)
+    cut = bf.coverage(letters.text(label, cap, cx, cy, max_width), size)
+    # The game's letters are bold and the system font's regular: thicken the cut (by about half a pixel by default).
+    cut = [bytes(max(c, int(bold * max(cut[yy + dy][xx + dx] for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0))
                                       if 0 <= yy + dy < size and 0 <= xx + dx < size)))
                  for xx, c in enumerate(row)) for yy, row in enumerate(cut)]
     return [bytes(min(o, 255 - c) for o, c in zip(out_row, cov_row)) for out_row, cov_row in zip(out, cut)]
+
+
+def stick_cell(rows, label, letters, bright=128):
+    """A plain icon of the stick press `label` (LS / RS, or L3 / R3) for the stick press glyph `rows` (a font cell: the stick seen
+    from the side, an arrow pressing down on its cap, a small L or R on it). The game's drawing has no room for two letters, so the
+    whole glyph becomes a white disc with `label` cut out, as wide as the stick's body and on its place (the widest bright rows)."""
+    spans = {y: (min(x for x, v in enumerate(row) if v > bright), max(x for x, v in enumerate(row) if v > bright))
+             for y, row in enumerate(rows) if any(v > bright for v in row)}
+    if not spans:
+        raise ValueError('no stick found in the glyph')
+    widest = max(b - a + 1 for a, b in spans.values())
+    body = [y for y, (a, b) in spans.items() if b - a + 1 >= 0.6 * widest]
+    r = widest / 2
+    cx = sum(spans[y][0] + spans[y][1] + 1 for y in body) / (2 * len(body))
+    cy = (min(body) + max(body) + 1) / 2
+    size = len(rows)
+    disc = [(cx + r * math.cos(2 * math.pi * i / 64), cy + r * math.sin(2 * math.pi * i / 64)) for i in range(64)]
+    return cut_label(bf.coverage([disc], size), label, letters, cx, cy, r * 0.75, r * 1.45, 0.4)
 
 
 def style_parts(style):
@@ -131,6 +159,29 @@ def drawers_of(style):
     """pad control -> (advance, draw) of the style's buttons: the drawings of make_button_icons.py (they need no text font here)."""
     import make_button_icons as mbi
     return (mbi.xbox_drawers if style == 'xbox' else mbi.playstation_drawers)(None)[0]
+
+
+DPAD_GLYPHS = {0xE049: ('up', 'down', 'left', 'right'), 0xE060: ('up',), 0xE061: ('down',), 0xE062: ('left',), 0xE063: ('right',),
+               0xE064: ('up', 'down'), 0xE065: ('left', 'right')}      # the d-pad glyphs of the button font -> their lit directions
+DPAD_TEXTURE = 'ButtonIconL46NN_00^d'       # the d-pad of the shortcut icons on the screen (four dots)
+
+
+def dpad_cross(rows, lit=('up', 'down', 'left', 'right')):
+    """A d-pad cross (the drawing of make_button_icons.py: arms 0.8 of the radius wide, an arrow cut out of each `lit` arm) as a
+    picture the size of `rows`, on the box of the white shape of `rows` (the game's four dots)."""
+    cx, cy, d = disc_of(rows)
+    r = d / 2; arm = 0.4 * r; m, t, h = (r + arm) / 2, 0.72 * arm, 0.8 * arm
+
+    def wound(points, sign):        # counter-clockwise on screen (y down) for a shape, the other way for a hole
+        area = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(points, points[1:] + points[:1]))
+        return points if (area > 0) == (sign > 0) else points[::-1]
+    cross = [(cx + r, cy - arm), (cx + r, cy + arm), (cx + arm, cy + arm), (cx + arm, cy + r), (cx - arm, cy + r), (cx - arm, cy + arm),
+             (cx - r, cy + arm), (cx - r, cy - arm), (cx - arm, cy - arm), (cx - arm, cy - r), (cx + arm, cy - r), (cx + arm, cy - arm)]
+    heads = {'up': [(cx - t, cy - m + h / 2), (cx, cy - m - h / 2), (cx + t, cy - m + h / 2)],
+             'down': [(cx - t, cy + m - h / 2), (cx, cy + m + h / 2), (cx + t, cy + m - h / 2)],
+             'left': [(cx - m + h / 2, cy - t), (cx - m - h / 2, cy), (cx - m + h / 2, cy + t)],
+             'right': [(cx + m - h / 2, cy - t), (cx + m + h / 2, cy), (cx + m - h / 2, cy + t)]}
+    return bf.coverage([wound(cross, 1)] + [wound(heads[k], -1) for k in lit], len(rows))
 
 
 def disc_of(rows, level=128):
@@ -171,6 +222,10 @@ def plan(bntx, textures, controls, letters, style='xbox'):
             new[name] = draw_face(drawers_of(style)[pad], bf.r8_read(bntx, textures[name]))
         else:
             notes.append(f'{slot.upper()}: {pad or "nothing"} has no face picture; the Switch icon stays')
+    if DPAD_TEXTURE in textures:
+        new[DPAD_TEXTURE] = dpad_cross(bf.r8_read(bntx, textures[DPAD_TEXTURE]))
+    else:
+        notes.append(f'{DPAD_TEXTURE}: not found; the Switch d-pad icon stays')
     for slot, names in SHAPE.items():
         label = text.get(controls[slot])
         if label is None:
@@ -256,9 +311,15 @@ def font_cells(font, sheet_rows, controls, letters, style='xbox'):
             notes.append(f'{slot.upper()}: {controls[slot] or "nothing"} has no {brand} letter here; the Switch glyph stays')
             continue
         try:
-            new[code] = relabel(font.get(sheet_rows, code), label, letters)
-        except ValueError as error:     # the stick press glyph's letter touches its ring: not found, the glyph stays as it was
+            new[code] = (stick_cell if slot in ('lstick', 'rstick') else relabel)(font.get(sheet_rows, code), label, letters)
+        except ValueError as error:     # no letter found: the glyph stays as it was
             notes.append(f'{slot.upper()} glyph: {error}; the Switch glyph stays')
+    for code, lit in DPAD_GLYPHS.items():     # the d-pad: a cross on the place of the game's four dots
+        if code in font.cells:
+            try:
+                new[code] = dpad_cross(font.get(sheet_rows, code), lit)
+            except ValueError as error:
+                notes.append(f'd-pad glyph {code:X}: {error}; the Switch glyph stays')
     for slot, code in FONT_MENU.items():
         kind = controls[slot]
         if kind in ('menu', 'view') and code in font.cells:
@@ -351,9 +412,11 @@ def main():
           f'{layout_sizes[1]} (decompressed {layout_sizes[2]} bytes, unchanged)')
     if args.preview and new:
         names = sorted(new)
-        rows = [b''] * SIZE
+        height = max(len(new[name]) for name in names)     # the keys are 48 pixels, the shortcut d-pad 64
+        rows = [b''] * height
         for name in names:
-            rows = [a + b + bytes([128]) for a, b in zip(rows, new[name])]
+            pic = [row for row in new[name]] + [bytes([128]) * len(new[name][0])] * (height - len(new[name]))
+            rows = [a + b + bytes([128]) for a, b in zip(rows, pic)]
         png(rows, args.preview)
         print(f'{args.preview}: {", ".join(n.split("^")[0].replace("Nt_KeyTex", "") for n in names)}')
     if args.preview and drawn:
