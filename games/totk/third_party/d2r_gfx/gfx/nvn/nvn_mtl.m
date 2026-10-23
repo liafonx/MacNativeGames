@@ -5342,12 +5342,16 @@ static NvShader *plib_take(NSString *pc, int wait) {
     pthread_mutex_unlock(&g_plib_mu);
     return sh;
 }
-/* Async shaders (Mac default, user 2026-10-21; TOTK_ASYNC_SHADERS=0 turns them off): a new shader variant or pipeline is
+/* Async shaders (off by default since 2026-10-23, TOTK_ASYNC_SHADERS=1 turns them on; Mac default 2026-10-21 to 10-23): a new shader variant or pipeline is
    prepared in the background and the draws that need it are skipped until it is ready, the way games that stream their
    content show it a few frames later, instead of stopping the frame. Work whose result outlives the draw is never
    skipped: compute, draws without a colour output (depth and shadow passes) and programs that store to memory or stream
    out (sph_keeps_memory). Those wait for the background job instead (prog_resolve). Off with the experimental TBDR pass
-   rewriting (DM_NVN_TBDR=1): its load / store planning assumes every draw it planned is drawn. */
+   rewriting (DM_NVN_TBDR=1): its load / store planning assumes every draw it planned is drawn.
+   Default off (user 2026-10-23): the app now carries every shader translated and compiled and the warm-up fills the
+   pipeline archive before the title, so play meets almost no new shader and one or two new pipelines a session, while a
+   skipped draw stays missing until its pipeline is ready (behind a queue of predicted pipelines that took long: the
+   Great Sky Island water's magenta lasted much longer with it on). */
 static int async_shaders(void) {
 #if TARGET_OS_IPHONE
     return 0;   // no translator on the device: missing variants are skipped anyway
@@ -5355,7 +5359,7 @@ static int async_shaders(void) {
     static int on = -1;
     if (on < 0) {
         const char *e = getenv("TOTK_ASYNC_SHADERS");
-        on = !(e && !strcmp(e, "0")) && totk_rt_can_translate() && !tbdr_on();
+        on = e && !strcmp(e, "1") && totk_rt_can_translate() && !tbdr_on();
         if (on) totk_rt_set_ready_hook(async_ready);
         MLOG("[async-shaders] %s", on ? "on: new shaders and pipelines are prepared in the background" : "off");
     }

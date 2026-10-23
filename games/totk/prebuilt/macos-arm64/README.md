@@ -6,7 +6,7 @@ translator (`vendor/ryujinx`, MIT) with this project's patches (`games/totk/tool
 reflection file), compiled ahead of time with .NET NativeAOT for arm64 macOS. It is here so that building the app needs
 no .NET and the app needs no .NET runtime and no Python.
 
-- Built with `games/totk/tools/totk_xlate/publish_native.sh` from the sources in this repository (.NET SDK 10.0.301; rebuilt with 10.0.402 for early fragment tests).
+- Built with `games/totk/tools/totk_xlate/publish_native.sh` from the sources in this repository (.NET SDK 10.0.301; the early-fragment-tests build was rebuilt here from the merged sources after PR #222 rather than taking the contributor's binary, and the 1.4.3 seed it prepares differs from the previous one only by `[[ early_fragment_tests ]]` in 1,722 fragment shaders).
 - `totk_xlate.sha256` is its SHA-256; `build_app.py` refuses to package a different file.
 - NativeAOT builds are not byte-for-byte reproducible across folders (paths end up in the binary), so a rebuild gets a
   different hash; what matters is that it translates the same. Check a rebuild by replaying a shader cache through it
