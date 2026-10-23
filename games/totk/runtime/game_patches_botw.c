@@ -542,13 +542,12 @@ static void patch_phone_render(Module *m) {
 }
 /* TOTK_PCHTXT=<file>: an emulator ExeFS patch for main in pchtxt form, as community mods ship them, for trying them here;
    the same file format and reading as TOTK's (game_patches.c patch_pchtxt) and as the build's --mod (scripts/mod_exefs.py).
-   Mac only, 1.9.0 only. Its @nsobid must be main's build id, read from the extracted ExeFS (extracted/botw190/exefs/main at
-   0x40); the lines after @enabled are "<main address> <bytes>", @disabled switches the lines that follow off again, @stop ends
+   Mac only, 1.9.0 and 1.6.0 (1.6.0 untested: no 1.6.0 game files were at hand). Its @nsobid must be main's build id, read
+   from the extracted ExeFS (extracted/botw190/exefs/main or extracted/botw160/exefs/main at 0x40); the lines after @enabled are "<main address> <bytes>", @disabled switches the lines that follow off again, @stop ends
    the file, "@flag offset_shift 0x100" must come before the first patch line (the addresses leave out the NSO header only the
    IPS form counts), "@flag print_values" is accepted and any other flag stops the start. The bytes are written into the
    rewritten main the app runs, before this file's own patches, whose checks of the original words then refuse a file that
    overlaps them. */
-#ifdef GAME_BOTW190
 static void patch_pchtxt(Module *m) {
     const char *path = getenv("TOTK_PCHTXT");
     if (!path || !*path) return;
@@ -590,13 +589,6 @@ static void patch_pchtxt(Module *m) {
     if (!matched) runtime_fail("TOTK_PCHTXT has no @nsobid line");
     fprintf(stderr, "[botw] TOTK_PCHTXT %s: %u patches, %u bytes in main (build id %s)\n", path, count, bytes, want);
 }
-#else
-static void patch_pchtxt(Module *m) {
-    (void)m;
-    const char *path = getenv("TOTK_PCHTXT");
-    if (path && *path) runtime_fail("TOTK_PCHTXT: only Breath of the Wild 1.9.0 so far");
-}
-#endif
 void runtime_game_patches(Module *m) {
     fprintf(stderr, "[botw] %s game-code patches\n", TOTK_GAME_VERSION);
     runtime_survey_init(m);   /* TOTK_SURVEY=1: survey pos / move (world_survey.c) */

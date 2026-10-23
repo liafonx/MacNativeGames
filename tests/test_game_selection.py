@@ -218,10 +218,12 @@ class GameSelectionTests(unittest.TestCase):
         self.assertIsInstance(error, Stop)
         self.assertIsNone(started['step_code_botw'].call_args.kwargs['mod'])
 
-    def test_botw160_mod_code_patches_stop_before_any_step(self):
-        error, started = self.run_main_with(self.card_image(), extra=['--mod', self.mod_folder('exefs')])
-        self.assertIn('only wired for Breath of the Wild 1.9.0', str(error))
-        started['step_code_botw'].assert_not_called()
+    def test_botw160_takes_a_mod_with_code_patches(self):
+        mod = self.mod_folder('exefs')
+        error, started = self.run_main_with(self.card_image(), extra=['--mod', mod])
+        self.assertIsInstance(error, Stop)
+        self.assertEqual(started['step_code_botw'].call_args.kwargs['version'], 'botw160')
+        self.assertEqual(started['step_code_botw'].call_args.kwargs['mod'], mod.resolve())
 
     def test_botw_install_mod_romfs_is_not_wired(self):
         base, update = package(self.root, 'botw.nsp', BOTW_BASE), package(self.root, 'botw-u.nsp', BOTW_UPDATE)

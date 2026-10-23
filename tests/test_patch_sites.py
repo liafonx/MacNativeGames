@@ -115,6 +115,26 @@ class Extraction(unittest.TestCase):
         self.assertNotIn(0xce3fec, found)               # the high-FPS bounce
         self.assertEqual(sorted(patch_sites._unresolved), [])
 
+    def test_botw160_sites_follow_game_patches_botw_c(self):
+        # Breath of the Wild 1.6.0: the branch GAME_BOTW160 compiles, its multi-word sequences whole, nothing of 1.9.0's.
+        reserved = patch_sites.sites('botw160')
+        found = {site.offset for site in reserved}
+        for site in (0x1c0120c, 0x1c01218,              # the VFR ratio (real-time frame step), first and last word
+                     0x1821564, 0x18522ec, 0x1618480,   # the fade, the UI step, the physics substeps
+                     0x1214474,                         # the pause menu's countdown
+                     0x1821674,                         # the docked render size
+                     0x12c1010, 0x13a0508,              # TOTK_JQ_CHECK
+                     0xe53f8c, 0x2128690, 0x2c7ef90):   # GAME_ADDR sites of game_version.h's 1.6.0 block
+            self.assertIn(site, found, hex(site))
+        sizes = {site.offset: site.size for site in reserved}
+        self.assertEqual(sizes[0x126e490], 4 * 38)      # the pad loop, 38 instructions rewritten in place
+        self.assertEqual(sizes[0x1214474], 4 * 9)       # the menu countdown, 9 instructions
+        self.assertTrue(patch_sites.overlaps([(0x126e490 + 4 * 37, 4)], reserved))   # its last word
+        self.assertFalse(patch_sites.overlaps([(0x126e490 + 4 * 38, 4)], reserved))
+        for site in (0x151d484, 0x12660c8, 0xeb0f78, 0xc617e8):   # 1.9.0's VFR, render size, pad count, GAME_ADDR
+            self.assertNotIn(site, found, hex(site))
+        self.assertNotIn(0x8f6c60, found)               # TOTK 1.0.0 60 FPS
+
     def test_the_botw_branch_is_chosen_by_the_macros(self):
         text = '#ifdef A\none\n#else\ntwo\n#endif\n#ifndef A\nthree\n#endif\n#if defined(B)\nfour\n#elif C\nfive\n#endif\n#if X > 1\nsix\n#endif\n'
         kept = lambda defined: {line for line in patch_sites.compiled_text(text, defined).split() if line.isalpha()}

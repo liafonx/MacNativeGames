@@ -1632,7 +1632,7 @@ def step_dlc_botw(tree, botw, dlc, keys, logs, pins, aoc):
 def step_code_botw(tree, botw, game, keys, env, logs, *, version='botw160', mod=None):
     """The ExeFS of the card image or of the separate 1.6.0 or 1.9.0 update given as game (games/botw/scripts/extract_exefs.py
     reads the update's Program NCA, the one with a BKTR section), the three modules rewritten with the same rewriter as Tears of the Kingdom (it learnt
-    this game's jump tables), each file checked against expected-v<version>.json. With a mod (1.9.0 only), its main-module
+    this game's jump tables), each file checked against expected-v<version>.json. With a mod (1.9.0 or 1.6.0), its main-module
     code patches are merged into a copy of the verified main first (merge_mod_exefs) and that copy is what main is rewritten from."""
     expected = VERSIONS[version]
     py = tree / '.venv/bin/python'
@@ -1885,7 +1885,7 @@ def main(argv):
             shutil.rmtree(work)
         if args.install_mod_romfs:
             raise BuildError('--install-mod-romfs is only wired for Tears of the Kingdom so far: copy a Breath of the Wild mod\'s '
-                             'RomFS files into ~/Library/Application Support/MacNativeGames/BotW/mods/botw190 and write its '
+                             'RomFS files into ~/Library/Application Support/MacNativeGames/BotW/mods/botw190 (botw160 for 1.6.0) and write its '
                              'manifest.tsv (docs/mods.md)')
         if not args.work:
             work = game.parent / 'BotW_build'
@@ -1907,9 +1907,6 @@ def main(argv):
             version = 'botw160'
         if dlcs and version != 'botw190':
             raise BuildError('--dlc takes the add-on content of Breath of the Wild 1.9.0; a 1.6.0 build takes it from a card image only, so leave out --dlc')
-        if code_mod and version != 'botw190':
-            raise BuildError('--mod: merging a mod\'s main-module patches is only wired for Breath of the Wild 1.9.0 so far '
-                             '(the patch sites of 1.6.0 are not listed in scripts/patch_sites.py)')
         expected = VERSIONS[version]
         if shutil.disk_usage(existing_volume_path(work.parent if work.parent.exists() else game.parent)).free / 2**30 < 22 and \
                 not (work / f'totk/extracted/{version}/romfs/romfs.bin').exists():

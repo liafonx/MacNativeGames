@@ -1,6 +1,6 @@
-"""TOTK_PCHTXT (runtime/game_patches.c patch_pchtxt, and Breath of the Wild 1.9.0's copy in game_patches_botw.c) reads a
-pchtxt the way the build's --mod does (games/totk/scripts/mod_exefs.py): @disabled sections are not applied, @flag
-print_values is accepted, and "@flag offset_shift 0x100" is required before the first patch line."""
+"""TOTK_PCHTXT (runtime/game_patches.c patch_pchtxt, and Breath of the Wild's copy in game_patches_botw.c for 1.9.0
+and 1.6.0) reads a pchtxt the way the build's --mod does (games/totk/scripts/mod_exefs.py): @disabled sections are not
+applied, @flag print_values is accepted, and "@flag offset_shift 0x100" is required before the first patch line."""
 from pathlib import Path
 import os
 import shutil
@@ -94,17 +94,9 @@ class RuntimePchtxtBotw190(PchtxtCases, unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == 'darwin', 'the runtime builds on macOS only')
 class RuntimePchtxtBotw160(PchtxtCases, unittest.TestCase):
-    """1.6.0 has no reserved-site list for --mod and no test of this reader yet: TOTK_PCHTXT stops the start there."""
+    """1.6.0 compiles the same reader (game_patches_botw.c) and reads main's build id from extracted/botw160."""
     DEFINES = ['-DGAME_BOTW160']
     GAME_DIR = 'botw160'
-    test_disabled_section_is_not_applied = test_community_header_with_print_values_and_crlf = None
-    test_missing_offset_shift_stops = test_another_offset_shift_stops = test_unknown_flag_stops = None
-    test_another_build_stops = None
-
-    def test_the_variable_stops_the_start(self):
-        code, out = self.run_patch(HEADER + '@enabled\n40 aabbccdd\n@stop\n')
-        self.assertEqual(code, 3, out)
-        self.assertIn('only Breath of the Wild 1.9.0 so far', out)
 
 
 if __name__ == '__main__':
