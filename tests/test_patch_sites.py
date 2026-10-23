@@ -101,13 +101,14 @@ class Extraction(unittest.TestCase):
                      0x125f118, 0x1280ecc, 0x128106c,   # the fade, the UI step, the physics ratio
                      0xeb0f78, 0xeb0f88,                # the pad repeat count
                      0x12660c8,                         # the docked render size
-                     0x12c1010, 0x13a0508,              # TOTK_JQ_CHECK
                      0xc617e8, 0x15a01a0, 0x1d78198):   # GAME_ADDR sites of game_version.h's 1.9.0 block
             self.assertIn(site, found, hex(site))
         self.assertNotIn(0x1c0120c, found)              # 1.6.0's VFR site: that branch is not compiled for 1.9.0
         self.assertNotIn(0x126e490, found)              # 1.6.0's pad loop
         self.assertNotIn(0x1821674, found)              # 1.6.0's render size
         self.assertNotIn(0x151d484 + 1, found)
+        self.assertNotIn(0x12c1010, found)              # TOTK_JQ_CHECK's table: 1.6.0 addresses only
+        self.assertNotIn(0x13a0508, found)
 
     def test_botw190_has_no_totk_sites(self):
         found = offsets('botw190')
@@ -123,7 +124,6 @@ class Extraction(unittest.TestCase):
                      0x1821564, 0x18522ec, 0x1618480,   # the fade, the UI step, the physics substeps
                      0x1214474,                         # the pause menu's countdown
                      0x1821674,                         # the docked render size
-                     0x12c1010, 0x13a0508,              # TOTK_JQ_CHECK
                      0xe53f8c, 0x2128690, 0x2c7ef90):   # GAME_ADDR sites of game_version.h's 1.6.0 block
             self.assertIn(site, found, hex(site))
         sizes = {site.offset: site.size for site in reserved}
