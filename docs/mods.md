@@ -121,7 +121,7 @@ builds (give the game files as for any build of that version: the base NSP and `
 The patch is applied to the verified main of that version, and the `@nsobid-` line must name that main (the 20 bytes at
 0x40 of the extracted `main`). It is refused when it lands on a site the app patches or checks itself in this game: the
 real-time frame step, the pad repeat count (on 1.6.0 the whole 38-instruction pad loop and the 9-instruction pause menu
-countdown), the docked render size, the `TOTK_JQ_CHECK` sites (1.6.0 only) and the sites listed for that version in
+countdown), the docked render size, the output size (`TOTK_OUTPUT_RES`, 1.6.0 only), the `TOTK_JQ_CHECK` sites (1.6.0 only) and the sites listed for that version in
 `runtime/game_version.h` (`games/totk/scripts/patch_sites.py` reads them out of `runtime/game_patches_botw.c`, and out of
 `game_version.h` and the runtime files that use those addresses). Three
 things differ from Tears of the Kingdom:
@@ -475,7 +475,7 @@ App 没有模块加载器：启动时它映射的是构建时的那三个代码�
 
 **旷野之息 1.9.0 和 1.6.0。** 同样的 `--mod` 参数和同样的补丁格式适用于旷野之息的两个版本（游戏文件按该版本的常规构建给出：基础 NSP 加 `--update`，1.6.0 也可以给卡带镜像）。
 补丁打在核对过的该版本 main 上，`@nsobid-` 一行必须是这个 main 的（解出的 `main` 偏移 0x40 起的 20 字节）。补丁落在这个游戏里 App 自己打补丁或检查的位置上会被拒绝：
-实时帧步长、手柄重复计数（1.6.0 上是整段 38 条指令的手柄循环和 9 条指令的暂停菜单倒计时）、底座模式渲染分辨率、`TOTK_JQ_CHECK` 的位置（仅 1.6.0），以及 `runtime/game_version.h` 里该版本一段列出的位置
+实时帧步长、手柄重复计数（1.6.0 上是整段 38 条指令的手柄循环和 9 条指令的暂停菜单倒计时）、底座模式渲染分辨率、输出分辨率（`TOTK_OUTPUT_RES`，仅 1.6.0）、`TOTK_JQ_CHECK` 的位置（仅 1.6.0），以及 `runtime/game_version.h` 里该版本一段列出的位置
 （`games/totk/scripts/patch_sites.py` 从 `runtime/game_patches_botw.c` 读出，`game_version.h` 的位置从它和用到这些地址的运行时文件读出）。与王国之泪有三处不同：
 
 - 这个游戏拒绝 `--install-mod-romfs`。1.6.0：把模组的 RomFS 文件复制到
