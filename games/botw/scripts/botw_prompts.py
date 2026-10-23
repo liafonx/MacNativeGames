@@ -183,10 +183,9 @@ def plan(bntx, textures, controls, letters, style='xbox'):
 
 def plan_pictures(bntx, textures, controls, letters, style='xbox'):
     """texture name -> (grey rows, alpha rows) of the controller pictures of the controller tips page, drawn again as an Xbox
-    controller (botw_controller_art.py), and notes. Only the Xbox style has a drawing; a picture whose texture is not the size
-    of the drawing (another game version) stays as it was."""
-    if style != 'xbox':
-        return {}, [f'the controller pictures of the controller tips page stay the Switch\'s ({style} has no drawing)']
+    controller or a DualSense (botw_controller_art.py), and notes. A picture whose texture is not the size of the drawing
+    (another game version) stays as it was."""
+    text, _ = style_parts(style)
     new, notes = {}, []
     for name, ((width, height), draw) in PICTURES.items():
         texture = textures.get(name)
@@ -194,7 +193,7 @@ def plan_pictures(bntx, textures, controls, letters, style='xbox'):
             notes.append(f'{name}: not found as a {width}x{height} texture; the Switch picture stays')
             continue
         bf.check_rg8(texture)
-        new[name] = draw(controls, letters, XBOX_TEXT)
+        new[name] = draw(controls, letters, text, style=style)
     return new, notes
 
 
@@ -309,7 +308,7 @@ def main():
     parser.add_argument('--controls', type=Path, help='your controls.txt (the prompts then show the button you press)')
     parser.add_argument('--replace', action='store_true', help=f'overwrite a {PACK} or Font/Font_*.sbfarc already in the mod folder')
     parser.add_argument('--keep-switch-pictures', action='store_true',
-                        help='leave the controller pictures of the controller tips page as the Switch\'s (the Xbox style draws an Xbox controller there)')
+                        help='leave the controller pictures of the controller tips page as the Switch\'s (otherwise an Xbox controller or a DualSense is drawn there)')
     parser.add_argument('--preview', type=Path, help='also write a picture of the changed textures (PNG)')
     args = parser.parse_args()
     version = args.version or (args.mod.resolve().name if args.mod.resolve().name in APP_VERSIONS else None)

@@ -272,7 +272,7 @@ Nothing of the game is in the project.
   `--face-buttons`). Without the two options the output is the same as before: the default layout by position. The stick
   presses and the prompts drawn as fixed images keep their Switch icons.
 - Breath of the Wild 1.9.0 (1.6.0 untested): `games/botw/scripts/botw_prompts.py` redraws eight key textures in the Xbox (or PlayStation) style
-  and, in the Xbox style, the controller pictures of the controller tips page (see below).
+  and the controller pictures of the controller tips page (see below).
 
 Before they write, the tools print one line for each Switch button they change, for example `Switch A <- Xbox X`. `make_button_icons.py` prints these lines when you pass `--face-buttons` or `--controls`. Check these lines.
 
@@ -300,7 +300,7 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 ```
 
 Use `botw160` for 1.6.0. The tool needs Python 3.14 and fontTools (`python3.14 -m pip install fonttools`). It changes
-eight 48x48 key textures in `Pack/Bootup.pack` > `Layout/Common.sblarc`, and with `--style xbox` six controller pictures (next section):
+eight 48x48 key textures in `Pack/Bootup.pack` > `Layout/Common.sblarc`, and six controller pictures (next section):
 
 - A, B, X and Y take the picture of the letter you press. The four face pictures trade places.
 - L and ZL keep the game's key shape and get LB, LT, RB or RT.
@@ -317,7 +317,7 @@ The layout of the controller tips page (`PaAllControllerTipsNN_00`) has only one
 mode. It does not change with the controller you use. It is two pictures, a front view (`Nt_NNillust_00`, 576x288) and the top edge (`Nt_NNillust_01`, 576x100), and labelled lines end on
 their buttons. The hint boxes in play (`PaMessageTipsDrcImageNN_00`) use four 228x228 pieces of the same artwork
 (`Nt_GamePadIllustSnn_00` to `_03`): the left and right shoulder views, and the right and left front of the handheld.
-With `--style xbox` the tool draws an Xbox controller in these six textures. They hold two channels, grey and alpha. The
+The tool draws an Xbox controller in these six textures, or a DualSense with `--style playstation`. They hold two channels, grey and alpha. The
 pictures come from our own drawing code and the system font, not from the game's art. The tool takes only the places of the
 buttons from the game, so the lines still end on a button of the same kind:
 
@@ -330,9 +330,12 @@ buttons from the game, so the lines still end on a button of the same kind:
   button of that place, the same chain as for the prompts; one that nothing drives stays blank.
 - The Pro Controller picture (`amiiboProConNN_00`) is only in the amiibo scan hint, and the Wii U GamePad pictures
   (`Nt_GamePadIllustS_*`, `amiiboDRCNN_00`) are for the Wii U layouts. The tool leaves them as they are.
-- `--keep-switch-pictures` leaves all six pictures as the Switch's. `--style playstation` also leaves them: it has no
-  drawing, because the DualSense's d-pad sits above its left stick, the other way round from the places the lines end at.
-  The tool prints a note. A picture whose texture is not the size of the drawing stays too (another game version).
+- The DualSense keeps the same places. Its touchpad, a plain PS button and the mute button sit between the sticks. The d-pad
+  is four arrow buttons whose middles are the Switch's four d-pad buttons; a real DualSense has its d-pad above the left
+  stick, but the lines end where the Switch has it. The face buttons carry Cross, Circle, Square and Triangle, Options and
+  Create are small upright buttons in the places of + and −, and the shoulders read L2, L1, R2 and R1.
+- `--keep-switch-pictures` leaves all six pictures as the Switch's. A picture whose texture is not the size of the drawing
+  stays too (another game version), and the tool prints a note.
 - Not tested in play. Whether the lines line up with the drawn buttons was worked out from the layout and the pictures,
   and checked by eye on decoded pictures, but nobody has run the game with the mod. The lines move in animations, and
   that part is also unchecked.
@@ -685,7 +688,7 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
   `--face-buttons position|label` 和 `--controls <controls.txt>` 后按你的设置显示（`--controls` 必须同时给
   `--face-buttons`）。不加这两个参数时，输出和以前完全一样：默认的按位置布局。摇杆按下和以固定图片显示的提示仍是
   Switch 图标。
-- 旷野之息 1.9.0（1.6.0 未测试）：`games/botw/scripts/botw_prompts.py` 以 Xbox（或 PlayStation）风格重绘八张按键贴图，Xbox 风格还会重绘手柄提示页上的手柄图片（见下文）。
+- 旷野之息 1.9.0（1.6.0 未测试）：`games/botw/scripts/botw_prompts.py` 以 Xbox（或 PlayStation）风格重绘八张按键贴图和手柄提示页上的手柄图片（见下文）。
 
 写文件之前，工具会为它改动的每个 Switch 按键打印一行，例如 `Switch A <- Xbox X`；`make_button_icons.py` 在加了 `--face-buttons` 或 `--controls` 时才打印。先核对这些行。
 
@@ -712,7 +715,7 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 ```
 
 1.6.0 用 `botw160`。需要 Python 3.14 和 fontTools（`python3.14 -m pip install fonttools`）。工具修改
-`Pack/Bootup.pack` > `Layout/Common.sblarc` 里的八张 48x48 按键贴图，加 `--style xbox` 时还有六张手柄图片（见下一节）：
+`Pack/Bootup.pack` > `Layout/Common.sblarc` 里的八张 48x48 按键贴图，还有六张手柄图片（见下一节）：
 
 - A、B、X、Y 换成你实际要按的那个字母的图案，四张面键图案互换位置。
 - L 和 ZL 保留游戏的按键外形，字母换成 LB、LT、RB 或 RT。
@@ -727,8 +730,8 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 
 手柄提示页的布局（`PaAllControllerTipsNN_00`）里只有一种手柄图：掌机模式的 Switch，不随你用的手柄变化。它是两张图，正面图（`Nt_NNillust_00`，576x288）和顶边图
 （`Nt_NNillust_01`，576x100），带文字的引线指向图上的按键。游戏里的提示框（`PaMessageTipsDrcImageNN_00`）用同一幅图的四块
-228x228 小图（`Nt_GamePadIllustSnn_00` 到 `_03`）：左右肩部视图，以及掌机右半和左半的正面。加 `--style xbox` 时，工具在这六张贴图里
-画一个 Xbox 手柄。贴图有灰度和透明度两个通道。图案由我们自己的绘图代码和系统字体画成，不是游戏的原图；工具只从游戏取按键的位置，
+228x228 小图（`Nt_GamePadIllustSnn_00` 到 `_03`）：左右肩部视图，以及掌机右半和左半的正面。工具在这六张贴图里
+画一个 Xbox 手柄，加 `--style playstation` 时画一个 DualSense。贴图有灰度和透明度两个通道。图案由我们自己的绘图代码和系统字体画成，不是游戏的原图；工具只从游戏取按键的位置，
 所以引线仍然指在同类按键上：
 
 - 左摇杆、十字键（Switch 是四个圆键，这里画成十字）、右摇杆和四个面键在 Switch 按键的位置。View 和 Menu 在 − 和 + 的位置，
@@ -738,8 +741,10 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
   规则）；没有任何按键对应的肩键留空。
 - Pro 手柄图（`amiiboProConNN_00`）只出现在 amiibo 扫描提示里，Wii U GamePad 图（`Nt_GamePadIllustS_*`、`amiiboDRCNN_00`）属于
   Wii U 版的界面，工具都不改。
-- `--keep-switch-pictures` 让这六张图保持 Switch 的样子。`--style playstation` 也不改：它还没有对应的图，因为 DualSense 的十字键在
-  左摇杆上方，和引线所指的位置正好相反。工具会打印一行说明。贴图尺寸与图案不符时（别的游戏版本）也保持原样。
+- DualSense 也保持这些位置。触控板、一个不带标志的 PS 键和静音键在两个摇杆之间。十字键是四个箭头键，每个箭头键的中心就是 Switch
+  四个十字键的位置；真正的 DualSense 十字键在左摇杆上方，但引线指向 Switch 的位置。面键上是叉、圆、方、三角，Options 和 Create
+  是 + 和 − 位置上的竖直小键，肩键写 L2、L1、R2、R1。
+- `--keep-switch-pictures` 让这六张图保持 Switch 的样子。贴图尺寸与图案不符时（别的游戏版本）也保持原样，工具会打印一行说明。
 - 没有在游戏里测试。引线是否对准画出的按键，是根据布局和图片推算并在解码后的图片上用肉眼核对的，没有人带着这个模组运行过游戏；引线在
   动画里会移动，这部分同样没有核对。
 
