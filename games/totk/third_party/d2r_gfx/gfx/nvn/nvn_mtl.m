@@ -3570,8 +3570,7 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
         /* TOTK: rendered into by the GPU since the upload: the pool memory is stale, never re-upload. The set only grows, so
            the answer is kept in the NvPkg and asked again only after it gained members (a locked lookup on every use before). */
         int reduced = pk && pk->tex && (pk->tex.mipmapLevelCount < (t->d.levels ? t->d.levels : 1u) || (tc_pf(t->d.format) != MTLPixelFormatInvalid && pk->tex.pixelFormat == tc_pf(t->d.format)));   // TOTK: copy without its top level (mip_drop_of) or transcoded (tex_tc): not something the GPU can render into
-        if (pk && pk->owned && pk->tex && !reduced) return pk->tex;
-        BOTW_PKG_RENDER_ALIAS(pk, t)
+        if (pk && pk->owned && pk->tex && !reduced) return pk->tex; BOTW_PKG_RENDER_ALIAS(pk, t)
         if (pk) {   // 已上传：自上次检查后有过客体写才查覆盖页 | Already uploaded: check the covered pages only if there has been a guest write since the last check
             uint64_t now = nvn_dirty_now(), h = 0; int clean;
             if (!pk->tex || (pk->owned && reduced)) {   // TOTK: the copy was evicted, or the GPU renders into a reduced copy (needs full size); the copy was evicted under memory pressure (pkg_evict_sweep): upload it again from the pool bytes
