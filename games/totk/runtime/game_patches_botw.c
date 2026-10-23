@@ -10,6 +10,7 @@
 #include <math.h>
 #include "game_patches.h"
 #include "game_version.h"
+#include "pchtxt.h"
 #include "aspect_math.h"   /* key 4: TOTK_ASPECT parsing */
 #include <TargetConditionals.h>
 uint32_t runtime_thread_current_handle(void);
@@ -540,16 +541,11 @@ static void patch_phone_render(Module *m) {
     put_word(m, PHONE_RENDER + 4, 0xf2e88e08u, "handheld render size");   /* movk x8, #0x4470, lsl #48: 960.0 */
     fprintf(stderr, "[botw] handheld render size 960x540, the game's own upscale to the 1280x720 canvas (phone)\n");
 }
-/* TOTK_PCHTXT=<file>: an emulator ExeFS patch for main in pchtxt form, as community mods ship them, for trying them here;
-   the same file format and reading as TOTK's (game_patches.c patch_pchtxt) and as the build's --mod (scripts/mod_exefs.py).
-   Mac only, 1.9.0 and 1.6.0 (1.6.0 untested: no 1.6.0 game files were at hand). Its @nsobid must be main's build id, read
-   from the extracted ExeFS (extracted/botw190/exefs/main or extracted/botw160/exefs/main at 0x40); the lines after @enabled are "<main address> <bytes>", @disabled switches the lines that follow off again, @stop ends
-   the file, "@flag offset_shift 0x100" must come before the first patch line (the addresses leave out the NSO header only the
-   IPS form counts), "@flag print_values" is accepted and any other flag stops the start. The bytes are written into the
-   rewritten main the app runs, before this file's own patches. A line that touches a site the app patches or checks itself
-   (g_pchtxt_reserved, the sites scripts/patch_sites.py reserves for the build's --mod; tests/test_runtime_pchtxt.py keeps
-   the two lists equal) stops the start, as do a line outside main and a byte that is not two hex digits. */
-static const struct { uint32_t off, size; } g_pchtxt_reserved[] = {
+/* TOTK_PCHTXT=<file> (runtime/pchtxt.h, the reader both games share), 1.9.0 and 1.6.0 (1.6.0 untested: no 1.6.0 game
+   files were at hand). A line on a site the app patches or checks itself (g_pchtxt_reserved, the sites
+   scripts/patch_sites.py reserves for the build's --mod; tests/test_runtime_pchtxt.py keeps the two lists equal) stops
+   the start. */
+static const PchtxtSite g_pchtxt_reserved[] = {
 #ifdef GAME_BOTW160
     {0xe536dc, 0x4}, {0xe53f8c, 0x4}, {0xe53fa0, 0x4}, {0xe550a0, 0x4}, {0xe563dc, 0x10}, {0xe56410, 0x10},
     {0x113fb48, 0x10}, {0x1140208, 0x10}, {0x1186ce0, 0x10}, {0x1214474, 0x24}, {0x126e490, 0x98}, {0x12c1010, 0x4},
@@ -561,57 +557,7 @@ static const struct { uint32_t off, size; } g_pchtxt_reserved[] = {
     {0x1281080, 0x8}, {0x151d484, 0x10}, {0x15a01a0, 0x4}, {0x1d78198, 0x8},
 #endif
 };
-static int hex_digit(char c) {
-    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
-}
-static void patch_pchtxt(Module *m) {
-    const char *path = getenv("TOTK_PCHTXT");
-    if (!path || !*path) return;
-    FILE *f = fopen(path, "r");
-    if (!f) runtime_fail("TOTK_PCHTXT: cannot open the file");
-    char nso[256], want[41] = {0}; uint8_t id[20];
-    snprintf(nso, sizeof nso, "extracted/%s/exefs/main", TOTK_GAME_DIR);
-    FILE *n = fopen(nso, "rb");
-    if (!n || fseek(n, 0x40, SEEK_SET) || fread(id, 1, sizeof id, n) != sizeof id) runtime_fail("TOTK_PCHTXT: cannot read main's build id from extracted/<version>/exefs/main");
-    fclose(n);
-    for (int i = 0; i < 20; i++) snprintf(want + 2 * i, 3, "%02X", id[i]);
-    char line[1024]; int enabled = 0, matched = 0, shifted = 0; unsigned count = 0, bytes = 0;
-    while (fgets(line, sizeof line, f)) {
-        if (!strncmp(line, "@nsobid-", 8)) {
-            if (strncasecmp(line + 8, want, 40)) runtime_fail("TOTK_PCHTXT is for another build of main");
-            matched = 1; continue;
-        }
-        if (!strncmp(line, "@enabled", 8)) { enabled = 1; continue; }
-        if (!strncmp(line, "@disabled", 9)) { enabled = 0; continue; }
-        if (!strncmp(line, "@flag", 5)) {
-            char name[64] = "", value[64] = "";
-            sscanf(line + 5, "%63s %63s", name, value);
-            if (!strcmp(name, "print_values")) continue;
-            if (strcmp(name, "offset_shift")) runtime_fail("TOTK_PCHTXT: only @flag offset_shift 0x100 and print_values are supported");
-            if (strtoull(value, NULL, 16) != 0x100) runtime_fail("TOTK_PCHTXT: @flag offset_shift must be 0x100 (the addresses are main addresses)");
-            shifted = 1; continue;
-        }
-        if (!strncmp(line, "@stop", 5)) break;
-        unsigned long long at; char hex[512];
-        if (!enabled || line[0] == '@' || sscanf(line, "%llx %511s", &at, hex) != 2) continue;
-        size_t len = strlen(hex);
-        if (!matched) runtime_fail("TOTK_PCHTXT: patches before its @nsobid line");
-        if (!shifted) runtime_fail("TOTK_PCHTXT: no @flag offset_shift 0x100 before the first patch line");
-        if (len % 2 || at > m->file_size || len / 2 > m->file_size - at) runtime_fail("TOTK_PCHTXT: a patch line is malformed or outside main");
-        for (size_t i = 0; i < len; i++)
-            if (hex_digit(hex[i]) < 0) runtime_fail("TOTK_PCHTXT: a patch line's bytes are not hex digits");
-        for (size_t i = 0; i < sizeof g_pchtxt_reserved / sizeof *g_pchtxt_reserved; i++)
-            if (at < g_pchtxt_reserved[i].off + g_pchtxt_reserved[i].size && g_pchtxt_reserved[i].off < at + len / 2) {
-                fprintf(stderr, "[botw] TOTK_PCHTXT: main+%#llx touches main+%#x, which the app patches or checks itself\n", at, g_pchtxt_reserved[i].off);
-                runtime_fail("TOTK_PCHTXT: a patch line touches a site the app patches or checks itself");
-            }
-        for (size_t i = 0; i < len / 2; i++) m->base[at + i] = (uint8_t)(hex_digit(hex[2 * i]) << 4 | hex_digit(hex[2 * i + 1]));
-        count++; bytes += (unsigned)(len / 2);
-    }
-    fclose(f);
-    if (!matched) runtime_fail("TOTK_PCHTXT has no @nsobid line");
-    fprintf(stderr, "[botw] TOTK_PCHTXT %s: %u patches, %u bytes in main (build id %s)\n", path, count, bytes, want);
-}
+static void patch_pchtxt(Module *m) { pchtxt_apply(m, "botw", g_pchtxt_reserved, sizeof g_pchtxt_reserved / sizeof *g_pchtxt_reserved); }
 void runtime_game_patches(Module *m) {
     fprintf(stderr, "[botw] %s game-code patches\n", TOTK_GAME_VERSION);
     runtime_survey_init(m);   /* TOTK_SURVEY=1: survey pos / move (world_survey.c) */
