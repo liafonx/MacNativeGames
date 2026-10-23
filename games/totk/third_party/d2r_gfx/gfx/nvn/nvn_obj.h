@@ -222,7 +222,7 @@ int botw_uw_scene_picture(void);   /* end of nvn_mtl.m */
    the submission whose end copied it into stage. */
 #define BOTW_WB_ENT_FIELDS uint64_t fence; void *stage; uint64_t stage_fence;
 void botw_wb_sub_note(uint64_t serial);
-#define BOTW_WB_NOTED(e, k) (e)->fence = g_fence + 1; botw_wb_sub_note(k);
+#define BOTW_WB_NOTED(e, k) (e)->fence = g_fence + 1; botw_wb_sub_note(k); botw_render_note(&(e)->t, (e)->obj, (e)->stamp);
 #define BOTW_WB_STAGE_FREE(e) if ((e)->stage) { defer_obj_release((__bridge id)(e)->stage); CFRelease((e)->stage); }
 void botw_wb_stage_encode(void);
 #define BOTW_WB_STAGE() botw_wb_stage_encode();
@@ -250,6 +250,11 @@ int botw_wb_newer(const void *mem, uint64_t gen);
 #define BOTW_PKG_WB_TAKE() uint64_t wbg_ = botw_wb_gen();
 #define BOTW_PKG_WB_SET(pk) (pk)->wb_gen = wbg_;
 #define BOTW_PKG_WB_STALE(pk, t, clean) if (clean && botw_wb_newer((t)->mem, (pk)->wb_gen)) clean = 0;
+/* ... and while a GPU rendering of the same memory and layout waits for its write-back (the CPU has not written there
+   since), a sampled copy reads that rendering, as its descriptor would on hardware. */
+void botw_render_note(const tex_t *t, void *obj, uint64_t stamp);
+void *botw_render_alias(const tex_t *t, const void *own);   /* CFBridgingRetain'ed MTLTexture or NULL */
+#define BOTW_PKG_RENDER_ALIAS(pk, t) if (pk && pk->tex && !pk->owned) { void *a_ = botw_render_alias(t, (__bridge const void *)pk->tex); if (a_) return CFBridgingRelease(a_); }
 #else
 #define MFX_CANVAS_FMT_OK(f) pf_is_float(f)
 #define MFX_UI_DRAW(pr) mfx_ui_vs(pr->sh[0]->key)
@@ -292,6 +297,7 @@ int botw_wb_newer(const void *mem, uint64_t gen);
 #define BOTW_PKG_WB_TAKE()
 #define BOTW_PKG_WB_SET(pk)
 #define BOTW_PKG_WB_STALE(pk, t, clean)
+#define BOTW_PKG_RENDER_ALIAS(pk, t)
 #endif
 /* Key 5 (MetalFX temporal anti-aliasing, totk_taa.m): the compose draw that samples the linear HDR scene at fragment
    texture slot 0 before tone mapping. TOTK: 0ac9a549 (tone mapping and bloom). Breath of the Wild 1.9.0: f7ee6fe1 (two
