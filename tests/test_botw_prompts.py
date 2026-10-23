@@ -329,6 +329,27 @@ class FontGlyphs(unittest.TestCase):
         self.assertEqual(font.get(after, 0xE041)[10][10], 200)
         self.assertEqual(font.get(after, 0xE042), font.get(rows, 0xE042))    # the neighbour cell is as it was
 
+    def test_a_neighbour_pixel_in_a_shared_block_keeps_its_value_only_if_the_new_block_can_hold_it(self):
+        # Cells are 50 pixels on a 51-pixel step, so a 4x4 block can hold pixels of two cells. Such a block is encoded again
+        # with the new cell's extremes: a blank (0) neighbour pixel stays exact, a mid grey can move to the nearest of the
+        # eight levels. The tool keeps this limit: in the game's seven fonts the changed glyphs' blocks lose no neighbour value.
+        for edge, want in ((0, 0), (120, 109)):
+            rows = [bytearray(256) for _ in range(4 * 51 + 4)]
+            data = bffnt(rows)
+            font = bf.Bffnt(data)
+            x0, y0, x1, y1 = font.cell_box(0xE042)
+            for y in range(y0, y1):
+                rows[y][x0:x0 + 2] = bytes([edge, edge])        # the left edge of the neighbour, in the block it shares
+            data = bffnt(rows)
+            sheet = data[font.sheet_at:]
+            rows = bf.bc4_read(sheet, font.texture)
+            box = font.put(rows, 0xE041, [bytes([255]) * 50] * 50)          # the gap column between the cells stays 0
+            image = bf.bc4_image(sheet, font.texture, rows, [box])
+            after = bf.bc4_read(sheet[:font.texture.offset] + image + sheet[font.texture.offset + len(image):], font.texture)
+            with self.subTest(edge=edge):
+                self.assertEqual(rows[y0 + 10][x0], edge)
+                self.assertEqual(after[y0 + 10][x0], want)
+
     def test_a_cell_of_the_wrong_size_and_a_wrong_format_are_refused(self):    # negative controls
         data = bffnt(self.sheet())
         font = bf.Bffnt(data)
