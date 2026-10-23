@@ -311,6 +311,7 @@ The icons inside text (the controller tips, the pick-up window, camera mode, and
 button font, `External_00.bffnt` in every `Font/Font_*.sbfarc` (a BC4 glyph sheet). The tool changes them the same way: A, B,
 X and Y trade places, L, R, ZL and ZR become LB, RB, LT and RT, and + and − become the Xbox Menu and View buttons. The two stick
 press glyphs become plain LS and RS icons: the game's drawing (a stick with an arrow and a small L or R) has no room for two letters.
+The d-pad glyphs and the d-pad of the shortcut icons on the screen (four dots on the Switch) become a d-pad cross.
 
 #### The controller pictures of the controller tips page
 
@@ -337,9 +338,9 @@ buttons from the game, so the lines still end on a button of the same kind:
   Create are small upright buttons in the places of + and −, and the shoulders read L2, L1, R2 and R1.
 - `--keep-switch-pictures` leaves all six pictures as the Switch's. A picture whose texture is not the size of the drawing
   stays too (another game version), and the tool prints a note.
-- Not tested in play. Whether the lines line up with the drawn buttons was worked out from the layout and the pictures,
-  and checked by eye on decoded pictures, but nobody has run the game with the mod. The lines move in animations, and
-  that part is also unchecked.
+- Tested in play on 1.9.0 (Mac, keyboard input, US and Japanese fonts). With both styles every line of the controls page
+  and every ring of the hint boxes ends on a drawn button of the right kind, also in frames 0.3 s apart. Position mode
+  with a `controls.txt` and label mode both show the button you press. A real Xbox or PlayStation pad was not used.
 
 These prompts keep the Switch look:
 
@@ -349,8 +350,7 @@ These prompts keep the Switch look:
 
 `--style playstation` shows PlayStation buttons instead: L1, L2 and L3 (R1, R2 and R3 in the font), and Options and Create for + and −.
 The game's face pictures carry Xbox letters, so the tool draws the Cross, Circle, Square and Triangle again, on a disc of the same
-size and place as the game's. The output was checked by eye on a decoded picture of the 1.9.0 textures. It is not yet tested
-in play.
+size and place as the game's. It was tested in play with the controller pictures (see above).
 
 Only the bytes of the changed textures differ. Every other member and byte of the pack is the original, and the
 decompressed `Layout/Common.sblarc` keeps its size. The tool writes only `Pack/Bootup.pack`, the seven `Font/Font_*.sbfarc` and `manifest.tsv`. The other
@@ -725,7 +725,7 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 文字里的图标（手柄提示、拾取窗口、相机模式，以及消息里的 R、ZR、+、−）是按键字体的字形，即每个 `Font/Font_*.sbfarc` 里的
 `External_00.bffnt`（一张 BC4 字形表）。工具用同样的办法改它们：A、B、X、Y 互换位置，L、R、ZL、ZR 变成 LB、RB、LT、RT，
 + 和 − 变成 Xbox 的 Menu 和 View 按键。两个摇杆按下的字形换成简单的 LS 和 RS 图标：游戏原来的图（摇杆、箭头和一个小 L 或 R）
-放不下两个字母。
+放不下两个字母。十字键的字形和屏幕上快捷图标的十字键（Switch 上是四个圆点）换成十字键。
 
 #### 手柄提示页上的手柄图片
 
@@ -746,8 +746,8 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
   四个十字键的位置；真正的 DualSense 十字键在左摇杆上方，但引线指向 Switch 的位置。面键上是叉、圆、方、三角，Options 和 Create
   是 + 和 − 位置上的竖直小键，肩键写 L2、L1、R2、R1。
 - `--keep-switch-pictures` 让这六张图保持 Switch 的样子。贴图尺寸与图案不符时（别的游戏版本）也保持原样，工具会打印一行说明。
-- 没有在游戏里测试。引线是否对准画出的按键，是根据布局和图片推算并在解码后的图片上用肉眼核对的，没有人带着这个模组运行过游戏；引线在
-  动画里会移动，这部分同样没有核对。
+- 已在 1.9.0 游戏里测试（Mac，键盘输入，美版和日文字体）。两种风格下，操作说明页的每条引线和提示框的每个圆环都指在画出的同类按键上，
+  相隔 0.3 秒的几帧里也是如此。按位置模式加 `controls.txt` 和按标签模式都显示你实际要按的按键。没有用真实的 Xbox 或 PlayStation 手柄测试。
 
 下面这些提示仍是 Switch 样式：
 
@@ -755,8 +755,7 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 - 对应按键在这里没有 Xbox 图案或字母的提示，例如把 Switch A 放在肩键上。工具会为它打印一行说明。
 
 加 `--style playstation` 则显示 PlayStation 按键：L1、L2、L3（字体里还有 R1、R2、R3），+ 和 − 变成 Options 和 Create。游戏的面键图案带
-Xbox 字母，所以工具重新画叉、圆、方、三角，放在与游戏原图同样大小和位置的圆盘上。输出只在解码后的 1.9.0 贴图图片上用肉眼核对过，
-还没有在游戏里测试。
+Xbox 字母，所以工具重新画叉、圆、方、三角，放在与游戏原图同样大小和位置的圆盘上。它和手柄图片一起在游戏里测试过（见上文）。
 
 只有改动的贴图字节不同：包里其余每个成员、每个字节都是原版，解压后的 `Layout/Common.sblarc` 大小不变。工具只写
 `Pack/Bootup.pack`、七个 `Font/Font_*.sbfarc` 和 `manifest.tsv`；目录里的其他文件保留，也会写进清单。目录里已经有这些文件之一（别的模组的，
