@@ -57,7 +57,8 @@ BRANCH_ARG = re.compile(r'\bbranch[ \t]*\([ \t]*(0x[0-9a-fA-F]+)')
 BASE_PLUS = re.compile(r'm->base[ \t]*\+[ \t]*(0x[0-9a-fA-F]+)')
 CLOTH = re.compile(r'cloth_inline\[3\][ \t]*=[ \t]*\{(.*?)\};', re.S)
 CLOTH_ENTRY = re.compile(r'\{([^{}]*)\}')
-BOTW_ROW = re.compile(r'\{[ \t]*(0x[0-9a-fA-F]+)u[ \t]*,')       # a row of game_patches_botw.c's tables: {main offset, word, ...}
+BOTW_ROW = re.compile(r'\{[ \t]*(0x[0-9a-fA-F]+)u?[ \t]*,')       # a row of game_patches_botw.c's tables: {main offset, word, ...}
+BOTW_SIZE_INIT = re.compile(r'\bsize_init\[\][ \t]*=[ \t]*\{([^}]*)\}')   # 1.6.0's output size: movz at each, movk 12 bytes on
 BOTW_MOVK = re.compile(r'\bRENDER_MOVK[ \t]*=[ \t]*(0x[0-9a-fA-F]+)')
 BOTW_WORDS = re.compile(r'\b(\w+)[ \t]*=[ \t]*(0x[0-9a-fA-F]+)[ \t]*,[ \t]*\1_WORDS[ \t]*=[ \t]*(\d+)')   # enum { PAD_LOOP = 0x.., PAD_LOOP_WORDS = 38 }
 JQ_TABLE = re.compile(r'g_jq_site\[JQ_SITES\][ \t]*=[ \t]*\{.*?\n\};', re.S)
@@ -250,7 +251,7 @@ def botw_sites(text, source, defined):
     """The code sites Breath of the Wild's runtime reads or writes (game_patches_botw.c, the branches `defined` keeps): the
     rows {main offset, original word, ...} of its check, put and (1.6.0 only) job-queue tables, and the render-size site, each one
     instruction, and the sequences it checks and rewrites word by word (1.6.0's pad loop and menu countdown: NAME = offset,
-    NAME_WORDS = count). A mod patch on one would make the runtime refuse the start (the check) or write over the mod (the put)."""
+    NAME_WORDS = count), and 1.6.0's output-size initialisers (size_init: four instructions from each). A mod patch on one would make the runtime refuse the start (the check) or write over the mod (the put)."""
     active = compiled_text(text, defined)
     if 'GAME_BOTW160' not in defined:     # TOTK_JQ_CHECK's table holds 1.6.0 addresses only (on 1.9.0 the words differ and
         active = JQ_TABLE.sub(lambda m: re.sub(r'[^\n]', ' ', m.group()), active)    # the check stays unarmed)
@@ -258,6 +259,8 @@ def botw_sites(text, source, defined):
              for match in pattern.finditer(active)]
     found += [(int(match.group(2), 16), _line_of(active, match.start()), 4 * int(match.group(3)))
               for match in BOTW_WORDS.finditer(active)]
+    found += [(int(number, 16), _line_of(active, match.start()), 16) for match in BOTW_SIZE_INIT.finditer(active)
+              for number in re.findall(r'0x[0-9a-fA-F]+', match.group(1))]
     return [Site(f'{source}:{line}', offset, size) for offset, line, size in found]
 
 
