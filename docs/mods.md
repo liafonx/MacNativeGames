@@ -478,12 +478,14 @@ App 没有模块加载器：启动时它映射的是构建时的那三个代码�
 实时帧步长、手柄重复计数（1.6.0 上是整段 38 条指令的手柄循环和 9 条指令的暂停菜单倒计时）、底座模式渲染分辨率、`TOTK_JQ_CHECK` 的位置（仅 1.6.0），以及 `runtime/game_version.h` 里该版本一段列出的位置
 （`games/totk/scripts/patch_sites.py` 从 `runtime/game_patches_botw.c` 读出，`game_version.h` 的位置从它和用到这些地址的运行时文件读出）。与王国之泪有三处不同：
 
-- 这个游戏拒绝 `--install-mod-romfs`。把模组的 RomFS 文件复制到
-  `~/Library/Application Support/MacNativeGames/BotW/mods/botw190`（1.6.0 是 `botw160`），再按下面「旷野之息」一节生成清单；模组带 `romfs/` 时构建会提示这一点。
+- 这个游戏拒绝 `--install-mod-romfs`。1.6.0：把模组的 RomFS 文件复制到
+  `~/Library/Application Support/MacNativeGames/BotW/mods/botw160`，再按下面「旷野之息」一节生成清单；模组带 `romfs/` 时构建会提示这一点。
+  1.9.0：`make_mod_manifest.py` 还不接受 `botw190`，所以 1.9.0 模组的 RomFS 部分需要 1.9.0 的 RomFS 模组支持
+  （ly05010419/MacNativeGames#310）；代码部分不需要它。
 - 这个游戏还没有 iPhone / iPad 版本。
 - 想不重新构建就试一个 `.pchtxt`，在工作目录（`<work>/totk`，里面有 `extracted/botw190/exefs/main` 或 `extracted/botw160/exefs/main`）里用 `TOTK_PCHTXT=<文件>` 启动游戏
   （开发用开关，仅 Mac；读法与构建相同，但字节写进游戏实际运行的改写后 main，
-  所以补丁落在改写器改过的指令上时表现会不同）。文件是给另一个 main 的、或改到 App 检查的字时，游戏在启动时停止。
+  所以补丁落在改写器改过的指令上时表现会不同）。文件是给另一个 main 的、改到构建会拒绝的位置（见上面的列表）、超出 main 的范围，或有一个字节不是两位十六进制数时，游戏在启动时停止。
 
 测试范围：1.9.0 的代码模组在 Mac（M1 Pro）上构建并实际玩过。1.6.0 走同样的步骤，但没有测试：手边没有 1.6.0 的游戏文件，所以没有构建或运行过带 `--mod` 或 `TOTK_PCHTXT` 的 1.6.0；只有单元测试覆盖它的位置列表和读取器。
 没有在任何设备上测试：没有真机 Switch 可以对比，这个游戏也没有 iPhone / iPad 版本。
