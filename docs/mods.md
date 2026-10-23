@@ -312,6 +312,8 @@ button font, `External_00.bffnt` in every `Font/Font_*.sbfarc` (a BC4 glyph shee
 X and Y trade places, L, R, ZL and ZR become LB, RB, LT and RT, and + and − become the Xbox Menu and View buttons. The two stick
 press glyphs become plain LS and RS icons: the game's drawing (a stick with an arrow and a small L or R) has no room for two letters.
 The d-pad glyphs and the d-pad of the shortcut icons on the screen (four dots on the Switch) become a d-pad cross.
+A 4x4 BC4 block can hold pixels of a changed glyph and of its neighbour. The tool encodes such a block again, so a grey
+neighbour pixel there can move to the nearest of the block's eight levels. In the seven 1.9.0 fonts no neighbour pixel changes.
 
 #### The controller pictures of the controller tips page
 
@@ -340,7 +342,8 @@ buttons from the game, so the lines still end on a button of the same kind:
   stays too (another game version), and the tool prints a note.
 - Tested in play on 1.9.0 (Mac, keyboard input, US and Japanese fonts). With both styles every line of the controls page
   and every ring of the hint boxes ends on a drawn button of the right kind, also in frames 0.3 s apart. Position mode
-  with a `controls.txt` and label mode both show the button you press. A real Xbox or PlayStation pad was not used.
+  with a `controls.txt` and label mode both show the button you press. With a real Xbox pad over Bluetooth and the same
+  `controls.txt`, each button pressed did what its icon says. A real PlayStation pad was not used.
 
 These prompts keep the Switch look:
 
@@ -726,6 +729,8 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 `External_00.bffnt`（一张 BC4 字形表）。工具用同样的办法改它们：A、B、X、Y 互换位置，L、R、ZL、ZR 变成 LB、RB、LT、RT，
 + 和 − 变成 Xbox 的 Menu 和 View 按键。两个摇杆按下的字形换成简单的 LS 和 RS 图标：游戏原来的图（摇杆、箭头和一个小 L 或 R）
 放不下两个字母。十字键的字形和屏幕上快捷图标的十字键（Switch 上是四个圆点）换成十字键。
+一个 4x4 的 BC4 块里可能同时有被改字形和相邻字形的像素。工具会重新编码这样的块，所以块里相邻字形的灰色像素可能变成块的八个灰度中最近的一个。
+1.9.0 的七个字体里没有相邻像素改变。
 
 #### 手柄提示页上的手柄图片
 
@@ -747,7 +752,8 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
   是 + 和 − 位置上的竖直小键，肩键写 L2、L1、R2、R1。
 - `--keep-switch-pictures` 让这六张图保持 Switch 的样子。贴图尺寸与图案不符时（别的游戏版本）也保持原样，工具会打印一行说明。
 - 已在 1.9.0 游戏里测试（Mac，键盘输入，美版和日文字体）。两种风格下，操作说明页的每条引线和提示框的每个圆环都指在画出的同类按键上，
-  相隔 0.3 秒的几帧里也是如此。按位置模式加 `controls.txt` 和按标签模式都显示你实际要按的按键。没有用真实的 Xbox 或 PlayStation 手柄测试。
+  相隔 0.3 秒的几帧里也是如此。按位置模式加 `controls.txt` 和按标签模式都显示你实际要按的按键。
+  用蓝牙连接的真实 Xbox 手柄和同一个 `controls.txt` 测试时，按下的每个按键都做了图标上写的动作。没有用真实的 PlayStation 手柄测试。
 
 下面这些提示仍是 Switch 样式：
 
