@@ -125,7 +125,8 @@ class Extraction(unittest.TestCase):
                      0x1214474,                         # the pause menu's countdown
                      0x1821674,                         # the docked render size
                      0xe53f8c, 0x2128690, 0x2c7ef90,    # GAME_ADDR sites of game_version.h's 1.6.0 block
-                     0x182167c, 0x18216ac, 0x1804c44, 0xe53fa0):   # the output size's display-mode and heap checks
+                     0x182167c, 0x18216ac, 0x1804c44, 0xe53fa0,   # the output size's display-mode and heap checks
+                     0x18216c8, 0x18216cc, 0x18216d0):   # the phone's handheld render size
             self.assertIn(site, found, hex(site))
         sizes = {site.offset: site.size for site in reserved}
         self.assertEqual(sizes[0x126e490], 4 * 38)      # the pad loop, 38 instructions rewritten in place
