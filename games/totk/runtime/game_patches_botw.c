@@ -792,7 +792,8 @@ int runtime_render_res(unsigned *w, unsigned *h) { (void)w; (void)h; return 0; }
      main+0x1266104  mov w3, #0x780              -> ldr w3, [sp]
    1.9.0 values (the owner, 2026-10-23: change it in game, keep the screen size): unset or auto as 1.6.0; 1440p the same
    cycle, starting at 2560x1440; screen takes the largest 16:9 size of the main display (native_k_from_screen), starts at
-   it, and key 3 goes off -> MetalFX 2K -> native 2K -> native screen size -> off (native 2K only below the screen size);
+   it, and key 3 goes off -> MetalFX 2K -> native 2K -> native 2K + MetalFX -> native screen size -> off (the two native
+   2K steps only below the screen size);
    0 or 1080p the shipped size; a 16:9 <w>x<h> (native_k_parse) that size, fixed. The swapchain and the heaps are made for
    the largest size (native_heaps: 1.9.0 needs more than 1.6.0, see the GAME_BOTW190 block above). */
 enum { OUT_OFF, OUT_AUTO, OUT_FIXED };
@@ -1033,7 +1034,7 @@ int runtime_output_res_toggle(void) { return 0; }
    (nvn_mtl.m mfxup_dock, BOTW_MFXUP_DOCK_KEY) and upscales the canvas into a window or full screen bigger than 1080p at
    the present (the output stage). With a switchable start (TOTK_OUTPUT_RES auto, the default; on 1.9.0 also 1440p and
    screen): off -> MetalFX 2K -> native 2K (the canvas and the scene at 2560x1440, output_switch) -> off; 1.9.0's screen
-   size adds a native step at that size after native 2K. Otherwise MetalFX 2K on / off. */
+   size adds native 2K + MetalFX and a native step at that size after native 2K. Otherwise MetalFX 2K on / off. */
 static void output_switch_native(unsigned w) {
     unsigned h = w == g_out_w ? g_out_h : w / 16 * 9;
     output_switch(w, h);
@@ -1046,6 +1047,17 @@ int runtime_output_mode_cycle(void) {
     if (g_out_mode == OUT_AUTO && g_out_page) {
         unsigned cw = (unsigned)(atomic_load(&g_out_cur) & 0xffffffffu);
         if (cw > 1920) {
+#ifndef GAME_BOTW160
+            /* 1.9.0 on a screen bigger than 2K: native 2K -> native 2K + MetalFX (the output stage upscales the 2560x1440
+               canvas 1.35x to the window instead of the bilinear stretch; bog 2026-10-24: clean edges at 51 FPS, native
+               2K 50, the screen size 42-44) -> the screen size */
+            extern int mfxup_output_enabled(void);
+            if (cw == 2560 && g_out_w > 2560 && !mfxup_output_enabled()) {
+                dm_gfx_set_flag("mfx_upscale", 1); dm_gfx_set_flag("mfx_output", 1);
+                fprintf(stderr, "[botw] key 3: 原生 2K + MetalFX\n"); return 1;
+            }
+            if (mfxup_output_enabled()) output_mfx_off();
+#endif
             unsigned next = output_native_after(cw);
             if (next) { output_switch_native(next); return 1; }
             output_mfx_off(); output_switch(1920, 1080); fprintf(stderr, "[botw] key 3: 关闭 2K\n"); return 1;

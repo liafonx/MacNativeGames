@@ -39,7 +39,7 @@ Update history:
 | Oct 23 | iPhone, iPad | **Tears of the Kingdom** fills the screen, 60 fps by default, MetalFX upscaling |
 | Oct 23 | Mac | **Breath of the Wild 1.6.0**: key 2 interpolates again, and Link no longer shakes at 30+30; key 3 switches to native 2K; key 4 (21:9 ultrawide) and key 5 (edge smoothing) now work; every shader is prepared at build time, so far fewer translate in play |
 | Oct 23 | Mac | **Tears of the Kingdom** renders its 3D scene at the canvas resolution: internal 1920x1080 at 1080p (docked was only 1600x900), 2560x1440 on the 2K canvas |
-| Oct 23 | Mac | **Breath of the Wild 1.9.0**: key 3 switches its own canvas and 3D scene to native 2K and back during play (off → MetalFX 2K → native 2K → off), as on 1.6.0; `TOTK_OUTPUT_RES=screen` adds the largest 16:9 size of the Mac's screen (3456x1944 on a 16-inch MacBook Pro) to the cycle and starts there. Not an upscale |
+| Oct 23 | Mac | **Breath of the Wild 1.9.0**: key 3 switches its own canvas and 3D scene to native 2K and back during play (off → MetalFX 2K → native 2K → off), as on 1.6.0; `TOTK_OUTPUT_RES=screen` adds the largest 16:9 size of the Mac's screen (3456x1944 on a 16-inch MacBook Pro) to the cycle and starts there. Not an upscale. On such a screen, native 2K + MetalFX follows native 2K: MetalFX enlarges the 2560x1440 picture to the window, so edges stay clean at about 51 FPS (native 2K 50, the screen size 42–44, bog, M1 Pro) |
 | Oct 21 | Mac | **Breath of the Wild 1.9.0**: shaders and render pipelines optimised |
 | Oct 21 | Mac, iPhone, iPad | **Tears of the Kingdom**: steadier at 90 fps, and steadier frame rates when no shaders are cached at all |
 | Oct 20 | Mac | **Breath of the Wild 1.9.0** (early): a base NSP and the 1.9.0 update NSP build the same app, each DLC pack optional (`--dlc`) |
@@ -372,7 +372,7 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 | 10 月 23 日 | iPhone、iPad | **王国之泪** 铺满屏幕 默认锁 60、MetalFX放大|
 | 10 月 23 日 | Mac | **旷野之息 1.6.0**：2 键补帧恢复，30+30 下林克不再抖；3 键可以切到原生 2K；4 键（21:9 宽屏）和 5 键（边缘平滑）可以用了；打包时准备好全部着色器，游玩中当场翻译的少了很多 |
 | 10 月 23 日 | Mac | **王国之泪** 3D 画面按画布分辨率渲染：1080p 内部分辨率 1920x1080（原来底座模式只有 1600x900），2K 画布时 2560x1440|
-| 10 月 23 日 | Mac | **旷野之息 1.9.0**：和 1.6.0 一样，玩的时候用 3 键把游戏自己的画布和 3D 场景切到原生 2K 再切回来（关 → MetalFX 2K → 原生 2K → 关）；`TOTK_OUTPUT_RES=screen` 把 Mac 屏幕最大的 16:9 尺寸（16 英寸 MacBook Pro 上是 3456x1944）加进循环，并从这个尺寸启动。不是放大 |
+| 10 月 23 日 | Mac | **旷野之息 1.9.0**：和 1.6.0 一样，玩的时候用 3 键把游戏自己的画布和 3D 场景切到原生 2K 再切回来（关 → MetalFX 2K → 原生 2K → 关）；`TOTK_OUTPUT_RES=screen` 把 Mac 屏幕最大的 16:9 尺寸（16 英寸 MacBook Pro 上是 3456x1944）加进循环，并从这个尺寸启动。不是放大。在这样的屏幕上，原生 2K 之后多一档「原生 2K + MetalFX」：MetalFX 把 2560x1440 的画面放大到窗口，边缘干净，约 51 帧（原生 2K 50 帧，屏幕尺寸 42–44 帧，沼泽，M1 Pro）|
 | 10 月 21 日 | Mac | **旷野之息 1.9.0** 优化了着色器和渲染管线 |
 | 10 月 21 日 | Mac、iPhone、iPad | **王国之泪** 提高90帧稳定性，提高完全没有着色器时帧数稳定 |
 | 10 月 20 日 | Mac | **旷野之息 1.9.0**（早期）：本体 NSP + 1.9.0 更新 NSP 打成同一个 App，每个 DLC 内容包都可选（`--dlc`） |
