@@ -3621,7 +3621,7 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
         serial_put(t->serial, pk);
         pk->owned = gpu_owned(t->serial);   // after it is in the table: a later mark finds it there (pkg_owned_locked)
         if ((pk->hashed = pkg_hashed(t))) { pk->chash = pkg_hash(t->mem, t->L.size); pk->csub = g_sub_serial; }
-        if (serial_is_dead(t->serial)) dead_put_note(t->serial);
+        if (serial_is_dead(t->serial)) dead_put_note(t->serial); BOTW_PKG_RENDER_ALIAS(pk, t)
         return pk->tex;
     }
     if (have) return have;
@@ -4350,7 +4350,7 @@ static MTLPixelFormat attachment_format(const tex_t *t, const view_t *v, int has
     return (MTLPixelFormat)pf;
 }
 static id<MTLTexture> attachment_texture(const tex_t *t, const view_t *v, int has_v) {
-    id<MTLTexture> base = tex_mtl(t); if (!base) return nil;
+    id<MTLTexture> base = BOTW_ATTACH_TEX_MTL(t); if (!base) return nil;
     MTLPixelFormat pf = attachment_format(t, v, has_v, base.pixelFormat);
     if (pf == base.pixelFormat) return base;
     if (tex_need_pfv(base.pixelFormat, pf) && !(base.usage & MTLTextureUsagePixelFormatView)) base = tex_upgrade_pfv(t, base, pf);
@@ -15557,13 +15557,20 @@ void *botw_render_alias(const tex_t *t, const void *ownp) {
     pthread_mutex_lock(&g_bwb_mu);
     bra_ent *r = g_bra.n ? nvn_hm_get(&g_bra, &k) : NULL;
     if (r && r->t.serial != t->serial && r->t.L.size == t->L.size && r->t.d.format == t->d.format && r->t.d.width == t->d.width &&
-        r->t.d.height == t->d.height && r->t.d.depth == t->d.depth && r->t.d.levels == t->d.levels && r->t.d.target == t->d.target) {
+        r->t.d.height == t->d.height && r->t.d.depth == t->d.depth && r->t.d.levels == t->d.levels && r->t.d.target == t->d.target &&
+        r->t.d.flags == t->d.flags && r->t.d.stride == t->d.stride && r->t.d.samples == t->d.samples && r->t.L.layer_size == t->L.layer_size &&
+        r->t.L.layers == t->L.layers && r->t.L.bpb == t->L.bpb && r->t.L.tileH == t->L.tileH && r->t.L.tileD == t->L.tileD) {
         id o = (__bridge id)r->obj; mt = [o isKindOfClass:[NvPkg class]] ? ((NvPkg *)o)->tex : o; stamp = r->stamp; rser = r->t.serial;
     }
     pthread_mutex_unlock(&g_bwb_mu);
     if (!mt || mt.pixelFormat != own.pixelFormat || mt.mipmapLevelCount != own.mipmapLevelCount || nvn_dirty_since(t->mem, t->L.size, stamp)) return NULL;
     uint64_t n = ++g_bra_hits; if (n <= 4 || n % 5000 == 0) MLOG("[render-alias] ser=%llu %ux%u nvnfmt=%#x samples the pending GPU rendering ser=%llu of its memory (%llu so far)", (unsigned long long)t->serial, t->d.width, t->d.height, t->d.format, (unsigned long long)rser, (unsigned long long)n);
     return (void *)CFBridgingRetain(mt);
+}
+_Thread_local int botw_bra_attach;
+void botw_render_gone(const void *mem, const void *obj) {
+    uint64_t k = (uint64_t)(uintptr_t)mem;
+    pthread_mutex_lock(&g_bwb_mu); bra_ent *r = g_bra.n ? nvn_hm_get(&g_bra, &k) : NULL; if (r && obj && r->obj == obj) bra_drop_locked(k); pthread_mutex_unlock(&g_bwb_mu);
 }
 void botw_wb_landed(const void *mem) {
     uint64_t k = (uint64_t)(uintptr_t)mem, g = atomic_fetch_add(&g_bwb_gen, 1) + 1;

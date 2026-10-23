@@ -223,7 +223,7 @@ int botw_uw_scene_picture(void);   /* end of nvn_mtl.m */
 #define BOTW_WB_ENT_FIELDS uint64_t fence; void *stage; uint64_t stage_fence;
 void botw_wb_sub_note(uint64_t serial);
 #define BOTW_WB_NOTED(e, k) (e)->fence = g_fence + 1; botw_wb_sub_note(k); botw_render_note(&(e)->t, (e)->obj, (e)->stamp);
-#define BOTW_WB_STAGE_FREE(e) if ((e)->stage) { defer_obj_release((__bridge id)(e)->stage); CFRelease((e)->stage); }
+#define BOTW_WB_STAGE_FREE(e) if ((e)->stage) { defer_obj_release((__bridge id)(e)->stage); CFRelease((e)->stage); } botw_render_gone((e)->t.mem, (e)->obj);
 void botw_wb_stage_encode(void);
 #define BOTW_WB_STAGE() botw_wb_stage_encode();
 #define WB_WAIT_GPU(list, nl) { uint64_t need_ = 0; for (int i_ = 0; i_ < (nl); i_++) { if ((list)[i_]->fence > need_) need_ = (list)[i_]->fence; \
@@ -254,7 +254,10 @@ int botw_wb_newer(const void *mem, uint64_t gen);
    since), a sampled copy reads that rendering, as its descriptor would on hardware. */
 void botw_render_note(const tex_t *t, void *obj, uint64_t stamp);
 void *botw_render_alias(const tex_t *t, const void *own);   /* CFBridgingRetain'ed MTLTexture or NULL */
-#define BOTW_PKG_RENDER_ALIAS(pk, t) if (pk && pk->tex && !pk->owned) { void *a_ = botw_render_alias(t, (__bridge const void *)pk->tex); if (a_) return CFBridgingRelease(a_); }
+void botw_render_gone(const void *mem, const void *obj);   /* its write-back record was freed */
+extern _Thread_local int botw_bra_attach;   /* tex_mtl for a render target: its own copy, never the alias */
+#define BOTW_ATTACH_TEX_MTL(t) ({ botw_bra_attach = 1; id<MTLTexture> r_ = tex_mtl(t); botw_bra_attach = 0; r_; })
+#define BOTW_PKG_RENDER_ALIAS(pk, t) if (pk && pk->tex && !pk->owned && !botw_bra_attach) { void *a_ = botw_render_alias(t, (__bridge const void *)pk->tex); if (a_) return CFBridgingRelease(a_); }
 #else
 #define MFX_CANVAS_FMT_OK(f) pf_is_float(f)
 #define MFX_UI_DRAW(pr) mfx_ui_vs(pr->sh[0]->key)
@@ -298,6 +301,7 @@ void *botw_render_alias(const tex_t *t, const void *own);   /* CFBridgingRetain'
 #define BOTW_PKG_WB_SET(pk)
 #define BOTW_PKG_WB_STALE(pk, t, clean)
 #define BOTW_PKG_RENDER_ALIAS(pk, t)
+#define BOTW_ATTACH_TEX_MTL(t) tex_mtl(t)
 #endif
 /* Key 5 (MetalFX temporal anti-aliasing, totk_taa.m): the compose draw that samples the linear HDR scene at fragment
    texture slot 0 before tone mapping. TOTK: 0ac9a549 (tone mapping and bloom). Breath of the Wild 1.9.0: f7ee6fe1 (two
