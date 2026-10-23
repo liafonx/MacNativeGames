@@ -202,6 +202,9 @@ class Yaz0Splice(unittest.TestCase):
         with self.assertRaises(ValueError):
             bf.yaz0_splice(self.stream, bytes(wrong), [(30000, b'x')])
 
+    def test_no_edits_gives_the_stream_back(self):
+        self.assertEqual(bf.yaz0_splice(self.stream, self.data, []), self.stream)
+
 
 @unittest.skipIf(bf is None, 'needs Python 3.14')
 class Textures(unittest.TestCase):
@@ -624,6 +627,42 @@ class MakePackPlayStation(unittest.TestCase):
     def test_unknown_style_is_refused(self):      # negative control
         with self.assertRaises(ValueError):
             bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters(), 'nintendo')
+
+
+def runtime_index(files):
+    """A runtime-index.bin for `files` (RomFS path -> (offset, size)), as make_mod_manifest.read_index reads it."""
+    names = b''.join(n.encode() + b'\0' for n in files)
+    entries, at = b'', 0
+    for name, (offset, size) in files.items():
+        entries += struct.pack('<QQII', offset, size, at, len(name) + 1); at += len(name) + 1
+    return struct.pack('<8sQQ', b'TOTKRFS1', len(files), 24 + len(files) * 24) + entries + names
+
+
+@unittest.skipIf(bf is None, 'needs Python 3.14')
+class CommandLine(unittest.TestCase):
+    def test_a_font_already_in_the_mod_folder_stops_the_run_before_anything_is_written(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            romfs = tmp / 'game' / 'botw190' / 'romfs'
+            romfs.mkdir(parents=True)
+            (romfs / 'romfs.bin').write_bytes(bytes(64))
+            (romfs / 'runtime-index.bin').write_bytes(runtime_index({bp.PACK: (0, 32), 'Font/Font_US.sbfarc': (32, 32)}))
+            (tmp / 'game' / 'firmware' / bp.FONT).parent.mkdir(parents=True)
+            (tmp / 'game' / 'firmware' / bp.FONT).write_bytes(b'font')
+            mod = tmp / 'botw190'
+            (mod / 'Font').mkdir(parents=True)
+            (mod / 'Font' / 'Font_US.sbfarc').write_bytes(b'another mod')
+            argv = sys.argv
+            sys.argv = ['botw_prompts.py', str(mod), '--romfs', str(romfs)]
+            try:
+                with self.assertRaises(SystemExit) as stop:
+                    bp.main()
+            finally:
+                sys.argv = argv
+            self.assertEqual(stop.exception.code, 2)
+            self.assertEqual(sorted(p.relative_to(mod).as_posix() for p in mod.rglob('*')), ['Font', 'Font/Font_US.sbfarc'])
+            self.assertEqual((mod / 'Font' / 'Font_US.sbfarc').read_bytes(), b'another mod')
 
 
 if __name__ == '__main__':
