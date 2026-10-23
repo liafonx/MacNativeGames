@@ -126,15 +126,18 @@ countdown), the docked render size, the `TOTK_JQ_CHECK` sites (1.6.0 only) and t
 `game_version.h` and the runtime files that use those addresses). Three
 things differ from Tears of the Kingdom:
 
-- `--install-mod-romfs` is refused for this game. Copy the mod's RomFS files into
-  `~/Library/Application Support/MacNativeGames/BotW/mods/botw190` (`botw160` for 1.6.0) and write the manifest as in
-  [Breath of the Wild](#breath-of-the-wild) below; the build prints this when the mod has a `romfs/`.
+- `--install-mod-romfs` is refused for this game. For 1.6.0, copy the mod's RomFS files into
+  `~/Library/Application Support/MacNativeGames/BotW/mods/botw160` and write the manifest as in
+  [Breath of the Wild](#breath-of-the-wild) below; the build prints this when the mod has a `romfs/`. For 1.9.0,
+  `make_mod_manifest.py` does not take `botw190` yet, so a 1.9.0 mod's RomFS half needs the 1.9.0 RomFS mod support
+  (ly05010419/MacNativeGames#310); its code half works without it.
 - There is no iPhone / iPad build of this game.
 - To try a `.pchtxt` without a build, start the game from the work folder (`<work>/totk`, which holds
   `extracted/botw190/exefs/main` or `extracted/botw160/exefs/main`) with `TOTK_PCHTXT=<file>` (a development switch, Mac
   only; the same reading as the build, but the bytes go into the rewritten main the game runs, so a patch on an
   instruction the rewriter changed behaves differently there). The game stops at start when the file is for another
-  build of main, or touches a word the app checks.
+  build of main, touches a site the build refuses (the list above), reaches outside main or has a byte that is not two
+  hex digits.
 
 What was tested: 1.9.0 code mods were built and played on a Mac (M1 Pro). 1.6.0 takes the same steps, but it is not
 tested: no 1.6.0 game files were at hand, so no 1.6.0 build with `--mod` or `TOTK_PCHTXT` was made or run; only the unit
