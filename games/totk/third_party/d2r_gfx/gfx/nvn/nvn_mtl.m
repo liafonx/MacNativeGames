@@ -15866,6 +15866,6 @@ int botw_wb_newer(const void *mem, uint64_t gen) {
 #include "nvn_sampler_border_probe.h"
 #include "nvn_texels_region_probe.h"
 #include "nvn_writeback_probe.h"
-#ifdef GAME_BOTW190
+#ifdef GAME_BOTW
 #include "../../../../../botw/gfx/botw_texpack.h"   // sharp UI art (BOTW_TP_* in nvn_obj.h)
 #endif
