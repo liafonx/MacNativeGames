@@ -5,20 +5,22 @@ The game draws its main prompts ("A: Talk") as 48x48 textures of the button, one
 the left stick press, in Pack/Bootup.pack > Layout/Common.sblarc > timg/__Combined.bntx. This tool reads that archive from
 your own RomFS and, for each Switch button, shows the Xbox (or PlayStation) button you press for it (the chain of
 prompt_layout.py: face buttons by position or label, then your controls.txt). Every button is drawn again from one drawing of
-make_button_icons.py (A B X Y as discs, L ZL as the LB LT keys, the stick press as an LS disc, Menu and View, the d-pad cross)
-and fitted on the place of the game's own picture: the disc of the face buttons and the d-pad, the box of the white shape of the
-L and ZL keys and of the stick press textures, the body of the stick in the font. With --style playstation the keys read L1 L2
-R1 R2 and L3 R3 and the faces are the Cross, Circle, Square and Triangle. With --style switch every picture is the game's own,
+make_button_icons.py (A B X Y as discs, L ZL as the LB LT keys, Menu and View, the d-pad cross) and fitted on the place of the
+game's own picture: the disc of the face buttons and the d-pad, the box of the white shape of the L and ZL keys. With --style
+playstation the keys read L1 L2 R1 R2 and the faces are the Cross, Circle, Square and Triangle. A stick keeps the game's own
+picture in every style (a stick with a small L or R on it): a stick press prompt shows the game's picture of the stick pressed,
+traced as the switch style traces it. With --style switch every picture is the game's own,
 traced (sharp at a larger --scale, the same look) from the game's picture of the button pressed (controls.txt); a texture with
-no picture of that button gets a drawn Switch key. At --scale 2 and up every button glyph of the font is traced.
+no picture of that button gets a drawn Switch key. At --scale 2 and up every other button glyph of the font (a stick being
+moved, a button nothing drives) is traced too, in every style.
 Letters are drawn from the Switch's own system font, which your Breath of the Wild app already holds (shared-fonts/
 0-standard.bfttf). Nothing of the game ships with the project: every picture comes from your files, and the result is written
 only into the mod folder you name (then manifest.tsv, made with make_mod_manifest.py; runtime/romfs.c checks it at start).
 The icons inside text (controller tips, the pick-up window, camera mode) are glyphs of the button font in Font/Font_*.sbfarc
 (External_00.bffnt, a BC4 glyph sheet): the same drawings are used there for A B X Y, L R ZL ZR (as LB RB LT RT), + and -
-(as the Menu and View buttons, or Options and Create), the two stick press glyphs (plain LS and RS, or L3, R3, icons) and the
-d-pad glyphs (four dots become a d-pad cross), as does the d-pad of the shortcut icons on the screen (ButtonIconL46NN_00). A
-button's texture and its font glyph therefore look the same. The glyphs of a stick being moved keep their Switch look.
+(as the Menu and View buttons, or Options and Create) and the d-pad glyphs (four dots become a d-pad cross), as does the d-pad
+of the shortcut icons on the screen (ButtonIconL46NN_00); the two stick press glyphs are the game's, of the stick pressed. A
+button's texture and its font glyph therefore look the same. The glyphs of a stick being moved stay the game's.
 The controller pictures of the controller tips page are drawn again too: the handheld Switch (Nt_NNillust_00, _01) and the four pieces
 of the hint boxes (Nt_GamePadIllustSnn_00 to _03) become an Xbox controller (or with --style playstation a DualSense) drawn by
 botw_controller_art.py, with the buttons in the places of the Switch's, so the game's callout lines still end on a button of the same
@@ -200,8 +202,10 @@ def drawers_of(style, letters):
                        max(ink[2], *(p[0] for p in points)), max(ink[3], *(p[1] for p in points))]
             return grown, tuple(ink) if grown.value else bounds, upm, advance + 2 * LETTER_STROKE * cap   # the growth keeps the gaps
     make = {'xbox': mbi.xbox_drawers, 'playstation': mbi.playstation_drawers, 'switch': switch_drawers}[style]
-    drawers, dpads = make(Glyphs([letters.font]))
-    return {**drawers, **dpads}
+    g = Glyphs([letters.font])
+    drawers, dpads = make(g)
+    sticks = {pad: drawer for pad, drawer in switch_drawers(g)[0].items() if pad in STICKS}     # where the game has no picture
+    return {**drawers, **sticks, **dpads}
 
 
 def switch_drawers(g):
@@ -234,6 +238,7 @@ def switch_drawers(g):
     return drawers, mbi.xbox_drawers(g)[1]
 
 
+STICKS = ('l3', 'r3')      # the stick presses: every style shows the game's own picture of the stick (traced), as the switch style
 SWITCH_TEXTURES = {**FACE, 'l1': SHAPE['l'][0], 'l2': SHAPE['zl'][0]}      # pad -> the texture of its Switch button
 OWN_BUTTON = {**{name: pad for pad, name in SWITCH_TEXTURES.items()}, **dict.fromkeys(SHAPE['lstick'], 'l3'), 'ButtonIconL46NN_00^d': 0xE049}
 DPAD_GLYPHS = (0xE049, 0xE060, 0xE061, 0xE062, 0xE063, 0xE064, 0xE065)      # the d-pad glyphs of the button font (0xE049: all four lit)
@@ -389,7 +394,8 @@ def plan(bntx, textures, controls, letters, style='xbox', scale=1):
     def draw(name, pad, size, find):
         try:
             old = key_rows(bntx, textures, name, size)
-            source = (name if OWN_BUTTON.get(name) == pad else SWITCH_TEXTURES.get(pad)) if style == 'switch' else None
+            own = style == 'switch' or pad in STICKS
+            source = (name if OWN_BUTTON.get(name) == pad else SWITCH_TEXTURES.get(pad)) if own else None
             if source:      # the switch style: the game's own picture of the button pressed, traced
                 rows = old if source == name else key_rows(bntx, textures, source, size)
                 new[name] = traced(rows, find(rows), len(old) * scale, enlarged(find(old), scale))
@@ -514,14 +520,15 @@ FONT_SHAPE = {'l': 0xE044, 'r': 0xE045, 'zl': 0xE046, 'zr': 0xE047, 'lstick': 0x
 FONT_MENU = {'plus': 0xE04B, 'minus': 0xE04C}
 BFFNT = 'External_00.bffnt'
 SWITCH_GLYPHS = {**FONT_FACE, 'l1': 0xE044, 'r1': 0xE045, 'l2': 0xE046, 'r2': 0xE047, 'l3': 0xE056, 'r3': 0xE057, 'menu': 0xE04B, 'view': 0xE04C}
-SWITCH_TRACED = (0xE040, 0xE068)        # the button glyphs of the font: with --style switch above scale 1 all are traced
+SWITCH_TRACED = (0xE040, 0xE068)        # the button glyphs of the font: above scale 1 all are traced (or drawn)
 
 
 def font_cells(font, sheet_rows, controls, letters, style='xbox', scale=1):
     """code point -> new upright cell (`scale` times the size of the game's) for the prompts `controls` asks for, and notes (as
     plan() does for the textures): `render` of the button that is pressed, fitted on the place of the game's glyph (analysed at
     the game's size): the disc of A B X Y, + and - (the glyph sits in the left part of its cell and the game draws only that part)
-    and the d-pad, the box of L R ZL ZR, the body of the stick for the stick presses."""
+    and the d-pad, the box of L R ZL ZR. A stick press is the game's own glyph of the stick pressed, traced on the body of the
+    stick, in every style."""
     text, brand = style_parts(style)
     drawers = drawers_of(style, letters)
     size, height, new, notes = font.cell * scale, font.cell_height * scale, {}, []
@@ -529,7 +536,7 @@ def font_cells(font, sheet_rows, controls, letters, style='xbox', scale=1):
     def draw(code, pad, find, what):
         try:
             old = font.get(sheet_rows, code)
-            if style == 'switch':       # the game's own glyph of the button pressed, traced
+            if style == 'switch' or pad in STICKS:       # the game's own glyph of the button pressed, traced
                 rows = font.get(sheet_rows, SWITCH_GLYPHS.get(pad, code))
                 new[code] = traced(rows, find(rows), size, enlarged(find(old), scale), height)
             else:
@@ -559,7 +566,7 @@ def font_cells(font, sheet_rows, controls, letters, style='xbox', scale=1):
             draw(code, kind, disc_box, f'{slot} glyph')
         else:
             notes.append(f'{slot}: {kind or "nothing"} has no {brand} picture here; the Switch glyph stays')
-    if style == 'switch' and scale > 1:     # every other button glyph (a stick being moved, a button nothing drives) traced too
+    if scale > 1:     # every other button glyph (a stick being moved, a button nothing drives) traced too, in every style
         for code in sorted(font.cells):
             if code not in new and SWITCH_TRACED[0] <= code < SWITCH_TRACED[1]:
                 old = font.get(sheet_rows, code)
