@@ -334,7 +334,7 @@ After a move to another display, the icons of its size also show from the next s
 - If the set cannot be made (the work folder's Python is gone, for example), the game starts with the Switch icons and
   the log names the cause. The tools run with the Python of the work folder the app was built from (fontTools comes with
   `games/totk/requirements.txt`).
-- 1.6.0 is not tested in game yet. Where a version's files differ from 1.9.0, that texture or font keeps the game's own
+- 1.6.0 is tested in game (Xbox, 2x): the prompts and the glyphs in text show the Xbox buttons. Where a version's files differ from 1.9.0, that texture or font keeps the game's own
   icon, and the log notes it. At 2x or more, the tool needs a size table entry for each file that grows. Without one, it
   draws the whole set at 1x.
 - `build_app.py --no-button-icons` builds the app without them. `--button-icons` adds them to a Tears of the Kingdom app.
@@ -347,7 +347,7 @@ The tools below make the same icons by hand, into the mods folder.
   `--face-buttons`). Without the two options the output is the same as before: the default layout by position. The `xbox`
   and `playstation` styles draw the stick presses as LS and RS (L3 and R3); the prompts drawn as fixed images keep their
   Switch icons.
-- Breath of the Wild 1.6.0 and 1.9.0 (1.6.0 not tested in game): `games/botw/scripts/botw_prompts.py` redraws eight key textures in the Xbox (or PlayStation) style
+- Breath of the Wild 1.6.0 and 1.9.0: `games/botw/scripts/botw_prompts.py` redraws eight key textures in the Xbox (or PlayStation) style
   and the controller pictures of the controller tips page (see below).
 
 Before they write, the tools print one line for each Switch button they change, for example `Switch A <- Xbox X`. `make_button_icons.py` prints these lines when you pass `--face-buttons` or `--controls`. Check these lines.
@@ -890,7 +890,7 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
   （`botw_prompts.py --mods`），每个图标条目取两者中较大的值，加载时它代替模组的大小表。模组的大小表改变后，这套图标会重新生成。
 - 生成失败时（例如构建用的工作目录里的 Python 已删除），游戏以 Switch 图标启动，日志写明原因。工具用构建这个 App 的
   工作目录里的 Python 运行（fontTools 随 `games/totk/requirements.txt` 安装）。
-- 1.6.0 还没在游戏里测试。某个版本的文件和 1.9.0 不同时，那张贴图或那个字体保留游戏自己的图标，日志会写明。2x 及以上时，
+- 1.6.0 已在游戏里测试（Xbox，2x）：提示和文字里的按键图标都显示 Xbox 按键。某个版本的文件和 1.9.0 不同时，那张贴图或那个字体保留游戏自己的图标，日志会写明。2x 及以上时，
   每个要变大的文件都需要资源大小表里的条目。缺少条目时，工具按 1x 绘制整套图标。
 - `build_app.py --no-button-icons` 构建不带自动图标的 App。`--button-icons` 给王国之泪的 App 加上：它的启动器用同样的方式
   选择和生成图标，始终是 1x，用 `make_button_icons.py` 生成（还没在游戏里测试）。
@@ -901,7 +901,7 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
   `--face-buttons position|label` 和 `--controls <controls.txt>` 后按你的设置显示（`--controls` 必须同时给
   `--face-buttons`）。不加这两个参数时，输出和以前完全一样：默认的按位置布局。`xbox` 和
   `playstation` 风格把摇杆按下画成 LS 和 RS（L3 和 R3）；以固定图片显示的提示仍是 Switch 图标。
-- 旷野之息 1.6.0 和 1.9.0（1.6.0 还没在游戏里测试）：`games/botw/scripts/botw_prompts.py` 以 Xbox（或 PlayStation）风格重绘八张按键贴图和手柄提示页上的手柄图片（见下文）。
+- 旷野之息 1.6.0 和 1.9.0：`games/botw/scripts/botw_prompts.py` 以 Xbox（或 PlayStation）风格重绘八张按键贴图和手柄提示页上的手柄图片（见下文）。
 
 写文件之前，工具会为它改动的每个 Switch 按键打印一行，例如 `Switch A <- Xbox X`；`make_button_icons.py` 在加了 `--face-buttons` 或 `--controls` 时才打印。先核对这些行。
 
