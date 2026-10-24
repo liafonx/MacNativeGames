@@ -279,14 +279,20 @@ A Breath of the Wild 1.9.0 app draws the prompts itself, with no tool to run. At
 | auto | the controller connected at start; with none, the last one the game saw (`controller-detected.txt`). Xbox and other controllers: Xbox; DualSense and DualShock: PlayStation; Nintendo controllers and no controller yet: Switch. `TOTK_FACE_BUTTONS=label` draws them by label |
 
 The icons follow your `controls.txt` too: each prompt shows the button you press on that controller, by its own name for
-each position (by position, `south` is Xbox A or Cross). The first start with a new type, controller or `controls.txt` makes the set
+each position (by position, `south` is Xbox A or Cross). The launcher draws them at the size of the main display, from 1x to 4x.
+The scale is the height in pixels of the largest 16:9 picture on the display, divided by 1080 and rounded up. That gives 1x
+for 1080p, 2x for a MacBook Pro's 3456x2234 and 3x for 5K. The first start with a new type, controller, display size or `controls.txt` makes the set
 once from the app's own RomFS (about 8 seconds on an M1 Pro, before the window opens) and keeps it in
-`button-icons/botw190/` next to `controls.txt`, at most four sets (about 37 MB each). Later starts reuse it. The game reads
+`button-icons/botw190/` next to `controls.txt`, at most four sets (about 37 MB each at 1x, 44 MB at 2x). Later starts reuse it. The game reads
 the icons at start only: after key 6 or a new controller during play, the log says
 `button icons: xbox-position now, playstation-position from the next start`, and the new icons show at the next start.
+After a move to another display, the icons of its size also show from the next start.
 
-- A mod in `mods/botw190` with its own `Pack/Bootup.pack` or `Font/Font_*.sbfarc` (for example one made with
-  `botw_prompts.py` below) wins: the automatic icons are left out, and the log says so. Delete those files to use them.
+- A mod in `mods/botw190` that replaces a file of the set wins: the whole set is left out, and the log says so. The set
+  holds `Pack/Bootup.pack` and the `Font/Font_*.sbfarc`, and at 2x or more also
+  `System/Resource/ResourceSizeTable.product.srsizetable`. So a mod with its own icons (for example one made with
+  `botw_prompts.py` below) turns the automatic icons off. A mod with its own size table (for example a translation) does
+  the same at 2x or more. The game then shows that mod's icons or its own. Delete the mod's icon files to use the automatic icons.
 - If the set cannot be made (the work folder's Python is gone, for example), the game starts with the Switch icons and
   the log names the cause. The tools run with the Python of the work folder the app was built from (fontTools comes with
   `games/totk/requirements.txt`).
@@ -331,18 +337,19 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 Use `botw160` for 1.6.0. The tool needs Python 3.14 and fontTools (`python3.14 -m pip install fonttools`). It changes
 eight 48x48 key textures in `Pack/Bootup.pack` > `Layout/Common.sblarc`, and six controller pictures (next section):
 
-- A, B, X and Y take the picture of the letter you press. The four face pictures trade places.
-- L and ZL keep the game's key shape and get LB, LT, RB or RT.
+- A, B, X and Y become a disc with the letter you press, on the place of the game's disc.
+- L and ZL become the Xbox LB, LT, RB or RT key, in the box of the game's key.
 - The left stick press (two textures) gets LS or RS.
-- The new letters come from the Switch system font that your app already holds.
+- The new letters come from the Switch system font that your app already holds (regular weight).
 
 The icons inside text (the controller tips, the pick-up window, camera mode, and R, ZR, + and − in messages) are glyphs of the
-button font, `External_00.bffnt` in every `Font/Font_*.sbfarc` (a BC4 glyph sheet). The tool changes them the same way: A, B,
-X and Y trade places, L, R, ZL and ZR become LB, RB, LT and RT, and + and − become the Xbox Menu and View buttons. The two stick
+button font, `External_00.bffnt` in every `Font/Font_*.sbfarc` (a BC4 glyph sheet). Each button has one drawing (the drawings
+of `make_button_icons.py`), and the tool makes the texture and the glyph from it, so the two match. In the font, A,
+B, X and Y show the letter you press. L, R, ZL and ZR become LB, RB, LT and RT, and + and − become the Xbox Menu and View buttons. The two stick
 press glyphs become plain LS and RS icons: the game's drawing (a stick with an arrow and a small L or R) has no room for two letters.
 The d-pad glyphs and the d-pad of the shortcut icons on the screen (four dots on the Switch) become a d-pad cross.
 A 4x4 BC4 block can hold pixels of a changed glyph and of its neighbour. The tool encodes such a block again, so a grey
-neighbour pixel there can move to the nearest of the block's eight levels. In the seven 1.9.0 fonts no neighbour pixel changes.
+neighbour pixel there can move to the nearest of the block's eight levels. At `--scale 1`, in the seven 1.9.0 fonts no neighbour pixel changes. At 2x or more the whole sheet is encoded again, so an unchanged glyph can also shift a grey pixel by a level.
 
 #### The controller pictures of the controller tips page
 
@@ -383,15 +390,24 @@ These prompts keep the Switch look:
   note for it.
 
 `--style playstation` shows PlayStation buttons instead: L1, L2 and L3 (R1, R2 and R3 in the font), and Options and Create for + and −.
-The game's face pictures carry Xbox letters, so the tool draws the Cross, Circle, Square and Triangle again, on a disc of the same
+The tool draws the Cross, Circle, Square and Triangle on a disc of the same
 size and place as the game's. It was tested in play with the controller pictures (see above).
 
-Only the bytes of the changed textures and, with a remapped face button, the positions of the hint box rings (eight bytes
+`--scale 2`, `3` or `4` draws the textures, the font glyphs and the controller pictures that many times the game's size, for
+sharp prompts on a big display. The default, `--scale 1`, keeps the game's size. At 2x or more the textures and the whole glyph
+sheet of every font grow. The tool enlarges the glyphs that it does not change by repeating their pixels. The game
+reserves memory for each file by its resource size table. So the tool also writes
+`System/Resource/ResourceSizeTable.product.srsizetable`, with the entries of `Layout/Common.blarc` and the seven
+`Font/Font_*.bfarc` raised by how much they grew. At 2x the decompressed `Layout/Common.sblarc` grows by about 4 MB, and
+each font by about 0.5 MB.
+
+At `--scale 1`, only the bytes of the changed textures and, with a remapped face button, the positions of the hint box rings (eight bytes
 of a ring or dot pane) differ. Every other member and byte of the pack is the original, and the
-decompressed `Layout/Common.sblarc` keeps its size. The tool writes only `Pack/Bootup.pack`, the seven `Font/Font_*.sbfarc` and `manifest.tsv`. The other
+decompressed `Layout/Common.sblarc` keeps its size. The tool writes only `Pack/Bootup.pack`, the seven `Font/Font_*.sbfarc`,
+the size table (at `--scale 2` or more) and `manifest.tsv`. The other
 files in the folder stay and go into the manifest too. It stops when the folder already has one of these files
-(another mod's, or an earlier run). `--replace` overwrites it, and that other mod's changes to the pack are lost: the
-tool always starts from the game's own pack. `--preview <picture.png>` also writes a picture of the changed textures, and `<picture>-pictures.png` with the controller pictures.
+(another mod's, or an earlier run). `--replace` overwrites it, and that other mod's changes to these files are lost: the
+tool always starts from the game's own files. `--preview <picture.png>` also writes a picture of the changed textures, and `<picture>-pictures.png` with the controller pictures.
 
 #### A mods folder that already holds files
 
@@ -731,13 +747,18 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
 | 自动 | 启动时连接的手柄；没有时用游戏上次见到的手柄（`controller-detected.txt`）。Xbox 和其他手柄：Xbox；DualSense 和 DualShock：PlayStation；任天堂手柄和还没连过手柄时：Switch。`TOTK_FACE_BUTTONS=label` 时按标签绘制 |
 
 图标也跟随你的 `controls.txt`：每个提示显示在这个手柄上实际要按的按键，用这个手柄自己对每个位置的叫法（按位置映射时，`south` 是 Xbox
-的 A 或 PlayStation 的 Cross）。换了类型、手柄或 `controls.txt` 后的第一次启动，会用 App 自己的 RomFS 生成一套图标
-（M1 Pro 上约 8 秒，在窗口打开之前），保存在 `controls.txt` 旁边的 `button-icons/botw190/`，最多保留四套（每套约
-37 MB）。以后的启动直接沿用。游戏只在启动时读取图标：游戏中按了 6 键或换了手柄时，日志会写
+的 A 或 PlayStation 的 Cross）。启动器按主显示器的尺寸绘制图标，取 1x 到 4x。
+倍数是显示器上能放下的最大 16:9 画面的像素高度除以 1080，向上取整。所以 1080p 为 1x，MacBook Pro 的 3456x2234 为 2x，5K 为 3x。换了类型、手柄、显示器尺寸或
+`controls.txt` 后的第一次启动，会用 App 自己的 RomFS 生成一套图标
+（M1 Pro 上约 8 秒，在窗口打开之前），保存在 `controls.txt` 旁边的 `button-icons/botw190/`，最多保留四套（1x 时每套约
+37 MB，2 倍时约 44 MB）。以后的启动直接沿用。游戏只在启动时读取图标：游戏中按了 6 键或换了手柄时，日志会写
 `button icons: xbox-position now, playstation-position from the next start`，新图标在下次启动时显示。
+换到另一台显示器后，按它的尺寸绘制的图标也从下次启动起显示。
 
-- `mods/botw190` 里的模组如果带有自己的 `Pack/Bootup.pack` 或 `Font/Font_*.sbfarc`（例如用下面的 `botw_prompts.py`
-  生成的），以模组为准：不加载自动图标，日志会写明。删掉这些文件即可使用自动图标。
+- `mods/botw190` 里的模组如果替换了这套图标里的任何一个文件，以模组为准：整套自动图标都不加载，日志会写明。这套图标包括
+  `Pack/Bootup.pack` 和各个 `Font/Font_*.sbfarc`，2x 及以上还包括
+  `System/Resource/ResourceSizeTable.product.srsizetable`。所以带有自己图标的模组（例如用下面的 `botw_prompts.py`
+  生成的）会关掉自动图标。2x 及以上时，带有自己资源大小表的模组（例如翻译模组）也会这样。游戏这时显示那个模组的图标或游戏自己的图标。删掉模组里的图标文件即可使用自动图标。
 - 生成失败时（例如构建用的工作目录里的 Python 已删除），游戏以 Switch 图标启动，日志写明原因。工具用构建这个 App 的
   工作目录里的 Python 运行（fontTools 随 `games/totk/requirements.txt` 安装）。
 - `build_app.py --no-button-icons` 构建不带自动图标的 App；`--button-icons` 给王国之泪或 1.6.0 的 App 加上（这些版本
@@ -778,17 +799,18 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 1.6.0 用 `botw160`。需要 Python 3.14 和 fontTools（`python3.14 -m pip install fonttools`）。工具修改
 `Pack/Bootup.pack` > `Layout/Common.sblarc` 里的八张 48x48 按键贴图，还有六张手柄图片（见下一节）：
 
-- A、B、X、Y 换成你实际要按的那个字母的图案，四张面键图案互换位置。
-- L 和 ZL 保留游戏的按键外形，字母换成 LB、LT、RB 或 RT。
+- A、B、X、Y 换成一个带有你实际要按的字母的圆盘，放在游戏原来圆盘的位置。
+- L 和 ZL 换成 Xbox 的 LB、LT、RB 或 RT 按键，放在游戏原来按键的框里。
 - 左摇杆按下（两张贴图）换成 LS 或 RS。
-- 新字母取自你的 App 里已有的 Switch 系统字体。
+- 新字母取自你的 App 里已有的 Switch 系统字体（常规字重）。
 
 文字里的图标（手柄提示、拾取窗口、相机模式，以及消息里的 R、ZR、+、−）是按键字体的字形，即每个 `Font/Font_*.sbfarc` 里的
-`External_00.bffnt`（一张 BC4 字形表）。工具用同样的办法改它们：A、B、X、Y 互换位置，L、R、ZL、ZR 变成 LB、RB、LT、RT，
+`External_00.bffnt`（一张 BC4 字形表）。每个按键只有一幅图（`make_button_icons.py` 的图），工具用它同时生成贴图和字形，所以两者一样。
+字体里 A、B、X、Y 显示你实际要按的字母。L、R、ZL、ZR 变成 LB、RB、LT、RT，
 + 和 − 变成 Xbox 的 Menu 和 View 按键。两个摇杆按下的字形换成简单的 LS 和 RS 图标：游戏原来的图（摇杆、箭头和一个小 L 或 R）
 放不下两个字母。十字键的字形和屏幕上快捷图标的十字键（Switch 上是四个圆点）换成十字键。
 一个 4x4 的 BC4 块里可能同时有被改字形和相邻字形的像素。工具会重新编码这样的块，所以块里相邻字形的灰色像素可能变成块的八个灰度中最近的一个。
-1.9.0 的七个字体里没有相邻像素改变。
+在 `--scale 1` 时，1.9.0 的七个字体里没有相邻像素改变。2 倍或以上时整张字形表重新编码，所以未改的字形也可能有灰色像素变动一级。
 
 #### 手柄提示页上的手柄图片
 
@@ -819,12 +841,17 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 - 右摇杆按下的贴图：游戏没有它自己的贴图。
 - 对应按键在这里没有 Xbox 图案或字母的提示，例如把 Switch A 放在肩键上。工具会为它打印一行说明。
 
-加 `--style playstation` 则显示 PlayStation 按键：L1、L2、L3（字体里还有 R1、R2、R3），+ 和 − 变成 Options 和 Create。游戏的面键图案带
-Xbox 字母，所以工具重新画叉、圆、方、三角，放在与游戏原图同样大小和位置的圆盘上。它和手柄图片一起在游戏里测试过（见上文）。
+加 `--style playstation` 则显示 PlayStation 按键：L1、L2、L3（字体里还有 R1、R2、R3），+ 和 − 变成 Options 和 Create。
+工具把叉、圆、方、三角画在与游戏原图同样大小和位置的圆盘上。它和手柄图片一起在游戏里测试过（见上文）。
 
-只有改动的贴图字节，以及面键被重映射时提示框圆环的位置（圆环或圆点图层的八个字节）不同：包里其余每个成员、每个字节都是原版，解压后的 `Layout/Common.sblarc` 大小不变。工具只写
-`Pack/Bootup.pack`、七个 `Font/Font_*.sbfarc` 和 `manifest.tsv`；目录里的其他文件保留，也会写进清单。目录里已经有这些文件之一（别的模组的，
-或者上次生成的）时工具会停下。加 `--replace` 会覆盖它，那个模组对这个包的改动也就没了：工具总是从游戏原版的包开始改。
+`--scale 2`、`3` 或 `4` 把贴图、字形和手柄图片画成游戏原尺寸的这么多倍，在大显示器上提示更清晰。默认的 `--scale 1`
+保持游戏原尺寸。2x 及以上时贴图和每个字体的整张字形表都会变大。工具把不改的字形按重复像素放大。游戏按资源大小表给每个文件预留内存，
+所以工具还会写 `System/Resource/ResourceSizeTable.product.srsizetable`，把 `Layout/Common.blarc` 和七个
+`Font/Font_*.bfarc` 的条目按各自增大的量调大。2x 时解压后的 `Layout/Common.sblarc` 约大 4 MB，每个字体约大 0.5 MB。
+
+`--scale 1` 时，只有改动的贴图字节，以及面键被重映射时提示框圆环的位置（圆环或圆点图层的八个字节）不同：包里其余每个成员、每个字节都是原版，解压后的 `Layout/Common.sblarc` 大小不变。工具只写
+`Pack/Bootup.pack`、七个 `Font/Font_*.sbfarc`、资源大小表（`--scale 2` 及以上）和 `manifest.tsv`；目录里的其他文件保留，也会写进清单。目录里已经有这些文件之一（别的模组的，
+或者上次生成的）时工具会停下。加 `--replace` 会覆盖它，那个模组对这些文件的改动也就没了：工具总是从游戏原版的文件开始改。
 `--preview <图片.png>` 另外写一张改动贴图的图片，以及带手柄图片的 `<图片>-pictures.png`。
 
 #### 已有文件的模组目录
