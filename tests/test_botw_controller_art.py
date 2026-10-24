@@ -462,6 +462,17 @@ class HintRings(unittest.TestCase):
         _, _, _, notes, _ = bp.make_pack(self.pack, pl.prompt_controls(self.OWNER, 'label'), StubLetters())
         self.assertTrue(any(bp.HINT in n and 'not found' in n for n in notes))
 
+    def test_the_switch_style_keeps_the_switch_pictures_and_moves_the_rings_on_them(self):
+        new_pack, _, drawn, _, _ = bp.make_pack(self.pack, pl.prompt_controls(self.OWNER, 'label'), StubLetters(), 'switch', pictures=True)
+        self.assertEqual(drawn, {})
+        got = self.rings(new_pack)
+        # Switch A <- X (the X button of the game's diamond), B <- A, X <- B, Y <- Y
+        want = {'a': self.SPOTS['x'], 'b': self.SPOTS['a'], 'x': self.SPOTS['b'], 'y': self.SPOTS['y']}
+        for slot in 'abxy':
+            self.assertEqual(got[slot], {'Color': want[slot], 'Point': want[slot]}, slot)
+        new_pack, *_ = bp.make_pack(self.pack, pl.prompt_controls('', 'label'), StubLetters(), 'switch')
+        self.assertEqual({k: v['Color'] for k, v in self.rings(new_pack).items()}, self.SPOTS)     # the default layout moves none
+
     def test_the_switch_pictures_keep_the_switch_rings(self):
         new_pack, *_ = bp.make_pack(self.pack, pl.prompt_controls(self.OWNER, 'label'), StubLetters(), 'xbox', pictures=False)
         self.assertEqual({k: v['Color'] for k, v in self.rings(new_pack).items()}, self.SPOTS)

@@ -141,11 +141,14 @@ SWITCH_LABEL = {'lstick': 'left stick press', 'rstick': 'right stick press', 'pl
 def describe(controls_text, face_buttons, style='xbox', slots=None):
     """Lines like `Switch A <- Xbox X` for the user to check before a mod is built (only the Switch buttons in `slots`, if given)."""
     faces = {'xbox': {'a': 'A', 'b': 'B', 'x': 'X', 'y': 'Y'},
-             'playstation': {'a': 'Cross', 'b': 'Circle', 'x': 'Square', 'y': 'Triangle'}}[style]
+             'playstation': {'a': 'Cross', 'b': 'Circle', 'x': 'Square', 'y': 'Triangle'},
+             'switch': {'a': 'A', 'b': 'B', 'x': 'X', 'y': 'Y'}}[style]
     other = {'l1': 'LB', 'r1': 'RB', 'l2': 'LT', 'r2': 'RT', 'l3': 'LS', 'r3': 'RS', 'menu': 'Menu', 'view': 'View'}
     if style == 'playstation':
         other = {'l1': 'L1', 'r1': 'R1', 'l2': 'L2', 'r2': 'R2', 'l3': 'L3', 'r3': 'R3', 'menu': 'Options', 'view': 'Create'}
-    brand = {'xbox': 'Xbox', 'playstation': 'PlayStation'}[style]
+    if style == 'switch':
+        other = {'l1': 'L', 'r1': 'R', 'l2': 'ZL', 'r2': 'ZR', 'l3': 'L stick press', 'r3': 'R stick press', 'menu': '+', 'view': '-'}
+    brand = {'xbox': 'Xbox', 'playstation': 'PlayStation', 'switch': 'Switch'}[style]
     lines = []
     for slot, pad in prompt_controls(controls_text, face_buttons).items():
         if slots is not None and slot not in slots:

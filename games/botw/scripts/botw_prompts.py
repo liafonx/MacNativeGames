@@ -8,7 +8,9 @@ prompt_layout.py: face buttons by position or label, then your controls.txt). Ev
 make_button_icons.py (A B X Y as discs, L ZL as the LB LT keys, the stick press as an LS disc, Menu and View, the d-pad cross)
 and fitted on the place of the game's own picture: the disc of the face buttons and the d-pad, the box of the white shape of the
 L and ZL keys and of the stick press textures, the body of the stick in the font. With --style playstation the keys read L1 L2
-R1 R2 and L3 R3 and the faces are the Cross, Circle, Square and Triangle.
+R1 R2 and L3 R3 and the faces are the Cross, Circle, Square and Triangle. With --style switch every picture is the game's own,
+traced (sharp at a larger --scale, the same look) from the game's picture of the button pressed (controls.txt); a texture with
+no picture of that button gets a drawn Switch key. At --scale 2 and up every button glyph of the font is traced.
 Letters are drawn from the Switch's own system font, which your Breath of the Wild app already holds (shared-fonts/
 0-standard.bfttf). Nothing of the game ships with the project: every picture comes from your files, and the result is written
 only into the mod folder you name (then manifest.tsv, made with make_mod_manifest.py; runtime/romfs.c checks it at start).
@@ -20,7 +22,7 @@ button's texture and its font glyph therefore look the same. The glyphs of a sti
 The controller pictures of the controller tips page are drawn again too: the handheld Switch (Nt_NNillust_00, _01) and the four pieces
 of the hint boxes (Nt_GamePadIllustSnn_00 to _03) become an Xbox controller (or with --style playstation a DualSense) drawn by
 botw_controller_art.py, with the buttons in the places of the Switch's, so the game's callout lines still end on a button of the same
-kind. --keep-switch-pictures leaves them alone.
+kind. --keep-switch-pictures leaves them alone; --style switch always does (the hint box rings still go to the button pressed).
 --scale 2 to 4 draws every picture that many times as large (sharp on a big screen): the textures and the whole glyph sheet of
 every font grow (the unchanged glyphs are enlarged by repeating their pixels), the layout and font archives get bigger, and
 the resource size table (System/Resource/ResourceSizeTable.product.srsizetable) is written into the mod too, with the growth
@@ -37,9 +39,10 @@ table that is missing or lacks an entry for an archive that grows (or an archive
 Needs Python 3.14 and fontTools (python3.14 -m pip install fonttools). An existing Pack/Bootup.pack (with --scale above 1 also the
 resource size table) in the mod folder (another mod's, or an earlier run) is only overwritten with --replace.
 usage: botw_prompts.py <mod folder> (--app <Breath of the Wild.app> | --romfs <folder>) [--version botw190]
-                       [--style xbox|playstation] [--face-buttons position|label] [--controls controls.txt] [--replace] [--keep-switch-pictures] [--scale 1..4] [--mods <folder>] [--preview picture.png]
+                       [--style xbox|playstation|switch] [--face-buttons position|label] [--controls controls.txt] [--replace] [--keep-switch-pictures] [--scale 1..4] [--mods <folder>] [--preview picture.png]
 """
 import argparse
+import functools
 import hashlib
 import io
 import math
@@ -61,7 +64,8 @@ SHAPE = {'l': ['Nt_KeyTexL_00^d'], 'zl': ['Nt_KeyTexZL_00^d'], 'lstick': ['Nt_Ke
 XBOX_TEXT = {'a': 'A', 'b': 'B', 'x': 'X', 'y': 'Y', 'l1': 'LB', 'r1': 'RB', 'l2': 'LT', 'r2': 'RT', 'l3': 'LS', 'r3': 'RS'}
 PICTURES = art.PICTURES      # the controller pictures of the controller tips page and the hint boxes
 PLAYSTATION_TEXT = {'a': 'Cross', 'b': 'Circle', 'x': 'Square', 'y': 'Triangle', 'l1': 'L1', 'r1': 'R1', 'l2': 'L2', 'r2': 'R2', 'l3': 'L3', 'r3': 'R3'}
-STYLES = {'xbox': (XBOX_TEXT, 'Xbox'), 'playstation': (PLAYSTATION_TEXT, 'PlayStation')}      # style -> (button names, brand)
+SWITCH_TEXT = {'a': 'A', 'b': 'B', 'x': 'X', 'y': 'Y', 'l1': 'L', 'r1': 'R', 'l2': 'ZL', 'r2': 'ZR', 'l3': 'L', 'r3': 'R'}
+STYLES = {'xbox': (XBOX_TEXT, 'Xbox'), 'playstation': (PLAYSTATION_TEXT, 'PlayStation'), 'switch': (SWITCH_TEXT, 'Switch')}      # style -> (button names, brand)
 FONT = 'shared-fonts/0-standard.bfttf'
 BFTTF_MAGIC = 0x7f9a0218
 SIZE = 48               # the key and face textures are SIZE x SIZE pixels, the d-pad of the shortcut icons DPAD_SIZE
@@ -70,6 +74,7 @@ BAD_DATA = (ValueError, KeyError, IndexError, struct.error)      # what a file o
 HINT = 'blyt/PaMessageTipsDrcImageNN_00.bflyt'          # the hint boxes: a ring and a dot on the button of a hint
 HINT_PIECE = 'Nt_GamePadIllustSnn_02^f'                  # their picture of the face buttons
 SPOT = {pad: spot for spot, pad in art.FACE_LAYOUT.items()}     # pad face button -> the Switch button's spot that our diamond draws it at
+SWITCH_SPOT = {pad: pad for pad in 'abxy'}      # on the game's own Switch pictures a button sits at its own spot (the pad names its labels)
 
 
 def bfttf_decode(blob):
@@ -118,7 +123,7 @@ def png(rows, path, scale=4):
 
 
 def style_parts(style):
-    """(button names, brand) of a style; a style other than xbox and playstation is refused."""
+    """(button names, brand) of a style; a style other than xbox, playstation and switch is refused."""
     if style not in STYLES:
         raise ValueError(f'style: {" or ".join(STYLES)}, not {style!r}')
     return STYLES[style]
@@ -194,12 +199,115 @@ def drawers_of(style, letters):
                 ink = [min(ink[0], *(p[0] for p in points)), min(ink[1], *(p[1] for p in points)),
                        max(ink[2], *(p[0] for p in points)), max(ink[3], *(p[1] for p in points))]
             return grown, tuple(ink) if grown.value else bounds, upm, advance + 2 * LETTER_STROKE * cap   # the growth keeps the gaps
-    drawers, dpads = (mbi.xbox_drawers if style == 'xbox' else mbi.playstation_drawers)(Glyphs([letters.font]))
+    make = {'xbox': mbi.xbox_drawers, 'playstation': mbi.playstation_drawers, 'switch': switch_drawers}[style]
+    drawers, dpads = make(Glyphs([letters.font]))
     return {**drawers, **dpads}
 
 
+def switch_drawers(g):
+    """Drawers of the Switch's buttons by controller button (the keys of prompt_layout.prompt_controls, which on a Nintendo
+    controller name its labels): A B X Y discs, L R ZL ZR keys, + and - on discs, the d-pad cross. The switch style traces the
+    game's own pictures (traced); these drawings stand in only where a texture has no picture of the button pressed."""
+    import make_button_icons as mbi
+
+    def disc(label, advance=640):
+        def draw(pen):
+            mbi.circle(pen, advance / 2, mbi.CY, mbi.R); g.hole(pen, label, advance / 2, mbi.CY, mbi.R * 0.95, mbi.R * 1.3)
+        return advance, draw
+
+    def shoulder(label, advance):     # L R (about square) and ZL ZR (wider): keys as high as a disc, the letters large
+        def draw(pen):
+            mbi.rounded(pen, 40, mbi.Y0, advance - 40, mbi.Y1, 70); g.hole(pen, label, advance / 2, mbi.CY, 300, advance - 200)
+        return advance, draw
+
+    def sign(minus, advance=640):      # + and -: a bar (and a cross bar) cut out of a disc
+        def draw(pen):
+            cx, cy, a, w = advance / 2, mbi.CY, mbi.R * 0.50, mbi.R * 0.11
+            mbi.circle(pen, cx, cy, mbi.R)
+            points = ([(cx - a, cy - w), (cx + a, cy - w), (cx + a, cy + w), (cx - a, cy + w)] if minus else
+                      [(cx - a, cy - w), (cx - w, cy - w), (cx - w, cy - a), (cx + w, cy - a), (cx + w, cy - w), (cx + a, cy - w),
+                       (cx + a, cy + w), (cx + w, cy + w), (cx + w, cy + a), (cx - w, cy + a), (cx - w, cy + w), (cx - a, cy + w)])
+            mbi.oriented(pen, points, hole=True)
+        return advance, draw
+    drawers = {'a': disc('A'), 'b': disc('B'), 'x': disc('X'), 'y': disc('Y'), 'l1': shoulder('L', 680), 'r1': shoulder('R', 680),
+               'l2': shoulder('ZL', 840), 'r2': shoulder('ZR', 840), 'menu': sign(False), 'view': sign(True), 'l3': disc('L'), 'r3': disc('R')}
+    return drawers, mbi.xbox_drawers(g)[1]
+
+
+SWITCH_TEXTURES = {**FACE, 'l1': SHAPE['l'][0], 'l2': SHAPE['zl'][0]}      # pad -> the texture of its Switch button
+OWN_BUTTON = {**{name: pad for pad, name in SWITCH_TEXTURES.items()}, **dict.fromkeys(SHAPE['lstick'], 'l3'), 'ButtonIconL46NN_00^d': 0xE049}
 DPAD_GLYPHS = (0xE049, 0xE060, 0xE061, 0xE062, 0xE063, 0xE064, 0xE065)      # the d-pad glyphs of the button font (0xE049: all four lit)
 DPAD_TEXTURE = 'ButtonIconL46NN_00^d'       # the d-pad of the shortcut icons on the screen (four dots)
+
+
+def levels(rows, share=0.02):
+    """The flat grey levels of a picture: the peaks of its histogram (each within 6 of it holding at least `share` of the
+    pixels), at least 25 apart. A pixel on an edge's ramp (between a darker and a brighter neighbour, across or down) is not
+    counted, so a straight edge's anti-aliasing is not taken for a grey. A button picture has two levels (ground and white) or
+    three (a grey ring or outline)."""
+    h, w = len(rows), len(rows[0])
+    count, total = [0] * 256, h * w
+    for y, row in enumerate(rows):
+        for x, v in enumerate(row):
+            ramp = False
+            for a, b in ((row[max(x - 1, 0)], row[min(x + 1, w - 1)]), (rows[max(y - 1, 0)][x], rows[min(y + 1, h - 1)][x])):
+                ramp |= min(a, b) < v < max(a, b) and max(a, b) - min(a, b) > 100
+            if not ramp:
+                count[v] += 1
+    near = [sum(count[max(0, v - 6):v + 7]) for v in range(256)]
+    peaks = []
+    for v in sorted(range(256), key=lambda v: (-near[v], -count[v])):      # the fullest windows first
+        if near[v] < share * total:
+            break
+        top = max(range(max(0, v - 6), min(256, v + 7)), key=count.__getitem__)     # the window's most common value
+        if all(abs(top - p) > 24 for p in peaks):
+            peaks.append(top)
+    return sorted(peaks) or [0]
+
+
+def traced(rows, box, width, target, height=None, oversample=4):
+    """The game's picture `rows` drawn again width x height (height: width when not given) and sharp: its part in `box` (x0, y0,
+    x1, y1) made as large as fits in `target` (in the new picture's pixels, its shape kept, centred). Each sample reads the
+    picture between its pixel centres (bilinear) and takes the nearest of its flat levels, so an edge lands where the game's
+    anti-aliasing puts it, without the blur of an enlarged picture, and a grey part stays grey. The switch style draws every
+    button so: it then looks as the game's own. The same picture (the fonts of every language share their button glyphs) is
+    traced once."""
+    return _traced(tuple(bytes(r) for r in rows), tuple(box), width, tuple(target), height or width, oversample)
+
+
+@functools.lru_cache(maxsize=None)
+def _traced(rows, box, width, target, height, oversample):
+    flat = levels(rows)
+    cuts = [(a + b) / 2 for a, b in zip(flat, flat[1:])]
+    h, w = len(rows), len(rows[0])
+    k = min((target[2] - target[0]) / (box[2] - box[0]), (target[3] - target[1]) / (box[3] - box[1]))
+    ox, oy = (box[0] + box[2]) / 2 - (target[0] + target[2]) / 2 / k, (box[1] + box[3]) / 2 - (target[1] + target[3]) / 2 / k
+    steps = [(i + 0.5) / oversample for i in range(oversample)]
+
+    def taps(origin, count, size):      # per sample along an axis: (pixel, next pixel, weight of the next) between the centres
+        out = []
+        for p in range(count):
+            row = []
+            for t in steps:
+                u = min(max(origin + (p + t) / k - 0.5, 0), size - 1)
+                i = int(u); row.append((i, min(i + 1, size - 1), u - i))
+            out.append(row)
+        return out
+    xs, ys = taps(ox, width, w), taps(oy, height, h)
+    level = [flat[sum(v > c for c in cuts)] for v in range(256)]       # bilinear values rounded to 0..255, then to a flat level
+    n = oversample * oversample
+    out = []
+    for column in ys:
+        lines = [(rows[a], rows[b], f) for a, b, f in column]
+        line = bytearray(width)
+        for px, across in enumerate(xs):
+            total = 0
+            for top, bottom, fy in lines:
+                for a, b, fx in across:
+                    total += level[round((top[a] + (top[b] - top[a]) * fx) * (1 - fy) + (bottom[a] + (bottom[b] - bottom[a]) * fx) * fy)]
+            line[px] = round(total / n)
+        out.append(bytes(line))
+    return out
 
 
 def bright_box(rows, level=128):
@@ -281,7 +389,12 @@ def plan(bntx, textures, controls, letters, style='xbox', scale=1):
     def draw(name, pad, size, find):
         try:
             old = key_rows(bntx, textures, name, size)
-            new[name] = render(drawers[pad], len(old) * scale, enlarged(find(old), scale))
+            source = (name if OWN_BUTTON.get(name) == pad else SWITCH_TEXTURES.get(pad)) if style == 'switch' else None
+            if source:      # the switch style: the game's own picture of the button pressed, traced
+                rows = old if source == name else key_rows(bntx, textures, source, size)
+                new[name] = traced(rows, find(rows), len(old) * scale, enlarged(find(old), scale))
+            else:
+                new[name] = render(drawers[pad], len(old) * scale, enlarged(find(old), scale))
         except BAD_DATA as error:
             notes.append(f'{name}: {error}; the Switch icon stays')
     for slot, name in FACE.items():
@@ -321,10 +434,10 @@ def plan_pictures(bntx, textures, controls, letters, style='xbox', scale=1):
     return new, notes
 
 
-def ring_edits(layout, inner, controls):
+def ring_edits(layout, inner, controls, spots=SPOT):
     """(offset, new bytes) edits of the layout archive `layout` (members `inner`) that move the ring and the dot of each hint box
     face button (panes N_A_00 to N_Y_00 of HINT) to the spot of the button the player presses for it (controls[slot]) on our
-    drawn diamond (art.FACE_LAYOUT), and notes. The spots are the layout's own: where the Switch button's pane sits. A button
+    drawn diamond (art.FACE_LAYOUT; `spots` SWITCH_SPOT: on the game's own diamond), and notes. The spots are the layout's own: where the Switch button's pane sits. A button
     that stays where it is, or that no face button drives, is not edited."""
     if HINT not in inner:
         return [], [f'{HINT}: not found; the hint box rings stay on the Switch buttons']
@@ -342,11 +455,11 @@ def ring_edits(layout, inner, controls):
     edits, notes = [], []
     for slot in FACE:
         pad = controls[slot]
-        if pad not in SPOT:
+        if pad not in spots:
             notes.append(f'{slot.upper()}: {pad or "nothing"} has no face button; its hint box ring stays')
-        elif SPOT[pad] != slot:
+        elif spots[pad] != slot:
             for part, offset in groups[slot].items():
-                source = lo + groups[SPOT[pad]][part] + bf.PANE_TRANSLATION
+                source = lo + groups[spots[pad]][part] + bf.PANE_TRANSLATION
                 edits.append((lo + offset + bf.PANE_TRANSLATION, bytes(layout[source:source + 8])))
     return edits, notes
 
@@ -357,7 +470,7 @@ class MissingData(ValueError):
 
 def make_pack(pack, controls, letters, style='xbox', pictures=True, scale=1):
     """Pack/Bootup.pack with the prompts of `controls` (prompt_layout.prompt_controls) redrawn, and with `pictures` the controller
-    pictures of the controller tips page too. Returns (the new pack, texture name -> new pixel rows, texture name -> (grey rows,
+    pictures of the controller tips page too (never for the switch style). Returns (the new pack, texture name -> new pixel rows, texture name -> (grey rows,
     alpha rows) of the pictures, notes, (Common.sblarc size before, after, decompressed size before, decompressed growth)).
     At scale 1 only the changed textures' bytes (and, with a remap and the redrawn face picture, the hint box ring positions:
     ring_edits) differ. At a larger scale the changed textures are new, `scale` times as large (botw_formats.bntx_resize), the layout
@@ -376,6 +489,7 @@ def make_pack(pack, controls, letters, style='xbox', pictures=True, scale=1):
     bntx = layout[start:inner[BNTX][1]]
     textures = bf.bntx_textures(bntx)
     new, notes = plan(bntx, textures, controls, letters, style, scale)
+    pictures = pictures and style != 'switch'      # the game's own pictures are the Switch's
     drawn, more = plan_pictures(bntx, textures, controls, letters, style, scale) if pictures else ({}, [])
     if scale == 1:
         edits = [(start + textures[name].offset, bf.r8_image(bntx, textures[name], rows)) for name, rows in sorted(new.items())]
@@ -387,8 +501,8 @@ def make_pack(pack, controls, letters, style='xbox', pictures=True, scale=1):
         for name, (grey, alpha) in drawn.items():      # (plan_pictures has checked their format)
             images[name] = (len(grey[0]), len(grey), *bf.rg8_pack(grey, alpha))
         edits = bf.sarc_member_edits(layout, BNTX, bf.bntx_resize(bntx, images)) if images else []
-    if HINT_PIECE in drawn:       # the diamond is ours: the rings of the hint boxes go to the buttons the player presses
-        moved, more_notes = ring_edits(layout, inner, controls)       # the offsets are in the layout archive as it was
+    if HINT_PIECE in drawn or style == 'switch':      # our diamond or the game's: the rings of the hint boxes go to the buttons pressed
+        moved, more_notes = ring_edits(layout, inner, controls, SPOT if HINT_PIECE in drawn else SWITCH_SPOT)   # offsets as the archive was
         edits, more = edits + moved, more + more_notes
     spliced = bf.yaz0_splice(stream, layout, edits)
     new_pack = bf.sarc_replace(pack, LAYOUT, spliced)
@@ -399,6 +513,8 @@ FONT_FACE = {'a': 0xE040, 'b': 0xE041, 'x': 0xE042, 'y': 0xE043}              # 
 FONT_SHAPE = {'l': 0xE044, 'r': 0xE045, 'zl': 0xE046, 'zr': 0xE047, 'lstick': 0xE056, 'rstick': 0xE057}
 FONT_MENU = {'plus': 0xE04B, 'minus': 0xE04C}
 BFFNT = 'External_00.bffnt'
+SWITCH_GLYPHS = {**FONT_FACE, 'l1': 0xE044, 'r1': 0xE045, 'l2': 0xE046, 'r2': 0xE047, 'l3': 0xE056, 'r3': 0xE057, 'menu': 0xE04B, 'view': 0xE04C}
+SWITCH_TRACED = (0xE040, 0xE068)        # the button glyphs of the font: with --style switch above scale 1 all are traced
 
 
 def font_cells(font, sheet_rows, controls, letters, style='xbox', scale=1):
@@ -412,7 +528,12 @@ def font_cells(font, sheet_rows, controls, letters, style='xbox', scale=1):
 
     def draw(code, pad, find, what):
         try:
-            new[code] = render(drawers[pad], size, enlarged(find(font.get(sheet_rows, code)), scale), height)
+            old = font.get(sheet_rows, code)
+            if style == 'switch':       # the game's own glyph of the button pressed, traced
+                rows = font.get(sheet_rows, SWITCH_GLYPHS.get(pad, code))
+                new[code] = traced(rows, find(rows), size, enlarged(find(old), scale), height)
+            else:
+                new[code] = render(drawers[pad], size, enlarged(find(old), scale), height)
         except ValueError as error:     # no shape found: the glyph stays as it was
             notes.append(f'{what}: {error}; the Switch glyph stays')
     for slot, code in FONT_FACE.items():
@@ -438,6 +559,13 @@ def font_cells(font, sheet_rows, controls, letters, style='xbox', scale=1):
             draw(code, kind, disc_box, f'{slot} glyph')
         else:
             notes.append(f'{slot}: {kind or "nothing"} has no {brand} picture here; the Switch glyph stays')
+    if style == 'switch' and scale > 1:     # every other button glyph (a stick being moved, a button nothing drives) traced too
+        for code in sorted(font.cells):
+            if code not in new and SWITCH_TRACED[0] <= code < SWITCH_TRACED[1]:
+                old = font.get(sheet_rows, code)
+                if max(map(max, old)) > 128:
+                    box = (0, 0, len(old[0]), len(old))
+                    new[code] = traced(old, box, size, enlarged(box, scale), height)
     return new, notes
 
 
@@ -522,7 +650,7 @@ def main():
     source.add_argument('--app', type=Path, help='the built Breath of the Wild.app')
     source.add_argument('--romfs', type=Path, help='a folder holding romfs.bin and runtime-index.bin')
     parser.add_argument('--version', choices=[v for v in APP_VERSIONS if v.startswith('botw')], help='the game version (default: the mod folder name)')
-    parser.add_argument('--style', choices=list(STYLES), default='xbox', help='the buttons to show: xbox (default) or playstation')
+    parser.add_argument('--style', choices=list(STYLES), default='xbox', help='the buttons to show: xbox (default), playstation or switch (the game\'s own names, sharp at --scale 2 and up)')
     parser.add_argument('--face-buttons', choices=FACE_MODES, default='position',
                         help='how the controller\'s face buttons map (the runtime\'s TOTK_FACE_BUTTONS, or key 6): position (Xbox, PlayStation; default) or label (Switch)')
     parser.add_argument('--controls', type=Path, help='your controls.txt (the prompts then show the button you press)')

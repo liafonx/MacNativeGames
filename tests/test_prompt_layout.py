@@ -123,6 +123,9 @@ class PromptControls(unittest.TestCase):
         lines = pl.describe(OWNER, 'label')
         self.assertIn('Switch A <- Xbox X', lines)
         self.assertIn('Switch Y <- Xbox Y', lines)
+        lines = pl.describe(OWNER, 'label', 'switch')
+        self.assertIn('Switch A <- Switch X', lines)
+        self.assertIn('Switch + <- Switch +', lines)
 
 
 if __name__ == '__main__':
