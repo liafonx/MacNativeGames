@@ -1,5 +1,6 @@
 """Breath of the Wild prompt tool (games/botw/scripts/botw_formats.py, botw_prompts.py) on small made-up archives: no game data."""
 import io
+import math
 import random
 import string
 import struct
@@ -910,6 +911,38 @@ def runtime_index(files):
 
 
 @unittest.skipIf(bf is None, 'needs Python 3.14')
+class GrownLetters(unittest.TestCase):
+    """grown_contour() on a letter A (an outer shape with an acute triangular counter) cut out of a disc, as the button drawings
+    do (the letter is drawn the other way round), at 48 x 48 pixels. The counter of this A has an inscribed circle of 3 pixels."""
+    OUTER = [(562, 239), (651, 0), (759, 0), (452, 807), (317, 807), (10, 0), (118, 0), (207, 239)]
+    COUNTER = [(530, 325), (238, 325), (384, 718)]          # turned the other way: a hole
+
+    def counters(self, stroke):
+        """The white marks inside the letter once its outline has grown by `stroke` pixels."""
+        place = lambda contour: [(24 + (x - 385) * 0.03, 24 + (403 - y) * 0.03) for x, y in contour][::-1]
+        disc = [(24 + 22 * math.cos(t * math.pi / 32), 24 + 22 * math.sin(t * math.pi / 32)) for t in range(64)]
+        grown = [bp.grown_contour(place(c), stroke) for c in (self.OUTER, self.COUNTER)]
+        rows = bf.coverage([disc] + [c[::-1] for c in grown if c], 48)
+        return [len(m) for m in bf.enclosed_marks([bytes(255 - v for v in row) for row in rows], window=(6, 6, 42, 42), largest=80)]
+
+    def test_a_counter_the_stroke_closes_is_solid(self):
+        for stroke in (3.2, 4.0):
+            self.assertEqual(self.counters(stroke), [], stroke)
+
+    def test_a_counter_the_stroke_does_not_close_stays_open_and_shrinks_without_specks(self):
+        sizes = []
+        for stroke in (1.0, 2.0, 2.5):
+            marks = self.counters(stroke)
+            self.assertEqual(len(marks), 1, stroke)             # the counter, and no speck beside it
+            sizes.append(marks[0])
+        self.assertTrue(sizes[0] > sizes[1] > sizes[2] > 0, sizes)
+
+    def test_an_inward_corner_is_not_cut_off(self):
+        hole = bp.grown_contour(self.COUNTER, 5)
+        self.assertEqual(len(hole), 3)                          # the plain mitre point at each corner of the hole
+        self.assertEqual(bp.grown_contour(self.COUNTER, 200), [])     # shrunk to nothing: the counter fills
+
+
 class CommandLine(unittest.TestCase):
     def test_a_font_already_in_the_mod_folder_stops_the_run_before_anything_is_written(self):
         import tempfile

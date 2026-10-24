@@ -116,21 +116,38 @@ def style_parts(style):
 LETTER_STROKE = 0.06    # how far the letters of the buttons grow outward on each side, in capital heights of the font
 
 
+def _area(points):
+    return sum(x * q[1] - q[0] * y for (x, y), q in zip(points, points[1:] + points[:1])) / 2
+
+
 def grown_contour(points, d, miter=2.0):
     """The polygon `points` (counter-clockwise: its inside on the left) moved outward by `d` on each side; a hole (clockwise)
-    shrinks, so the ink of a letter is always what grows. Corners are mitred up to `miter` times `d`, then cut off flat."""
+    shrinks, so the ink of a letter is always what grows. Outward corners are mitred up to `miter` times `d`, then cut off flat;
+    inward corners (and every corner of a hole) take the plain mitre point. A hole that shrinks to nothing or turns over gives []
+    (the counter fills)."""
     clean = [p for i, p in enumerate(points) if p != points[i - 1]]
-    n, out = len(clean), []
+    n, out, ends = len(clean), [], []       # ends: where the points of each corner stop in `out`
     for i, (x, y) in enumerate(clean):
         (ax, ay), (bx, by) = clean[i - 1], clean[(i + 1) % n]
         l1, l2 = math.hypot(x - ax, y - ay), math.hypot(bx - x, by - y)
         n1, n2 = ((y - ay) / l1, -(x - ax) / l1), ((by - y) / l2, -(bx - x) / l2)
         dot = n1[0] * n2[0] + n1[1] * n2[1]
-        if 1 + dot > 1 / (miter * miter) * 2:
+        outward = (x - ax) * (by - y) - (y - ay) * (bx - x) > 0        # a turn away from the side that grows
+        if 1 + dot > (2 / (miter * miter) if outward else 1e-6):
             k = d / (1 + dot)
             out.append((x + (n1[0] + n2[0]) * k, y + (n1[1] + n2[1]) * k))
         else:
             out += [(x + n1[0] * d, y + n1[1] * d), (x + n2[0] * d, y + n2[1] * d)]
+        ends.append(len(out))
+    before = _area(clean)
+    if before < 0:      # a hole: if it has shrunk to nothing or turned over (most of its edges point the other way), the counter fills
+        turned = 0
+        for i in range(n):
+            (px, py), (qx, qy) = out[ends[i] - 1], out[ends[i] % len(out)]      # the edge i of the offset
+            (ax, ay), (bx, by) = clean[i], clean[(i + 1) % n]
+            turned += (qx - px) * (bx - ax) + (qy - py) * (by - ay) <= 0
+        if 2 * turned > n or _area(out) > 0.02 * before:
+            return []
     return out
 
 
@@ -157,6 +174,8 @@ def drawers_of(style, letters):
             ink = [1e9, 1e9, -1e9, -1e9]
             for contour in bf.flatten(rec.value):
                 points = grown_contour(contour, LETTER_STROKE * cap)
+                if not points:
+                    continue
                 grown.moveTo(points[0])
                 for point in points[1:]:
                     grown.lineTo(point)
