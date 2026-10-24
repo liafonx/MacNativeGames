@@ -38,6 +38,20 @@ static NSDictionary<NSString *, NSString *> *kv_read(NSString *path) {
     return out;
 }
 
+#if defined(GAME_BOTW190)
+/* HD texture packs (runtime/game_patches_botw.c runtime_botw_hd_heaps): the bytes the player's mod manifest replaces. HDPacks 4k
+   replaces 19.7 GiB; the largest small mod seen, 0.34 GiB. */
+static unsigned long long mod_bytes(const char *mods) {
+    char path[4096]; snprintf(path, sizeof path, "%s/manifest.tsv", mods);
+    FILE *m = fopen(path, "r"); if (!m) return 0;
+    unsigned long long total = 0, size; char line[8192];
+    while (fgets(line, sizeof line, m))
+        if (line[0] != '#' && sscanf(line, "%*[^\t]\t%llu", &size) == 1) total += size;
+    fclose(m);
+    return total;
+}
+#endif
+
 static uint64_t pid_start(pid_t pid) {   // 0 if gone or a zombie; with the pid it names one process exactly
     struct proc_bsdinfo bi;
     if (pid <= 0 || proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bi, sizeof bi) != (int)sizeof bi || bi.pbi_status == SZOMB) return 0;
@@ -294,6 +308,17 @@ int main(int argc, char **argv) {
             dup2(fileno(lf), STDERR_FILENO);
             fclose(lf);
         }
+#if defined(GAME_BOTW190)
+        /* A mod that replaces 4 GiB or more is an HD texture pack, which needs the HD heaps (about 6.3 GB of memory):
+           TOTK_BOTW_HD_HEAPS=1 then, unless the environment sets it. After the redirect, so the line is in the log. */
+        { unsigned long long bytes = mod_bytes(getenv("TOTK_ROMFS_MODS"));
+          const char *heaps = getenv("TOTK_BOTW_HD_HEAPS");
+          if (heaps) fprintf(stderr, "[launcher] HD heaps: TOTK_BOTW_HD_HEAPS=%s from the environment (mods replace %.1f GiB)\n", heaps, bytes / 1073741824.0);
+          else if (bytes >= 4ULL << 30) {
+              setenv("TOTK_BOTW_HD_HEAPS", "1", 0);
+              fprintf(stderr, "[launcher] HD heaps: on, the mods replace %.1f GiB (an HD texture pack)\n", bytes / 1073741824.0);
+          } }
+#endif
         char *const arguments[] = {(char *)binary.fileSystemRepresentation, "rewritten/" TOTK_GAME_DIR, "boot", NULL};
         execv(arguments[0], arguments);
         int failed = errno;
