@@ -237,8 +237,9 @@ def stick_body(rows, bright=128):
     return cx - r, cy - r, cx + r, cy + r
 
 
-def render(drawer, size, box):
-    """The button drawn by `drawer` ((advance, draw) of make_button_icons.py) as a size x size picture (rows of bytes): the
+def render(drawer, size, box, height=None):
+    """The button drawn by `drawer` ((advance, draw) of make_button_icons.py) as a size x size picture (size x height when given:
+    the 1.6.0 font cells are not square) (rows of bytes): the
     drawing's ink is made as large as fits in `box` (x0, y0, x1, y1 in the picture's pixels, y down) with its shape kept, and is
     centred in it. Every picture of a button, a texture or a font glyph, at any scale, is made by this one function."""
     from fontTools.pens.boundsPen import BoundsPen
@@ -248,7 +249,8 @@ def render(drawer, size, box):
     x0, y0, x1, y1 = bounds.bounds
     k = min((box[2] - box[0]) / (x1 - x0), (box[3] - box[1]) / (y1 - y0))
     cx, cy, mx, my = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2, (x0 + x1) / 2, (y0 + y1) / 2
-    return bf.coverage([[(cx + (x - mx) * k, cy - (y - my) * k) for x, y in c] for c in bf.flatten(pen.value, max(12, size // 4))], size)
+    return bf.coverage_rect([[(cx + (x - mx) * k, cy - (y - my) * k) for x, y in c] for c in bf.flatten(pen.value, max(12, size // 4))],
+                            size, height or size)
 
 
 def enlarged(box, scale):
@@ -406,11 +408,11 @@ def font_cells(font, sheet_rows, controls, letters, style='xbox', scale=1):
     and the d-pad, the box of L R ZL ZR, the body of the stick for the stick presses."""
     text, brand = style_parts(style)
     drawers = drawers_of(style, letters)
-    size, new, notes = font.cell * scale, {}, []
+    size, height, new, notes = font.cell * scale, font.cell_height * scale, {}, []
 
     def draw(code, pad, find, what):
         try:
-            new[code] = render(drawers[pad], size, enlarged(find(font.get(sheet_rows, code)), scale))
+            new[code] = render(drawers[pad], size, enlarged(find(font.get(sheet_rows, code)), scale), height)
         except ValueError as error:     # no shape found: the glyph stays as it was
             notes.append(f'{what}: {error}; the Switch glyph stays')
     for slot, code in FONT_FACE.items():
@@ -453,10 +455,10 @@ def make_font(stream, controls, letters, style='xbox', scale=1):
     start, end = members[BFFNT]
     data = archive[start:end]
     font = bf.Bffnt(data)
-    step = font.cell + 1
-    if (font.texture.width % 4 or font.texture.height % 4 or step * font.columns > font.texture.width
-            or step * font.rows > font.texture.height or max(font.cells.values(), default=0) >= font.columns * font.rows):
-        raise ValueError(f'the glyph grid ({font.columns}x{font.rows} cells of {font.cell}) does not fit the {font.texture.width}x{font.texture.height} sheet')
+    if (font.texture.width % 4 or font.texture.height % 4 or (font.cell + 1) * font.columns > font.texture.width
+            or (font.cell_height + 1) * font.rows > font.texture.height or max(font.cells.values(), default=0) >= font.columns * font.rows):
+        raise ValueError(f'the glyph grid ({font.columns}x{font.rows} cells of {font.cell}x{font.cell_height}) does not fit the '
+                         f'{font.texture.width}x{font.texture.height} sheet')
     sheet = data[font.sheet_at:]
     rows = bf.bc4_read(sheet, font.texture)
     new, notes = font_cells(font, rows, controls, letters, style, scale)
