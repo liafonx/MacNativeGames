@@ -377,7 +377,8 @@ buttons from the game, so the lines still end on a button of the same kind:
   so it changes the prompts in the text, not the diamond. The ring and dot of a hint box (panes `N_A_00` to `N_Y_00` of
   `PaMessageTipsDrcImageNN_00`) move to the diamond button you press for that Switch button (a button no face button drives keeps
   its ring, and the tool prints a note). Each shoulder button shows the button you press for the Switch
-  button of that place, the same chain as for the prompts; one that nothing drives stays blank.
+  button of that place, the same chain as for the prompts; one that nothing drives stays blank. A button driven by a stick
+  press stays blank too: the pictures carry no LS, RS, L3 or R3.
 - The Pro Controller picture (`amiiboProConNN_00`) is only in the amiibo scan hint, and the Wii U GamePad pictures
   (`Nt_GamePadIllustS_*`, `amiiboDRCNN_00`) are for the Wii U layouts. The tool leaves them as they are.
 - The DualSense keeps the same places. Its touchpad, a plain PS button and the mute button sit between the sticks. The d-pad
@@ -845,7 +846,7 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 - 四个面键保持手柄本身的布局：上 Y、左 X、右 B、下 A（`--style playstation` 时是三角、方、圆、叉）。`controls.txt` 只改变按键
   执行的动作，所以它改变文字里的按键提示，不改变菱形。提示框（`PaMessageTipsDrcImageNN_00` 的 `N_A_00` 到 `N_Y_00`）里的圆环和圆点会移到你为
   这个 Switch 按键实际要按的菱形按键上（没有任何面键对应的按键，圆环留在原处，工具会打印一行说明）。每个肩键上写的是这个位置上的 Switch 按键你实际要按的按键（和按键提示是同一条
-  规则）；没有任何按键对应的肩键留空。
+  规则）；没有任何按键对应的肩键留空。由摇杆按下驱动的按键也留空：图上不写 LS、RS、L3 或 R3。
 - Pro 手柄图（`amiiboProConNN_00`）只出现在 amiibo 扫描提示里，Wii U GamePad 图（`Nt_GamePadIllustS_*`、`amiiboDRCNN_00`）属于
   Wii U 版的界面，工具都不改。
 - DualSense 也保持这些位置。触控板、一个不带标志的 PS 键和静音键在两个摇杆之间。十字键是四个箭头键，每个箭头键的中心就是 Switch

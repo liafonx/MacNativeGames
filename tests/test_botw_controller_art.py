@@ -352,6 +352,17 @@ class MakePackPictures(unittest.TestCase):
             if name != 'Layout/Common.sblarc':
                 self.assertEqual(self.pack[slice(*before[name])], new_pack[slice(*after[name])], name)
 
+    def test_a_button_driven_by_a_stick_press_carries_no_stick_name(self):
+        controls = {**pl.prompt_controls('', 'position'), 'l': 'l3', 'zr': 'r3', 'plus': 'r3'}     # L, ZR and + on the stick presses
+        blob, textures = self.textures(self.pack)
+        for style in ('xbox', 'playstation'):
+            letters = Recorder()
+            drawn, _ = bp.plan_pictures(blob, textures, controls, letters, style)
+            self.assertTrue(drawn, style)
+            labels = {label for label, *_ in letters.calls}
+            self.assertFalse(labels & {'LS', 'RS', 'L3', 'R3'}, style)
+            self.assertIn({'xbox': 'LT', 'playstation': 'L2'}[style], labels)     # the other buttons keep their names
+
     def test_the_switch_pictures_can_be_kept(self):
         new_pack, changed, drawn, notes, _ = bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters(), 'xbox', pictures=False)
         self.assertEqual(drawn, {})

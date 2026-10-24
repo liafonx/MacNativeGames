@@ -422,9 +422,10 @@ def plan(bntx, textures, controls, letters, style='xbox', scale=1):
 
 def plan_pictures(bntx, textures, controls, letters, style='xbox', scale=1):
     """texture name -> (grey rows, alpha rows) of the controller pictures of the controller tips page, drawn again as an Xbox
-    controller or a DualSense (botw_controller_art.py), `scale` times as large as the game's, and notes. A picture whose texture
-    is not the size or format of the drawing (another game version) stays as it was, with a note."""
-    text, _ = style_parts(style)
+    controller or a DualSense (botw_controller_art.py), `scale` times as large as the game's, and notes. A button driven by a
+    stick press carries no name (no LS, RS, L3 or R3: the sticks keep the game's look). A picture whose texture is not the size
+    or format of the drawing (another game version) stays as it was, with a note."""
+    text = {pad: name for pad, name in style_parts(style)[0].items() if pad not in STICKS}
     new, notes = {}, []
     for name, ((width, height), draw) in PICTURES.items():
         texture = textures.get(name)
