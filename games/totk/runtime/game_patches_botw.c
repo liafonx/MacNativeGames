@@ -1055,11 +1055,13 @@ static void patch_hd_heaps(Module *m) {   /* TOTK_BOTW_HD_HEAPS=1: the comment a
     /* The pack's own 1.6.0 heap patch (4kTextures/ExeFS/1.6.0.pchtxt, 21 lines): these 13 words as it writes them. Its
        memory and root heap lines are the two below instead (on the sites patch_output_res owns; the pack's form also
        overwrites an add x29 and a bl), and its four lines that make the compaction heap's +30 MiB case 64-bit and
-       +512 MiB are left out, as in 1.9.0 (2032 + 512 MiB would pass the 2 GiB pool limit). */
+       +512 MiB are left out. 1.6.0 takes that case (csel at main+0x182fb30): with the pack's 2032 MiB the pool was
+       2062 MiB, past the 2 GiB pool limit (nvn_pool_max.h, 2026-10-24), so the heap is 2002 MiB and the pool 2032 MiB, as in
+       1.9.0. */
     static const struct { uint32_t off, original, word; } site[] = {
         {0x1778ce0u, 0x52a1c208u, 0xd2a37b08u},   /* StarterPackMgr: mov w8, #0xe100000 (225 MiB) -> 445.5 MiB */
         {0x1778ce4u, 0x52a02809u, 0x52a0c009u},   /* the same, other mode: mov w9, #0x1400000 (20 MiB) -> 96 MiB */
-        {0x182fad0u, 0x52a3e808u, 0xd2afe008u},   /* texture compaction "Main": mov w8, #0x1f400000 (500 MiB) -> 2032 MiB */
+        {0x182fad0u, 0x52a3e808u, 0x52afa408u},   /* texture compaction "Main": mov w8, #0x1f400000 (500 MiB) -> 2002 MiB */
         {0x182f368u, 0x52a2ec00u, 0xd2a8a000u},   /* ForResourceL: 374 -> 1104 MiB */
         {0x182f3e0u, 0x320607e0u, 0xd2a6e000u},   /* ForResourceS: 192 -> 880 MiB */
         {0x182f39cu, 0x320a03e0u, 0x52a01800u},   /* 4 -> 12 MiB */
@@ -1119,7 +1121,7 @@ static void patch_hd_heaps(Module *m) {   /* TOTK_BOTW_HD_HEAPS=1: the comment a
     for (size_t i = 0; i < sizeof site / sizeof *site; i++) put_word(m, site[i].off, site[i].word, "HD heaps");
     for (size_t i = 0; i < sizeof big / sizeof *big; i++) put_word(m, big[i].off, big[i].word, "HD heaps");
     fprintf(stderr, "[botw] HD heaps (TOTK_BOTW_HD_HEAPS=1): memory heap %u MiB, RootHeap %u MiB, StarterPackMgr 445 / 96 MiB, "
-            "texture compaction 2032 MiB, ForResourceL / S 1104 / 880 MiB (default mode) (%u instructions verified)\n",
+            "texture compaction 2032 MiB (1.6.0: 2002 + 30), ForResourceL / S 1104 / 880 MiB (default mode) (%u instructions verified)\n",
             HD_MEMORY_HEAP_MIB, HD_ROOT_HEAP_MIB, (unsigned)(sizeof site / sizeof *site + sizeof big / sizeof *big));
 #undef BIG_WANT
 }
