@@ -184,7 +184,8 @@ static BOOL make_dir(NSString *path) {
 /* Button icons (docs/mods.md, Button prompts): an app built with them (build_app.py: button-icons/kit.txt) draws the game's
    prompts for the controller in use. The style comes from key 6's type in controller-type.txt, or for auto from the
    controller connected now, else the last one the game saw (controller-detected.txt, runtime/gamepad.m); the face mode
-   and controls.txt as the game maps them. Each style, face mode and controls.txt gets its own folder of RomFS files under
+   and controls.txt as the game maps them; the size from the main display (gamepad_icon_scale: 2x for 3456x2234). Each style,
+   face mode, size and controls.txt gets its own folder of RomFS files under
    <controls folder>/button-icons/<version>/<key>, made once by the bundled tool from this app's RomFS (seconds) and
    then reused; runtime/romfs.c loads it like a mod (TOTK_ROMFS_BUTTON_ICONS). The game reads it at start only, so a
    new pick shows from the next start. Any failure starts the game with its own Switch icons. Returns the style word for
@@ -213,9 +214,21 @@ static NSString *button_icons(NSString *root, NSString *controls, NSString **fol
     int by_position = 1, style = gamepad_icon_style(type, detected, &by_position);
     if (style < 0) return @"none";
     NSString *name = [NSString stringWithFormat:@"%s-%s", gamepad_type_name(style), by_position ? "position" : "label"];
+    NSScreen *screen = NSScreen.mainScreen;     /* sharper icons for a bigger display: the game's size times this */
+    CGFloat backing = screen ? screen.backingScaleFactor : 1;
+    int scale = screen && [info[@"tool"] hasSuffix:@"botw_prompts.py"]
+        ? gamepad_icon_scale(screen.frame.size.width * backing, screen.frame.size.height * backing) : 1;
     NSData *layout = [NSData dataWithContentsOfFile:controls];
-    NSMutableData *keyed = [[[NSString stringWithFormat:@"%@\n%@\n", info[@"id"], name] dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
+    NSMutableData *keyed = [[[NSString stringWithFormat:@"%@\n%@\n%d\n", info[@"id"], name, scale] dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
     if (layout) [keyed appendData:layout];
+#ifdef GAME_BOTW
+    /* A mod with its own resource size table (an HD texture pack): the tool raises that table (botw_prompts.py --mods), so a
+       new table of the mods makes a new set at 2x or more. TOTK_ROMFS_MODS is set before this runs. */
+    const char *mods = getenv("TOTK_ROMFS_MODS");
+    NSString *modsFolder = scale > 1 && mods && *mods && strcmp(mods, "0") ? @(mods) : nil;   /* at 1x the set has no table */
+    for (NSString *line in [[NSString stringWithContentsOfFile:[modsFolder stringByAppendingPathComponent:@"manifest.tsv"] encoding:NSUTF8StringEncoding error:nil] componentsSeparatedByString:@"\n"])
+        if ([line hasPrefix:@"System/Resource/ResourceSizeTable.product.srsizetable\t"]) [keyed appendData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+#endif
     uint8_t digest[CC_SHA256_DIGEST_LENGTH]; CC_SHA256(keyed.bytes, (CC_LONG)keyed.length, digest);
     NSMutableString *key = [NSMutableString string];
     for (int i = 0; i < 8; i++) [key appendFormat:@"%02x", digest[i]];
@@ -228,8 +241,13 @@ static NSString *button_icons(NSString *root, NSString *controls, NSString **fol
         if (![fm createDirectoryAtPath:temporary withIntermediateDirectories:YES attributes:nil error:nil]) return @"none";
         NSMutableArray *arguments = [@[@"-B", [kit stringByAppendingPathComponent:info[@"tool"]], temporary,   /* -B: nothing written into the signed app */ @"--romfs", @"extracted/" TOTK_GAME_DIR "/romfs",
                                        @"--version", @TOTK_GAME_DIR, @"--style", @(gamepad_type_name(style)), @"--face-buttons", by_position ? @"position" : @"label"] mutableCopy];
+        if ([info[@"tool"] hasSuffix:@"botw_prompts.py"])      /* only the Breath of the Wild tool draws at a scale */
+            [arguments addObjectsFromArray:@[@"--scale", @(scale).stringValue]];
+#ifdef GAME_BOTW
+        if (modsFolder && [info[@"tool"] hasSuffix:@"botw_prompts.py"]) [arguments addObjectsFromArray:@[@"--mods", modsFolder]];
+#endif
         if (layout) [arguments addObjectsFromArray:@[@"--controls", controls]];
-        fprintf(stderr, "[launcher] button icons: making %s (%s) in %s\n", name.UTF8String, layout ? "controls.txt" : "default layout", target.fileSystemRepresentation);
+        fprintf(stderr, "[launcher] button icons: making %s (%s, %dx) in %s\n", name.UTF8String, layout ? "controls.txt" : "default layout", scale, target.fileSystemRepresentation);
         NSTask *task = [NSTask new];
         task.executableURL = [NSURL fileURLWithPath:info[@"python"]];
         task.arguments = arguments;
@@ -252,7 +270,7 @@ static NSString *button_icons(NSString *root, NSString *controls, NSString **fol
             return [y compare:x ?: NSDate.distantPast]; }];
         for (NSUInteger i = 4; i < sets.count; i++) [fm removeItemAtURL:sets[i] error:nil];
     } else {
-        fprintf(stderr, "[launcher] button icons: %s (%s)\n", name.UTF8String, target.fileSystemRepresentation);
+        fprintf(stderr, "[launcher] button icons: %s %dx (%s)\n", name.UTF8String, scale, target.fileSystemRepresentation);
         [fm setAttributes:@{NSFileModificationDate: NSDate.date} ofItemAtPath:target error:nil];   /* newest for the four kept */
     }
     *folder = target;

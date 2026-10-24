@@ -1838,7 +1838,7 @@ def parse_args(argv):
     ap.add_argument('--button-icons', action=argparse.BooleanOptionalAction,
                     help='draw the game\'s button prompts for the controller in use: Xbox or PlayStation from key 6\'s type or the '
                          'connected controller, with controls.txt (made at start, once per setting; docs/mods.md). On by default '
-                         'for Breath of the Wild 1.9.0, off for the other versions; needs fontTools in the work folder\'s Python')
+                         'for Breath of the Wild (1.6.0 and 1.9.0), off for Tears of the Kingdom; needs fontTools in the work folder\'s Python')
     ap.add_argument('--shader-cache', type=Path, help=argparse.SUPPRESS)   # removed: the seed comes from the game data and the shared list
     ap.add_argument('--no-shader-reminder', action='store_true', help='iOS: do not install the Mac agent that asks, while an iPhone / iPad with the game is connected, to send the shaders the shared list lacks')
     fonts = ap.add_mutually_exclusive_group()
@@ -1963,7 +1963,7 @@ def main(argv):
             say('Install it with games/totk/ios/tools/install_device.py' + (f' --game-data {tree}/extracted/{version}/romfs/romfs.bin'
                 if args.ios_game_data == 'documents' else '') + '; saves and the shader cache stay in the app\'s Documents.')
             return
-        step_app(tree, out, logs, version=version, game='botw', button_icons=version == 'botw190' if args.button_icons is None else args.button_icons)
+        step_app(tree, out, logs, version=version, game='botw', button_icons=True if args.button_icons is None else args.button_icons)
         run([LSREGISTER, '-f', out], logs / 'register-app.log')
         say('4/4 app: macOS checks the app once (seconds when this app folder was checked before, a few minutes for a new one)')
         t1 = time.time()

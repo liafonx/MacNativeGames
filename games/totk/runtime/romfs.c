@@ -199,8 +199,14 @@ static void overlay_load(const char *dir,int required,int mods) {
 static const char *overlay_taken(const char *dir,size_t from) {
  static char name[4096];char path[4200];snprintf(path,sizeof(path),"%s/manifest.tsv",dir);FILE *m=fopen(path,"r");if(!m)return NULL;
  char line[8192];const char *found=NULL;
+#ifdef GAME_BOTW   /* a line whose original is that overlay's file takes its place (overlay_load): the icons' resource size table made
+                      from the mods' own (botw_prompts.py --mods) */
+ while(!found&&fgets(line,sizeof(line),m)){char orig[65]="";if(line[0]=='#'||line[0]=='\n'||sscanf(line,"%4095[^\t]\t%*u\t%*64[0-9a-f]\t%64[0-9a-f-]",name,orig)<1)continue;
+  for(size_t k=from;k<noverlay;k++)if(!strcmp(overlays[k].name,name)&&strcmp(overlays[k].sha,orig)){found=name;break;}}
+#else
  while(!found&&fgets(line,sizeof(line),m)){if(line[0]=='#'||line[0]=='\n'||sscanf(line,"%4095[^\t]",name)!=1)continue;
   for(size_t k=from;k<noverlay;k++)if(!strcmp(overlays[k].name,name)){found=name;break;}}
+#endif
  fclose(m);return found;
 }
 static int overlay_order(const void *a,const void *b) {uint64_t x=((const Overlay *)a)->index,y=((const Overlay *)b)->index;return (x>y)-(x<y);}

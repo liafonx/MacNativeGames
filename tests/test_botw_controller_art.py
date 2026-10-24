@@ -1,5 +1,6 @@
 """The controller pictures of Breath of the Wild's controller tips page (games/botw/scripts/botw_controller_art.py, the R8G8 texture
 code of botw_formats.py, and botw_prompts.make_pack with pictures) on made-up textures: no game data."""
+import hashlib
 import random
 import struct
 import sys
@@ -235,6 +236,71 @@ class Drawing(unittest.TestCase):
             self.assertEqual((min(xs), max(xs)), (2, 8))
 
 
+# sha256 (first 16 hex digits) of the grey rows and alpha rows of each picture at scale 1, drawn with StubLetters and the default
+# controls, taken from the code before it had a scale: scale=1 must stay byte-identical.
+SCALE_1_HASHES = {
+    ('xbox', 'Nt_NNillust_00^f'): 'dda5f7f129ddc0d6',
+    ('xbox', 'Nt_NNillust_01^f'): 'e7f764d547b31f17',
+    ('xbox', 'Nt_GamePadIllustSnn_00^f'): '14b9e240fc8f903e',
+    ('xbox', 'Nt_GamePadIllustSnn_01^f'): '082b6bbc0510667e',
+    ('xbox', 'Nt_GamePadIllustSnn_02^f'): 'b9ab3c4a97809797',
+    ('xbox', 'Nt_GamePadIllustSnn_03^f'): '2cc7f201420ff582',
+    ('playstation', 'Nt_NNillust_00^f'): '30414c3914991879',
+    ('playstation', 'Nt_NNillust_01^f'): '2fa169214268ddeb',
+    ('playstation', 'Nt_GamePadIllustSnn_00^f'): '14b9e240fc8f903e',
+    ('playstation', 'Nt_GamePadIllustSnn_01^f'): '082b6bbc0510667e',
+    ('playstation', 'Nt_GamePadIllustSnn_02^f'): '12c52ee3b323640e',
+    ('playstation', 'Nt_GamePadIllustSnn_03^f'): '6ae73cf3c42201bc',
+}
+
+
+@unittest.skipIf(bf is None, 'needs Python 3.14')
+class Scale(unittest.TestCase):
+    TEXT = {'xbox': 'XBOX_TEXT', 'playstation': 'PLAYSTATION_TEXT'}
+    MAX_MEAN_DIFFERENCE = 1.0      # grey levels of 255, mean over a picture and both channels; the measured values are 0.07 to 0.22
+
+    def draw(self, name, style, **scale):
+        controls = pl.prompt_controls('', 'position')
+        return art.PICTURES[name][1](controls, StubLetters(), getattr(bp, self.TEXT[style]), style=style, **scale)
+
+    def test_scale_1_is_byte_identical_to_the_code_before_it_had_a_scale(self):
+        for (style, name), expected in SCALE_1_HASHES.items():
+            for scale in ({}, {'scale': 1}):
+                grey, alpha = self.draw(name, style, **scale)
+                self.assertEqual(hashlib.sha256(b''.join(grey) + b''.join(alpha)).hexdigest()[:16], expected, (style, name))
+
+    @staticmethod
+    def mean_difference(small, big, k):
+        """Mean absolute difference over the grey and alpha channels between the picture `small` and `big` averaged in k x k blocks."""
+        total = count = 0
+        for rows, big_rows in zip(small, big):
+            for y, row in enumerate(rows):
+                for x, value in enumerate(row):
+                    block = sum(big_rows[y * k + j][x * k + i] for j in range(k) for i in range(k)) / (k * k)
+                    total += abs(value - block); count += 1
+        return total / count
+
+    def test_scale_2_has_twice_the_size_and_is_the_same_picture_sharper(self):
+        for style in self.TEXT:
+            for name, ((width, height), _) in art.PICTURES.items():
+                one, two = self.draw(name, style), self.draw(name, style, scale=2)
+                for channel in two:
+                    self.assertEqual((len(channel), len(channel[0])), (height * 2, width * 2), (style, name))
+                self.assertLess(self.mean_difference(one, two, 2), self.MAX_MEAN_DIFFERENCE, (style, name))
+
+    def test_a_different_picture_does_not_pass_the_closeness_check(self):        # negative control
+        xbox, playstation = self.draw(FRONT, 'xbox'), self.draw(FRONT, 'playstation', scale=2)
+        self.assertGreater(self.mean_difference(xbox, playstation, 2), self.MAX_MEAN_DIFFERENCE)
+
+    def test_scales_3_and_4_and_the_refused_scales(self):
+        for scale in (3, 4):
+            grey, alpha = self.draw(SNN[3], 'xbox', scale=scale)
+            self.assertEqual((len(grey), len(grey[0]), len(alpha), len(alpha[0])), (228 * scale,) * 4)
+        for scale in (0, 5, 1.5, '2'):
+            with self.assertRaises(ValueError, msg=scale):
+                self.draw(FRONT, 'xbox', scale=scale)
+
+
 @unittest.skipIf(bf is None, 'needs Python 3.14')
 class MakePackPictures(unittest.TestCase):
     def setUp(self):
@@ -284,7 +350,7 @@ class MakePackPictures(unittest.TestCase):
         self.assertEqual(drawn, {})
         blob, textures = self.textures(new_pack)
         self.assertEqual(bf.rg8_read(blob, textures[FRONT]), (self.front_grey, self.front_alpha))
-        self.assertEqual(bf.r8_read(blob, textures[bp.DPAD_TEXTURE]), bp.dpad_cross(DOTS))     # the screen's d-pad is a cross
+        self.assertEqual(bf.r8_read(blob, textures[bp.DPAD_TEXTURE]), bp.render(bp.drawers_of('xbox', StubLetters())[0xE049], 64, bp.disc_box(DOTS)))     # the screen's d-pad is a cross
         self.assertEqual(sorted(changed), sorted(NAMES + [bp.DPAD_TEXTURE]))
 
     @unittest.skipIf(mbi is None, 'needs fontTools (the PlayStation drawers come from make_button_icons.py)')
@@ -299,12 +365,13 @@ class MakePackPictures(unittest.TestCase):
             if name != SNN[1]:
                 self.assertTrue(drawn[name] != art.PICTURES[name][1](controls, StubLetters(), bp.XBOX_TEXT), name)
 
-    def test_a_picture_in_another_format_stops_the_tool(self):      # negative control
+    def test_a_picture_in_another_format_is_skipped_with_a_note(self):
         bad = [(n, bf.R8_UNORM, 48, 48, 3, rows, None) for n, rows in self.keys.items()] + [(FRONT, bf.R8_UNORM, 576, 288, 4, self.front_grey, None)]
         layout = sarc({'timg/__Combined.bntx': rg8_bntx(bad)})
         pack = sarc({'Layout/Common.sblarc': yaz0_encode(layout)})
-        with self.assertRaises(ValueError):
-            bp.make_pack(pack, pl.prompt_controls('', 'position'), StubLetters(), 'xbox', pictures=True)
+        _, _, drawn, notes, _ = bp.make_pack(pack, pl.prompt_controls('', 'position'), StubLetters(), 'xbox', pictures=True)
+        self.assertNotIn(FRONT, drawn)
+        self.assertTrue(any(n.startswith(FRONT + ':') and 'format' in n for n in notes), notes)
 
 
 def hint_bflyt():

@@ -15,7 +15,10 @@ The in-game hint boxes (PaMessageTipsDrcImageNN_00) show four 228x228 pieces of 
 and a right shoulder view (Nt_GamePadIllustSnn_00, _01) and the right and left front of the handheld (_02: face buttons, right
 stick; _03: left stick, d-pad). Those are drawn again as the pieces of the same controller with the buttons in the same places.
 The grey of each pixel and its alpha are the two channels of the game's R8G8 textures.
+Every draw function takes `scale` (an integer 1 to 4): the same picture drawn `scale` times as large and as sharp, (width * scale)
+x (height * scale) pixels. All the numbers in this module are pixels of the game's size (scale 1); the Canvas multiplies them.
 """
+import functools
 import math
 import sys
 from pathlib import Path
@@ -46,23 +49,42 @@ BODY, RIM, DARK, EDGE, LIGHT = 193, 135, 55, 13, 175      # grey levels (the gam
 #                                                           55 inside dark buttons, 13 around them)
 
 
+_DETAIL = 1     # how many times finer the curves are cut into pieces: the scale of the picture being drawn (see `scaled`)
+
+
+def scaled(draw):
+    """A draw function that takes `scale` (an integer 1 to 4) and cuts its curves into `scale` times as many pieces."""
+    @functools.wraps(draw)
+    def wrapper(*args, scale=1, **kwargs):
+        global _DETAIL
+        if scale not in (1, 2, 3, 4):
+            raise ValueError('scale must be 1, 2, 3 or 4, not %r' % (scale,))
+        before, _DETAIL = _DETAIL, scale
+        try:
+            return draw(*args, scale=scale, **kwargs)
+        finally:
+            _DETAIL = before
+    return wrapper
+
+
 def circle(cx, cy, r):
-    n = max(24, int(r * 4))
+    n = max(24, int(r * 4 * _DETAIL))
     return [(cx + r * math.cos(2 * math.pi * i / n), cy + r * math.sin(2 * math.pi * i / n)) for i in range(n)]
 
 
 def rounded_rect(x0, y0, x1, y1, r):
     r = min(r, (x1 - x0) / 2, (y1 - y0) / 2)
-    points = []
+    points, steps = [], 8 * _DETAIL
     for cx, cy, start in ((x1 - r, y0 + r, -90), (x1 - r, y1 - r, 0), (x0 + r, y1 - r, 90), (x0 + r, y0 + r, 180)):
-        for i in range(9):
-            a = math.radians(start + 90 * i / 8)
+        for i in range(steps + 1):
+            a = math.radians(start + 90 * i / steps)
             points.append((cx + r * math.cos(a), cy + r * math.sin(a)))
     return points
 
 
-def outline(start, *segments, steps=14):
+def outline(start, *segments, steps=None):
     """A contour from a start point and segments: a point is a straight line to it, three points are a cubic curve."""
+    steps = steps or 14 * _DETAIL
     points, last = [start], start
     for seg in segments:
         if isinstance(seg[0], (int, float)):
@@ -100,14 +122,18 @@ def inset(points, d):
 
 
 class Canvas:
-    """A picture of grey levels and alpha, drawn on by painting shapes one over another (alpha blending, edges anti-aliased)."""
-    def __init__(self, width, height):
-        self.width, self.height = width, height
-        self.grey = [[255.0] * width for _ in range(height)]
-        self.alpha = [[0.0] * width for _ in range(height)]
+    """A picture of grey levels and alpha, drawn on by painting shapes one over another (alpha blending, edges anti-aliased).
+    `width` x `height` is the picture at scale 1; the shapes are in those pixels too, and the Canvas multiplies them by `scale`."""
+    def __init__(self, width, height, scale=1):
+        self.scale = scale
+        self.width, self.height = width * scale, height * scale
+        self.grey = [[255.0] * self.width for _ in range(self.height)]
+        self.alpha = [[0.0] * self.width for _ in range(self.height)]
 
     def paint(self, shapes, grey, opacity=1.0):
         """Paint the union of `shapes` (contours, all wound the same way) in `grey`."""
+        if self.scale != 1:
+            shapes = [[(x * self.scale, y * self.scale) for x, y in shape] for shape in shapes]
         points = [p for shape in shapes for p in shape]
         x0, x1 = max(0, math.floor(min(p[0] for p in points))), min(self.width, math.ceil(max(p[0] for p in points)))
         y0, y1 = max(0, math.floor(min(p[1] for p in points))), min(self.height, math.ceil(max(p[1] for p in points)))
@@ -260,11 +286,12 @@ FRONT_BODY_PS = FRONT_BODY_PS + mirror(FRONT_BODY_PS, FRONT[0])[1:-1]
 TOUCHPAD = (146, 36, 430, 126)      # x0, y0, x1, y1 of the DualSense's touchpad, between the places of - and +
 
 
-def front_view(controls, letters, text, style='xbox'):
+@scaled
+def front_view(controls, letters, text, style='xbox', scale=1):
     """The front view of an Xbox controller (or with style 'playstation' a DualSense) as (grey rows, alpha rows), 576x288 pixels.
     `controls` is prompt_layout.prompt_controls(); `text` names the pad buttons (botw_prompts.XBOX_TEXT or PLAYSTATION_TEXT);
-    `letters` is a botw_prompts.Letters."""
-    canvas = Canvas(*FRONT)
+    `letters` is a botw_prompts.Letters. With `scale` the picture is (576 * scale) x (288 * scale)."""
+    canvas = Canvas(*FRONT, scale)
     playstation = style == 'playstation'
     body = FRONT_BODY_PS if playstation else FRONT_BODY
     canvas.paint([body], RIM)
@@ -301,10 +328,11 @@ def shoulder(left, x0, y0, x1, y1, trigger, width=TOP[0]):
     return mirror(shoulder(True, width - x1, y0, width - x0, y1, True, width), width)
 
 
-def top_view(controls, letters, text, style='xbox'):
+@scaled
+def top_view(controls, letters, text, style='xbox', scale=1):
     """The top edge of an Xbox controller (or a DualSense) as (grey rows, alpha rows), 576x100 pixels: the triggers and bumpers
     in the places of the Switch's ZL, L, ZR and R."""
-    canvas = Canvas(*TOP)
+    canvas = Canvas(*TOP, scale)
     body = outline((60, 44), (516, 44), ((545, 44), (566, 56), (566, 66)), ((566, 80), (552, 88), (536, 88)), (40, 88),
                    ((24, 88), (10, 80), (10, 66)), ((10, 56), (31, 44), (60, 44)))
     canvas.paint([body], RIM)
@@ -326,10 +354,11 @@ def top_view(controls, letters, text, style='xbox'):
     return canvas.rows()
 
 
-def wing(left, controls, letters, text, style='xbox'):
+@scaled
+def wing(left, controls, letters, text, style='xbox', scale=1):
     """Nt_GamePadIllustSnn_02 (the right front: face buttons and right stick, the body cut at its left) or _03 (the left front:
     left stick and d-pad, cut at its right) as (grey rows, alpha rows), 228x228 pixels."""
-    canvas = Canvas(*PIECE)
+    canvas = Canvas(*PIECE, scale)
     right_wing = outline((-10, 24), (118, 24), ((146, 24), (162, 44), (162, 78)), (162, 240), (-10, 240))
     body = mirror(right_wing, PIECE[0]) if left else right_wing
     canvas.paint([body], RIM)
@@ -348,10 +377,11 @@ def wing(left, controls, letters, text, style='xbox'):
     return canvas.rows()
 
 
-def shoulders(left, controls, letters, text, style='xbox'):
+@scaled
+def shoulders(left, controls, letters, text, style='xbox', scale=1):
     """Nt_GamePadIllustSnn_00 (the left shoulder: LT and LB) or _01 (the right: RT and RB) as (grey rows, alpha rows), 228x228
     pixels: the shoulder buttons over the body of the controller, which is cut at the picture's inner edge."""
-    canvas = Canvas(*PIECE)
+    canvas = Canvas(*PIECE, scale)
     width = PIECE[0]
     band = outline((60, 124), (248, 124), (248, 176), (84, 176), ((68, 176), (52, 160), (50, 142)), ((50, 132), (54, 124), (60, 124)))
     band = band if left else mirror(band, width)
@@ -373,8 +403,8 @@ def shoulders(left, controls, letters, text, style='xbox'):
     return canvas.rows()
 
 
-# texture name -> ((width, height), draw(controls, letters, text, style='xbox')): the pictures that replace the game's, in
-# Common.sblarc's BNTX
+# texture name -> ((width, height), draw(controls, letters, text, style='xbox', scale=1)): the pictures that replace the game's, in
+# Common.sblarc's BNTX. (width, height) is the game's size; draw(..., scale=n) returns a picture n times that size in each direction.
 PICTURES = {'Nt_NNillust_00^f': (FRONT, front_view), 'Nt_NNillust_01^f': (TOP, top_view),
             'Nt_GamePadIllustSnn_00^f': (PIECE, lambda *a, **k: shoulders(True, *a, **k)),
             'Nt_GamePadIllustSnn_01^f': (PIECE, lambda *a, **k: shoulders(False, *a, **k)),

@@ -91,6 +91,14 @@ int main(void) {
     expect(gamepad_icon_style(GAMEPAD_TYPE_AUTO, GAMEPAD_TYPE_XBOX, &pos) == GAMEPAD_TYPE_XBOX && pos == 0, "auto with TOTK_FACE_BUTTONS=label: by label");
     expect(gamepad_icon_style(GAMEPAD_TYPE_XBOX, -1, &pos) == GAMEPAD_TYPE_XBOX && pos == 1, "a picked type maps by position whatever TOTK_FACE_BUTTONS says");
     unsetenv("TOTK_FACE_BUTTONS");
+    /* The icon size for the display (gamepad_icon_scale): the 16:9 picture's height over 1080, rounded up, 1 to 4. */
+    expect(gamepad_icon_scale(1920, 1080) == 1, "1080p: the game's size");
+    expect(gamepad_icon_scale(3456, 2234) == 2, "MacBook Pro 16 (16:9 picture 1944 high): twice");
+    expect(gamepad_icon_scale(2560, 1440) == 2, "1440p: twice");
+    expect(gamepad_icon_scale(3840, 2160) == 2, "4K: twice");
+    expect(gamepad_icon_scale(5120, 2880) == 3, "5K: three times");
+    expect(gamepad_icon_scale(1440, 900) == 1, "a small display: the game's size");
+    expect(gamepad_icon_scale(15360, 8640) == 4, "a huge display: at most four times");
     if (failures) return 1;
     printf("PASS: controller layout cases\n");
     return 0;
