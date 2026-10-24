@@ -2,6 +2,7 @@
 import io
 import math
 import random
+import re
 import string
 import struct
 import sys
@@ -446,6 +447,30 @@ class FontGlyphs(unittest.TestCase):
         with self.assertRaises(ValueError):
             bp.make_font(yaz0_encode(sarc({'External_00.bffnt': data})), pl.prompt_controls('', 'position'), StubLetters(), 'nintendo')
 
+    def odd_fonts(self):
+        """name -> a BFFNT that differs from the game's in one way (the sheet's format, a second sheet, the kind of the CMAP,
+        a glyph grid that does not fit the sheet, a cell code outside the grid)."""
+        good = bffnt(self.sheet())
+        sections = bf.Bffnt(good).sections
+        tglp, cmap, brti = sections[b'TGLP'], good.rindex(b'CMAP'), good.index(b'BRTI', sections[b'TGLP'])
+        out = {}
+        for name, at, fmt, value in (('format', brti + 0x1c, '<I', bf.R8_UNORM), ('mips', brti + 0x16, '<H', 3),
+                                     ('two sheets', tglp + 10, '<B', 2), ('cmap kind', cmap + 16, '<H', 2),
+                                     ('grid', tglp + 8 + 12, '<H', 9), ('rows', tglp + 8 + 14, '<H', 30)):
+            odd = bytearray(good); struct.pack_into(fmt, odd, at, value); out[name] = bytes(odd)
+        return good, out
+
+    def test_a_font_with_an_unexpected_sheet_or_no_external_font_is_refused(self):
+        good, odd = self.odd_fonts()
+        controls, letters = pl.prompt_controls('', 'position'), StubLetters()
+        for name, data in odd.items():
+            with self.subTest(name), self.assertRaises(ValueError):
+                bp.make_font(yaz0_encode(sarc({'External_00.bffnt': data})), controls, letters)
+        with self.assertRaises(bp.MissingData):
+            bp.make_font(yaz0_encode(sarc({'Ancient_00.bffnt': good})), controls, letters)
+        if mbi:        # negative control: the unchanged font is drawn
+            self.assertTrue(bp.make_font(yaz0_encode(sarc({'External_00.bffnt': good})), controls, letters)[1])
+
     @unittest.skipIf(mbi is None, 'needs fontTools')
     def test_playstation_font_redraws_the_face_glyphs_on_discs_like_the_originals(self):
         rows = [bytearray(256) for _ in range(4 * 51 + 4)]
@@ -635,11 +660,88 @@ class MakePack(unittest.TestCase):
         self.assertNotIn(NAMES[4], changed)       # nothing drives L, so its picture stays
         self.assertTrue(any(n.startswith('L:') for n in notes))
 
-    def test_a_texture_in_another_format_stops_the_tool(self):     # negative control
+    def test_a_texture_in_another_format_is_skipped_with_a_note(self):
         bad = sarc({'timg/__Combined.bntx': bntx({n: picture(1) for n in NAMES}, fmt=0x1d01)})
         pack = sarc({'Layout/Common.sblarc': yaz0_encode(bad)})
-        with self.assertRaises(ValueError):
-            bp.make_pack(pack, pl.prompt_controls('', 'position'), StubLetters())
+        new_pack, changed, _, notes, _ = bp.make_pack(pack, pl.prompt_controls('', 'position'), StubLetters())
+        self.assertEqual(changed, {})
+        self.assertEqual(new_pack, pack)                         # nothing is written into the archive
+        for name in NAMES:
+            self.assertTrue(any(n.startswith(name + ':') and 'format' in n for n in notes), name)
+        _, changed, _, _, _ = bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters())      # negative control: the right format is drawn
+        self.assertEqual(sorted(changed), sorted(NAMES))
+
+    def test_missing_wrong_sized_and_multi_mip_textures_are_skipped_the_others_are_drawn(self):
+        from test_botw_grow import full_bntx
+        names = NAMES + [bp.DPAD_TEXTURE]
+        pics = {n: self.pics[n] for n in NAMES}
+        pics[bp.DPAD_TEXTURE] = disc_picture(32, 32, 24, 64)
+        for case in ('missing', 'size', 'mips', 'dpad size'):
+            specs = {n: (bf.R8_UNORM, len(rows), len(rows), *bf.r8_pack(rows)) for n, rows in pics.items()}
+            bad = {'missing': NAMES[0], 'size': NAMES[1], 'mips': NAMES[2], 'dpad size': bp.DPAD_TEXTURE}[case]
+            if case == 'missing':
+                del specs[bad]
+            elif case == 'size':
+                rows = disc_picture(32, 32, 24, 64); specs[bad] = (bf.R8_UNORM, 64, 64, *bf.r8_pack(rows))
+            elif case == 'dpad size':
+                rows = disc_picture(24, 24, 20, 48); specs[bad] = (bf.R8_UNORM, 48, 48, *bf.r8_pack(rows))
+            blob = bytearray(full_bntx(specs))
+            if case == 'mips':
+                brti = next(m.start() for m in re.finditer(b'BRTI', blob) if bf.Texture(blob, m.start()).name == bad)
+                struct.pack_into('<H', blob, brti + 0x16, 2)
+            pack = sarc({'Layout/Common.sblarc': yaz0_encode(sarc({'timg/__Combined.bntx': bytes(blob)}))})
+            for scale in (1, 2):
+                new_pack, changed, _, notes, _ = bp.make_pack(pack, pl.prompt_controls('', 'position'), StubLetters(), 'xbox', True, scale)
+                with self.subTest(case=case, scale=scale):
+                    self.assertNotIn(bad, changed)
+                    self.assertEqual(sorted(changed), sorted(n for n in names if n != bad))      # every other texture is drawn
+                    self.assertEqual(len([n for n in notes if n.startswith(bad + ':')]), 1, notes)
+                    layout = bf.yaz0_decode(new_pack[slice(*bf.sarc_members(new_pack)['Layout/Common.sblarc'])])
+                    inner = bf.sarc_members(layout)
+                    textures = bf.bntx_textures(layout[slice(*inner['timg/__Combined.bntx'])])
+                    if bad in textures:       # the skipped texture keeps its size
+                        self.assertEqual((textures[bad].width, textures[bad].height), (specs[bad][1], specs[bad][2]))
+                    for good in set(names) - {bad}:
+                        self.assertEqual(textures[good].width, len(changed[good]))
+
+    def test_controller_pictures_in_another_format_or_size_are_skipped_with_a_note(self):
+        from test_botw_grow import full_bntx
+        name = 'Nt_Picture_00^f'
+        specs = {n: (bf.R8_UNORM, 48, 48, *bf.r8_pack(self.pics[n])) for n in NAMES}
+        draws = []
+
+        def draw(controls, letters, text, style='xbox', scale=1):
+            draws.append(name)
+            return [bytes([60]) * 64] * 32, [bytes([200]) * 64] * 32
+        old = bp.PICTURES
+        try:
+            bp.PICTURES = {name: ((64, 32), draw)}
+            for case, spec in (('format', (bf.R8_UNORM, 64, 32, *bf.r8_pack([bytes(64)] * 32))),
+                               ('size', (bf.R8G8_UNORM, 32, 32, *bf.rg8_pack([bytes(32)] * 32, [bytes(32)] * 32))),
+                               ('missing', None),
+                               ('right', (bf.R8G8_UNORM, 64, 32, *bf.rg8_pack([bytes(64)] * 32, [bytes(64)] * 32)))):     # negative control
+                pack = sarc({'Layout/Common.sblarc': yaz0_encode(sarc({'timg/__Combined.bntx': full_bntx({**specs, **({name: spec} if spec else {})})}))})
+                _, _, drawn, notes, _ = bp.make_pack(pack, pl.prompt_controls('', 'position'), StubLetters())
+                with self.subTest(case=case):
+                    self.assertEqual(sorted(drawn), [name] if case == 'right' else [])
+                    self.assertEqual(any(n.startswith(name) for n in notes), case != 'right', notes)
+        finally:
+            bp.PICTURES = old
+
+    def test_a_hint_layout_that_cannot_be_read_keeps_the_rings_with_a_note(self):
+        controls = pl.prompt_controls('', 'position')
+        for blob in (b'FLYT', b'not a layout at all', b'FLYT' + bytes(60)):
+            edits, notes = bp.ring_edits(blob, {bp.HINT: (0, len(blob))}, controls)
+            self.assertEqual((edits, len(notes)), ([], 1), blob)
+        edits, notes = bp.ring_edits(b'', {}, controls)            # no hint layout in the archive
+        self.assertEqual((edits, len(notes)), ([], 1))
+
+    def test_an_archive_without_the_layout_or_its_bntx_is_refused_clearly(self):
+        controls = pl.prompt_controls('', 'position')
+        with self.assertRaises(bp.MissingData):
+            bp.make_pack(sarc({'Pack/other': sample(100, 1)}), controls, StubLetters())
+        with self.assertRaises(bp.MissingData):
+            bp.make_pack(sarc({'Layout/Common.sblarc': yaz0_encode(sarc({'timg/other.bntx': bntx(self.pics)}))}), controls, StubLetters())
 
 
 @unittest.skipIf(bf is None or mbi is None, 'needs Python 3.14 and fontTools')
@@ -705,7 +807,7 @@ def downsampled(rows, k):
 @unittest.skipIf(bf is None or mbi is None, 'needs Python 3.14 and fontTools')
 class Scale(unittest.TestCase):
     """--scale above 1: new larger textures (full BNTX of the game's layout) and a larger glyph sheet, one drawing for both."""
-    SIZE = 50       # the face textures are as large as the font's cells here, so one button has one picture in both
+    SIZE = 48       # the face textures are as large as the font's cells here, so one button has one picture in both
 
     def setUp(self):
         from test_botw_grow import full_bntx, font
@@ -765,10 +867,12 @@ class Scale(unittest.TestCase):
             small = downsampled(two[name], 2)
             self.assertLess(max(abs(a - b) for r, q in zip(small, one[name]) for a, b in zip(r, q)), 100, name)
 
-    def test_a_texture_in_another_format_stops_the_tool_at_scale_2(self):     # negative control
+    def test_a_texture_in_another_format_is_skipped_at_scale_2(self):
         bad = sarc({'timg/__Combined.bntx': bntx({n: picture(1) for n in NAMES}, fmt=0x1d01)})
-        with self.assertRaises(ValueError):
-            bp.make_pack(sarc({'Layout/Common.sblarc': yaz0_encode(bad)}), self.controls, self.letters, 'xbox', True, 2)
+        pack = sarc({'Layout/Common.sblarc': yaz0_encode(bad)})
+        new_pack, changed, _, notes, sizes = bp.make_pack(pack, self.controls, self.letters, 'xbox', True, 2)
+        self.assertEqual((changed, new_pack, sizes[3]), ({}, pack, 0))         # nothing grows
+        self.assertEqual(len([n for n in notes if 'format' in n]), len(NAMES))
 
     def test_pictures_come_from_the_art_at_the_same_scale(self):
         from test_botw_grow import full_bntx
@@ -793,9 +897,9 @@ class Scale(unittest.TestCase):
 
     def test_a_button_has_one_drawing_in_its_texture_and_in_its_font_glyph(self):
         _, textures, _, _, _ = bp.make_pack(self.pack, self.controls, self.letters, 'xbox', False, 2)
-        # the font cell of Switch A is a disc of the texture's size and place (both are 50 pixel pictures here)
-        cells, _ = bp.font_cells(StubFont({0xE040: self.pics[NAMES[0]]}), None, self.controls, self.letters, 'xbox', 2)
-        self.assertEqual(len(cells[0xE040]), 100)
+        # the font cell of Switch A is a disc of the texture's size and place (both are 48 pixel pictures here)
+        cells, _ = bp.font_cells(StubFont({0xE040: self.pics[NAMES[0]]}, cell=self.SIZE), None, self.controls, self.letters, 'xbox', 2)
+        self.assertEqual(len(cells[0xE040]), 2 * self.SIZE)
         self.assertEqual(cells[0xE040], textures[NAMES[0]])
 
     def test_the_font_sheet_grows_unchanged_cells_are_repeated_and_the_rest_is_the_original(self):
@@ -826,13 +930,14 @@ class Scale(unittest.TestCase):
             self.assertEqual((len(got), len(got[0])), (100, 100))
             self.assertLess(sum(abs(a - b) for r, q in zip(got, cells[code]) for a, b in zip(r, q)) / 10000, 40)
 
-    def romfs_with_everything(self, tmp):
-        """A RomFS folder (made up) holding the pack, a font archive and a resource size table, and the firmware's system font."""
+    def romfs_with_everything(self, tmp, files=None, names=('Layout/Common.blarc', 'Font/Font_US.bfarc', 'Other.bin')):
+        """A RomFS folder (made up) holding the pack, a font archive and a resource size table of `names`, and the firmware's
+        system font. `files` replaces files of the RomFS by name (None leaves one out)."""
         import zlib
-        names = ['Layout/Common.blarc', 'Font/Font_US.bfarc', 'Other.bin']
         entries = sorted((zlib.crc32(n.encode()), 1000 * (i + 1)) for i, n in enumerate(names))
         table = b'RSTB' + struct.pack('<II', len(entries), 0) + b''.join(struct.pack('<II', *e) for e in entries)
-        files = {bp.PACK: self.pack, 'Font/Font_US.sbfarc': self.font_stream, bf.RSTB: yaz0_encode(table)}
+        files = {bp.PACK: self.pack, 'Font/Font_US.sbfarc': self.font_stream, bf.RSTB: yaz0_encode(table), **(files or {})}
+        files = {name: data for name, data in files.items() if data is not None}
         index, blob = {}, b''
         for name, data in files.items():
             index[name] = (len(blob), len(data)); blob += data
@@ -857,6 +962,101 @@ class Scale(unittest.TestCase):
                 bp.main()
         finally:
             sys.argv = argv
+
+    def run_tool(self, mod, romfs, *args):
+        """(exit code, everything printed) of a run of the tool."""
+        import contextlib
+        argv, out = sys.argv, io.StringIO()
+        sys.argv = ['botw_prompts.py', str(mod), '--romfs', str(romfs), *args]
+        code = 0
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                bp.main()
+        except SystemExit as stop:
+            code = stop.code
+        finally:
+            sys.argv = argv
+        return code, out.getvalue()
+
+    def written(self, mod):
+        return sorted(p.relative_to(mod).as_posix() for p in mod.rglob('*') if p.is_file()) if mod.exists() else []
+
+    def test_a_font_the_tool_cannot_use_is_skipped_with_a_note_and_not_written(self):
+        import tempfile
+        from test_botw_prompts import FontGlyphs
+        good, odd = FontGlyphs('test_bc4_block_round_trip_of_flat_and_two_level_blocks').odd_fonts()
+        odd['no external font'] = None
+        for name, data in odd.items():
+            archive = yaz0_encode(sarc({'Ancient_00.bffnt': sample(300, 1)} if data is None else {'External_00.bffnt': data}))
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                tmp = Path(tmp)
+                romfs, _ = self.romfs_with_everything(tmp, {'Font/Font_US.sbfarc': archive, 'Font/Font_EU.sbfarc': self.font_stream})
+                code, text = self.run_tool(tmp / 'botw190', romfs)
+                self.assertEqual(code, 0, text)
+                self.assertIn('note: Font/Font_US.sbfarc:', text)
+                self.assertNotIn('note: Font/Font_EU.sbfarc', text)
+                # the odd font stays the game's; the other font (negative control) and the pack are made
+                self.assertEqual(self.written(tmp / 'botw190'), ['Font/Font_EU.sbfarc', 'Pack/Bootup.pack', 'manifest.tsv'])
+
+    def test_scale_2_without_a_usable_resource_size_table_draws_at_scale_1(self):
+        import tempfile
+        cases = {'no table': ({bf.RSTB: None}, ('Layout/Common.blarc', 'Font/Font_US.bfarc')),
+                 'no entry for the layout': ({}, ('Font/Font_US.bfarc', 'Other.bin')),
+                 'no entry for a font': ({}, ('Layout/Common.blarc', 'Other.bin')),
+                 'not a table': ({bf.RSTB: yaz0_encode(b'not an RSTB')}, ('Other.bin',))}
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            romfs, _ = self.romfs_with_everything(tmp / 'ref')
+            self.assertEqual(self.run_tool(tmp / 'one', romfs)[0], 0)
+            self.assertEqual(self.run_tool(tmp / 'two', romfs, '--scale', '2')[0], 0)
+            self.assertIn(bf.RSTB, self.written(tmp / 'two'))                    # negative control: a complete table lets it grow
+            self.assertNotEqual((tmp / 'two' / bp.PACK).read_bytes(), (tmp / 'one' / bp.PACK).read_bytes())
+            for case, (files, names) in cases.items():
+                with self.subTest(case):
+                    romfs, _ = self.romfs_with_everything(tmp / case, files, names)
+                    mod = tmp / f'mod {case}'
+                    code, text = self.run_tool(mod, romfs, '--scale', '2')
+                    self.assertEqual(code, 0, text)
+                    self.assertIn('--scale 1', text)
+                    self.assertIn('note:', text)
+                    self.assertEqual(self.written(mod), ['Font/Font_US.sbfarc', 'Pack/Bootup.pack', 'manifest.tsv'])        # no table, nothing grown
+                    for name in ('Pack/Bootup.pack', 'Font/Font_US.sbfarc'):
+                        self.assertEqual((mod / name).read_bytes(), (tmp / 'one' / name).read_bytes(), name)       # the scale 1 files
+
+    def test_scale_2_with_a_layout_that_cannot_grow_draws_at_scale_1(self):
+        import tempfile
+        pack = sarc({'Layout/Common.sblarc': yaz0_encode(sarc({'timg/__Combined.bntx': bntx(self.pics)}))})        # a BNTX without the game's layout
+        with self.assertRaises(ValueError):
+            bp.make_pack(pack, self.controls, self.letters, 'xbox', True, 2)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            romfs, _ = self.romfs_with_everything(tmp / 'game', {bp.PACK: pack})
+            code, text = self.run_tool(tmp / 'two', romfs, '--scale', '2')
+            self.assertEqual(code, 0, text)
+            self.assertIn('note: Pack/Bootup.pack:', text)
+            self.assertEqual(self.run_tool(tmp / 'one', romfs)[0], 0)
+            self.assertEqual(self.written(tmp / 'two'), ['Font/Font_US.sbfarc', 'Pack/Bootup.pack', 'manifest.tsv'])
+            for name in ('Pack/Bootup.pack', 'Font/Font_US.sbfarc'):
+                self.assertEqual((tmp / 'two' / name).read_bytes(), (tmp / 'one' / name).read_bytes(), name)
+
+    def test_a_missing_pack_layout_or_bntx_stops_the_run_with_a_message_before_anything_is_written(self):
+        import tempfile
+        no_layout = sarc({'Pack/other': sample(100, 1)})
+        no_bntx = sarc({'Layout/Common.sblarc': yaz0_encode(sarc({'timg/other.bntx': bntx(self.pics)}))})
+        for case, files, want in (('no pack', {bp.PACK: None}, bp.PACK), ('no layout', {bp.PACK: no_layout}, 'Layout/Common.sblarc'),
+                                  ('no bntx', {bp.PACK: no_bntx}, 'timg/__Combined.bntx')):
+            for args in ((), ('--scale', '2')):
+                with self.subTest(case=case, args=args), tempfile.TemporaryDirectory() as tmp:
+                    tmp = Path(tmp)
+                    romfs, _ = self.romfs_with_everything(tmp, files)
+                    code, text = self.run_tool(tmp / 'botw190', romfs, *args)
+                    self.assertEqual(code, 2, text)
+                    self.assertIn(want, text)
+                    self.assertIn('not found', text)
+                    self.assertEqual(self.written(tmp / 'botw190'), [])
+        with tempfile.TemporaryDirectory() as tmp:           # negative control: the same RomFS with its pack runs
+            romfs, _ = self.romfs_with_everything(Path(tmp))
+            self.assertEqual(self.run_tool(Path(tmp) / 'botw190', romfs)[0], 0)
 
     def test_the_command_line_at_scale_2_writes_the_resource_size_table_and_refuses_an_existing_one(self):
         import tempfile

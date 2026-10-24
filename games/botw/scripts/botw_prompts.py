@@ -26,6 +26,11 @@ every font grow (the unchanged glyphs are enlarged by repeating their pixels), t
 the resource size table (System/Resource/ResourceSizeTable.product.srsizetable) is written into the mod too, with the growth
 added to the entries of Layout/Common.blarc and Font/Font_*.bfarc. Scale 1 (the default) keeps every picture at the game's size.
 
+Another game version may differ from 1.9.0: a texture that is missing or not the expected format or size, or a font file with no
+External_00.bffnt or an unexpected glyph sheet, is skipped with a note and stays the game's. With --scale above 1, a resource size
+table that is missing or lacks an entry for an archive that grows (or an archive that cannot grow) makes the whole run draw at
+--scale 1. A RomFS without Pack/Bootup.pack, Layout/Common.sblarc or its BNTX stops the run (exit 2) before anything is written.
+
 Needs Python 3.14 and fontTools (python3.14 -m pip install fonttools). An existing Pack/Bootup.pack (with --scale above 1 also the
 resource size table) in the mod folder (another mod's, or an earlier run) is only overwritten with --replace.
 usage: botw_prompts.py <mod folder> (--app <Breath of the Wild.app> | --romfs <folder>) [--version botw190]
@@ -55,7 +60,9 @@ PLAYSTATION_TEXT = {'a': 'Cross', 'b': 'Circle', 'x': 'Square', 'y': 'Triangle',
 STYLES = {'xbox': (XBOX_TEXT, 'Xbox'), 'playstation': (PLAYSTATION_TEXT, 'PlayStation')}      # style -> (button names, brand)
 FONT = 'shared-fonts/0-standard.bfttf'
 BFTTF_MAGIC = 0x7f9a0218
-SIZE = 48
+SIZE = 48               # the key and face textures are SIZE x SIZE pixels, the d-pad of the shortcut icons DPAD_SIZE
+DPAD_SIZE = 64
+BAD_DATA = (ValueError, KeyError, IndexError, struct.error)      # what a file of another layout than expected raises
 HINT = 'blyt/PaMessageTipsDrcImageNN_00.bflyt'          # the hint boxes: a ring and a dot on the button of a hint
 HINT_PIECE = 'Nt_GamePadIllustSnn_02^f'                  # their picture of the face buttons
 SPOT = {pad: spot for spot, pad in art.FACE_LAYOUT.items()}     # pad face button -> the Switch button's spot that our diamond draws it at
@@ -244,41 +251,54 @@ def enlarged(box, scale):
     return tuple(v * scale for v in box)
 
 
+def key_rows(bntx, textures, name, size=SIZE):
+    """The pixels (rows of bytes) of the R8 texture `name`, which must be a plain single-mip size x size one. A texture that is
+    not there, or is in another format or size (another game version), raises ValueError."""
+    texture = textures.get(name)
+    if texture is None:
+        raise ValueError('not found')
+    if (texture.width, texture.height) != (size, size):
+        raise ValueError(f'{texture.width}x{texture.height} pixels, not {size}x{size}')
+    return bf.r8_read(bntx, texture)
+
+
 def plan(bntx, textures, controls, letters, style='xbox', scale=1):
     """texture name -> new pixel rows (`scale` times the size of the game's texture) for the prompts `controls`
     (prompt_layout.prompt_controls) asks for, and notes. Each is `render` of the button that is pressed, fitted on the white shape
     of the game's picture (analysed at the game's size): the disc of the face buttons and the d-pad, the box of the keys L and ZL
-    and of the stick press."""
+    and of the stick press. A texture that is not there, or whose format, size or mip count is not the game's (another game
+    version), or that holds no shape, gets a note and stays the game's."""
     text, brand = style_parts(style)
     drawers = drawers_of(style, letters)
     new, notes = {}, []
+
+    def draw(name, pad, size, find):
+        try:
+            old = key_rows(bntx, textures, name, size)
+            new[name] = render(drawers[pad], len(old) * scale, enlarged(find(old), scale))
+        except BAD_DATA as error:
+            notes.append(f'{name}: {error}; the Switch icon stays')
     for slot, name in FACE.items():
         pad = controls[slot]
         if pad in FACE:
-            old = bf.r8_read(bntx, textures[name])
-            new[name] = render(drawers[pad], len(old) * scale, enlarged(disc_box(old), scale))
+            draw(name, pad, SIZE, disc_box)
         else:
             notes.append(f'{slot.upper()}: {pad or "nothing"} has no face picture; the Switch icon stays')
-    if DPAD_TEXTURE in textures:
-        old = bf.r8_read(bntx, textures[DPAD_TEXTURE])
-        new[DPAD_TEXTURE] = render(drawers[0xE049], len(old) * scale, enlarged(disc_box(old), scale))
-    else:
-        notes.append(f'{DPAD_TEXTURE}: not found; the Switch d-pad icon stays')
+    draw(DPAD_TEXTURE, 0xE049, DPAD_SIZE, disc_box)
     for slot, names in SHAPE.items():
         pad = controls[slot]
         if text.get(pad) is None:
             notes.append(f'{slot.upper()}: {pad or "nothing"} has no {brand} letter here; the Switch icon stays')
             continue
         for name in names:
-            old = bf.r8_read(bntx, textures[name])
-            new[name] = render(drawers[pad], len(old) * scale, enlarged(bright_box(old), scale))
+            draw(name, pad, SIZE, bright_box)
     return new, notes
 
 
 def plan_pictures(bntx, textures, controls, letters, style='xbox', scale=1):
     """texture name -> (grey rows, alpha rows) of the controller pictures of the controller tips page, drawn again as an Xbox
     controller or a DualSense (botw_controller_art.py), `scale` times as large as the game's, and notes. A picture whose texture
-    is not the size of the drawing (another game version) stays as it was."""
+    is not the size or format of the drawing (another game version) stays as it was, with a note."""
     text, _ = style_parts(style)
     new, notes = {}, []
     for name, ((width, height), draw) in PICTURES.items():
@@ -286,7 +306,11 @@ def plan_pictures(bntx, textures, controls, letters, style='xbox', scale=1):
         if texture is None or (texture.width, texture.height) != (width, height):
             notes.append(f'{name}: not found as a {width}x{height} texture; the Switch picture stays')
             continue
-        bf.check_rg8(texture)
+        try:
+            bf.check_rg8(texture)
+        except ValueError as error:
+            notes.append(f'{error}; the Switch picture stays')
+            continue
         new[name] = draw(controls, letters, text, style=style, **({'scale': scale} if scale != 1 else {}))
     return new, notes
 
@@ -299,7 +323,11 @@ def ring_edits(layout, inner, controls):
     if HINT not in inner:
         return [], [f'{HINT}: not found; the hint box rings stay on the Switch buttons']
     lo, hi = inner[HINT]
-    panes, groups = bf.bflyt_panes(layout[lo:hi]), {}
+    try:
+        panes = bf.bflyt_panes(layout[lo:hi])
+    except BAD_DATA as error:
+        return [], [f'{HINT}: {error}; the hint box rings stay on the Switch buttons']
+    groups = {}
     for offset, name, parent in panes:
         if parent and parent.startswith('N_') and parent[2:-3].lower() in FACE:
             groups.setdefault(parent[2:-3].lower(), {})[name.split('_')[1]] = offset      # slot -> {'Color': ring, 'Point': dot}
@@ -317,6 +345,10 @@ def ring_edits(layout, inner, controls):
     return edits, notes
 
 
+class MissingData(ValueError):
+    """A file or archive member the tool cannot work without is not there."""
+
+
 def make_pack(pack, controls, letters, style='xbox', pictures=True, scale=1):
     """Pack/Bootup.pack with the prompts of `controls` (prompt_layout.prompt_controls) redrawn, and with `pictures` the controller
     pictures of the controller tips page too. Returns (the new pack, texture name -> new pixel rows, texture name -> (grey rows,
@@ -324,11 +356,16 @@ def make_pack(pack, controls, letters, style='xbox', pictures=True, scale=1):
     At scale 1 only the changed textures' bytes (and, with a remap and the redrawn face picture, the hint box ring positions:
     ring_edits) differ. At a larger scale the changed textures are new, `scale` times as large (botw_formats.bntx_resize), the layout
     archive grows by whole GROW_ALIGN steps, and every other member of it stays as it was. Every other member of the pack is the
-    original."""
+    original. A texture that is missing or not as expected stays the game's, with a note (see plan, plan_pictures); an archive
+    without Layout/Common.sblarc or its BNTX raises MissingData, a damaged one ValueError (and the like)."""
     members = bf.sarc_members(pack)
+    if LAYOUT not in members:
+        raise MissingData(f'{LAYOUT} not found in the archive')
     stream = pack[slice(*members[LAYOUT])]
     layout = bf.yaz0_decode(stream)
     inner = bf.sarc_members(layout)
+    if BNTX not in inner:
+        raise MissingData(f'{BNTX} not found in {LAYOUT}')
     start = inner[BNTX][0]
     bntx = layout[start:inner[BNTX][1]]
     textures = bf.bntx_textures(bntx)
@@ -403,12 +440,19 @@ def make_font(stream, controls, letters, style='xbox', scale=1):
     (the new file, glyph code point -> new cell, notes, growth of the decompressed archive in bytes). At scale 1 only the changed
     blocks of the glyph sheet differ. At a larger scale the whole sheet is `scale` times as wide and high (botw_formats.
     Bffnt.grow_sheet): the glyphs that stay are enlarged by repeating their pixels (nearest), the redrawn ones are drawn at the
-    larger size."""
+    larger size. A file with no External_00.bffnt, or whose glyph sheet is not as expected (format, more than one sheet, kind of
+    CMAP, grid), raises (MissingData, ValueError and the like): the caller leaves the game's font file alone."""
     archive = bf.yaz0_decode(stream)
     members = bf.sarc_members(archive)
+    if BFFNT not in members:
+        raise MissingData(f'no {BFFNT} in the archive')
     start, end = members[BFFNT]
     data = archive[start:end]
     font = bf.Bffnt(data)
+    step = font.cell + 1
+    if (font.texture.width % 4 or font.texture.height % 4 or step * font.columns > font.texture.width
+            or step * font.rows > font.texture.height or max(font.cells.values(), default=0) >= font.columns * font.rows):
+        raise ValueError(f'the glyph grid ({font.columns}x{font.rows} cells of {font.cell}) does not fit the {font.texture.width}x{font.texture.height} sheet')
     sheet = data[font.sheet_at:]
     rows = bf.bc4_read(sheet, font.texture)
     new, notes = font_cells(font, rows, controls, letters, style, scale)
@@ -481,18 +525,21 @@ def main():
     if not (app_fonts / FONT).is_file():
         parser.error(f'{app_fonts / FONT} not found (the app\'s copy of the Switch system fonts)')
     index = read_index(romfs / 'runtime-index.bin')
+    if PACK not in index:
+        parser.error(f'{PACK} not found in the RomFS ({romfs / "runtime-index.bin"}); nothing written')
     fonts = sorted(n for n in index if n.startswith('Font/Font_') and n.endswith('.sbfarc'))
-    rstb = None
-    if args.scale > 1:      # the resource size table is read first: a missing entry stops the run before anything is written
-        if bf.RSTB not in index:
-            parser.error(f'{bf.RSTB} not found in the RomFS (--scale above 1 raises its entries)')
-        with (romfs / 'romfs.bin').open('rb') as image:
-            offset, size = index[bf.RSTB]; image.seek(offset); rstb = image.read(size)
+    rstb, scale = None, args.scale
+    if scale > 1:      # the resource size table is read first: archives that grow need their entries raised, else nothing grows
         try:
+            if bf.RSTB not in index:
+                raise ValueError('not found in the RomFS')
+            with (romfs / 'romfs.bin').open('rb') as image:
+                offset, size = index[bf.RSTB]; image.seek(offset); rstb = image.read(size)
             bf.rstb_edits(bf.yaz0_decode(rstb), dict.fromkeys((resource_name(LAYOUT), *map(resource_name, fonts)), 0))
-        except ValueError as error:
-            parser.error(f'{bf.RSTB}: {error}')
-    exists = [n for n in (PACK, *fonts, *([bf.RSTB] if args.scale > 1 else [])) if (args.mod / n).exists()]
+        except BAD_DATA as error:
+            print(f'note: {bf.RSTB}: {error}; drawing at --scale 1 instead (nothing grows, so the table is not needed)')
+            rstb, scale = None, 1
+    exists = [n for n in (PACK, *fonts, *([bf.RSTB] if scale > 1 else [])) if (args.mod / n).exists()]
     if exists and not args.replace:      # checked before anything is written
         parser.error(f'{args.mod / exists[0]} already exists (another mod\'s, or an earlier run): pass --replace to overwrite it')
     font_notes = []
@@ -508,7 +555,17 @@ def main():
     letters = Letters(TTFont(io.BytesIO(bfttf_decode((app_fonts / FONT).read_bytes()))))
     with (romfs / 'romfs.bin').open('rb') as image:
         offset, size = index[PACK]; image.seek(offset); pack = image.read(size)
-    new_pack, new, drawn, notes, layout_sizes = make_pack(pack, controls, letters, args.style, not args.keep_switch_pictures, args.scale)
+    while True:
+        try:
+            new_pack, new, drawn, notes, layout_sizes = make_pack(pack, controls, letters, args.style, not args.keep_switch_pictures, scale)
+            break
+        except MissingData as error:
+            parser.error(f'{PACK}: {error}; nothing written')
+        except BAD_DATA as error:
+            if scale == 1:
+                parser.error(f'{PACK}: {error}; nothing written')
+            print(f'note: {PACK}: {error}; drawing at --scale 1 instead')
+            scale, rstb = 1, None
     for note in notes:
         print('note:', note)
     target = args.mod / PACK
@@ -538,7 +595,11 @@ def main():
         offset, size = index[name]
         with (romfs / 'romfs.bin').open('rb') as image:
             image.seek(offset); stream = image.read(size)
-        data, cells, font_notes, grown = make_font(stream, controls, letters, args.style, args.scale)
+        try:
+            data, cells, font_notes, grown = make_font(stream, controls, letters, args.style, scale)
+        except BAD_DATA as error:
+            print(f'note: {name}: {error}; skipped, the game keeps its own font file')
+            continue
         if grown:
             growth[resource_name(name)] = grown
         (args.mod / name).parent.mkdir(parents=True, exist_ok=True)

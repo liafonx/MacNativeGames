@@ -365,12 +365,13 @@ class MakePackPictures(unittest.TestCase):
             if name != SNN[1]:
                 self.assertTrue(drawn[name] != art.PICTURES[name][1](controls, StubLetters(), bp.XBOX_TEXT), name)
 
-    def test_a_picture_in_another_format_stops_the_tool(self):      # negative control
+    def test_a_picture_in_another_format_is_skipped_with_a_note(self):
         bad = [(n, bf.R8_UNORM, 48, 48, 3, rows, None) for n, rows in self.keys.items()] + [(FRONT, bf.R8_UNORM, 576, 288, 4, self.front_grey, None)]
         layout = sarc({'timg/__Combined.bntx': rg8_bntx(bad)})
         pack = sarc({'Layout/Common.sblarc': yaz0_encode(layout)})
-        with self.assertRaises(ValueError):
-            bp.make_pack(pack, pl.prompt_controls('', 'position'), StubLetters(), 'xbox', pictures=True)
+        _, _, drawn, notes, _ = bp.make_pack(pack, pl.prompt_controls('', 'position'), StubLetters(), 'xbox', pictures=True)
+        self.assertNotIn(FRONT, drawn)
+        self.assertTrue(any(n.startswith(FRONT + ':') and 'format' in n for n in notes), notes)
 
 
 def hint_bflyt():
