@@ -525,18 +525,15 @@ class StubFont:
 
 @unittest.skipIf(bf is None, 'needs Python 3.14')
 class StickGlyphs(unittest.TestCase):
-    def test_the_stick_body_is_found_and_the_press_is_drawn_on_it(self):
+    def test_the_stick_body_is_found_and_the_game_s_stick_is_traced_on_it(self):
         old = stick_glyph()
         self.assertEqual(bp.stick_body(old), (1, 5.5, 33, 37.5))              # the body's disc: 32 wide, on the rows that are wide enough
         if mbi is None:
             return
-        new, _ = bp.font_cells(StubFont({0xE056: old}), None, pl.prompt_controls('', 'position'), StubLetters())
-        self.assertEqual(new[0xE056], bp.render(bp.drawers_of('xbox', StubLetters())['l3'], 50, (1, 5.5, 33, 37.5)))
-        self.assertGreater(sum(v < 64 for row in new[0xE056][14:30] for v in row[8:26]), 30)     # the label is cut out in the middle of the stick's body
-        self.assertEqual((new[0xE056][21][4], new[0xE056][8][17]), (255, 255))   # the disc fills the body
-        self.assertEqual((new[0xE056][21][40], new[0xE056][45][17], new[0xE056][2][14]), (0, 0, 0))      # nothing outside it, the old letter's tail gone
-        xs = [x for row in new[0xE056] for x, v in enumerate(row) if v > 128]
-        self.assertEqual((min(xs), max(xs)), (1, 32))                         # as wide as the body
+        controls = {**pl.prompt_controls('', 'position'), 'rstick': 'l3'}     # both presses on the left stick
+        new, _ = bp.font_cells(StubFont({0xE056: old, 0xE057: [bytes(50)] * 50}), None, controls, StubLetters(), 'xbox', 2)
+        self.assertEqual(new[0xE056], bp.traced(old, (1, 5.5, 33, 37.5), 100, (2, 11, 66, 75)))     # the game's stick, not an LS disc
+        self.assertNotIn(0xE057, new)                                         # no stick in the right press glyph: it stays
 
     @unittest.skipIf(mbi is None, 'needs fontTools (the d-pad drawers come from make_button_icons.py)')
     def test_the_d_pad_cross_fills_the_box_of_the_dots_and_cuts_the_lit_arrows(self):
@@ -551,6 +548,16 @@ class StickGlyphs(unittest.TestCase):
         with self.assertRaises(ValueError):
             bp.disc_box([bytes(64)] * 64)                        # negative control: no shape to cover
 
+    @unittest.skipIf(mbi is None, 'needs fontTools')
+    def test_a_moving_stick_stays_the_game_s_and_is_traced_above_1x_in_every_style(self):
+        cells = {0xE050: stick_glyph(), 0xE0A0: stick_glyph()}
+        for style in ('xbox', 'playstation'):
+            new, _ = bp.font_cells(StubFont(cells), None, pl.prompt_controls('', 'position'), StubLetters(), style)
+            self.assertNotIn(0xE050, new, style)                                # at 1x the game's own
+            new, _ = bp.font_cells(StubFont(cells), None, pl.prompt_controls('', 'position'), StubLetters(), style, 2)
+            self.assertEqual(new[0xE050], bp.traced(cells[0xE050], (0, 0, 50, 50), 100, (0, 0, 100, 100)), style)
+            self.assertNotIn(0xE0A0, new, style)                                # not a button glyph
+
     def test_a_cell_without_a_stick_is_refused(self):     # negative control
         with self.assertRaises(ValueError):
             bp.stick_body([bytes(50)] * 50)
@@ -564,8 +571,8 @@ class StickGlyphs(unittest.TestCase):
             new, notes = bp.font_cells(StubFont(cells), None, pl.prompt_controls('', 'position'), StubLetters(), style)
             self.assertFalse([n for n in notes if 'STICK' in n], style)
             drawers = bp.drawers_of(style, StubLetters())
-            for code, pad in zip((0xE056, 0xE057), ('l3', 'r3')):
-                self.assertEqual(new[code], bp.render(drawers[pad], 50, bp.stick_body(cells[code])), (style, code))
+            for code in (0xE056, 0xE057):                                     # the game's own stick, traced, in both styles
+                self.assertEqual(new[code], bp.traced(cells[code], bp.stick_body(cells[code]), 50, bp.stick_body(cells[code])), (style, code))
 
     @unittest.skipIf(mbi is None, 'needs fontTools')
     def test_switch_glyphs_are_the_games_own_traced_and_at_2x_every_button_glyph_is(self):
@@ -622,6 +629,12 @@ def expected_texture(letters, style, pad, old, scale=1, shape='disc'):
     return bp.render(bp.drawers_of(style, letters)[pad], len(old) * scale, bp.enlarged(box, scale))
 
 
+def expected_stick(old, scale=1):
+    """What a stick press texture must be in every style: the game's own picture `old`, traced on its bright box."""
+    box = bp.bright_box(old)
+    return bp.traced(old, box, len(old) * scale, bp.enlarged(box, scale))
+
+
 @unittest.skipIf(bf is None or mbi is None, 'needs Python 3.14 and fontTools')
 class MakePack(unittest.TestCase):
     def setUp(self):
@@ -642,9 +655,11 @@ class MakePack(unittest.TestCase):
         got = self.pictures(new_pack)
         for name, pad in zip(NAMES[:4], 'bayx'):          # Switch A shows the Xbox B drawing (position mode), and so on
             self.assertEqual(got[name], expected_texture(letters, 'xbox', pad, self.pics[name]))
-        for name, pad in zip(NAMES[4:], ('l1', 'l2', 'l3', 'l3')):
+        for name, pad in zip(NAMES[4:6], ('l1', 'l2')):
             self.assertEqual(got[name], expected_texture(letters, 'xbox', pad, self.pics[name], shape='key'))
             self.assertNotEqual(got[name], self.pics[name])
+        for name in NAMES[6:]:                              # the stick press: the game's own stick, traced
+            self.assertEqual(got[name], expected_stick(self.pics[name]))
         self.assertEqual(sorted(changed), sorted(NAMES))
 
     def test_owner_layout_by_label(self):
@@ -786,8 +801,10 @@ class MakePackPlayStation(unittest.TestCase):
             self.assertNotEqual(got[name], self.pics[name])
             self.assertNotEqual(got[name], xbox[name])
             same_disc(self, got[name], self.pics[name])
-        for name, pad in zip(NAMES[4:], ('l1', 'l2', 'l3', 'l3')):
+        for name, pad in zip(NAMES[4:6], ('l1', 'l2')):
             self.assertEqual(got[name], expected_texture(StubLetters(), 'playstation', pad, self.pics[name], shape='key'))
+        for name in NAMES[6:]:
+            self.assertEqual(got[name], expected_stick(self.pics[name]))
         self.assertEqual(sorted(changed), sorted(NAMES))
         self.assertFalse([n for n in notes if 'stay the Switch' in n])     # PlayStation has its own controller pictures now
         self.assertTrue(all('not found' in n for n in notes))               # this made-up layout holds none of them
@@ -852,7 +869,7 @@ class MakePackSwitch(unittest.TestCase):
         switch, xbox = bp.drawers_of('switch', StubLetters()), bp.drawers_of('xbox', StubLetters())
         same = [pad for pad in ('a', 'b', 'x', 'y', 'l1', 'menu', 'view', 'l3', 0xE049)        # (ZL and LT: two stub letters each)
                 if bp.render(switch[pad], 48, (4, 4, 44, 44)) == bp.render(xbox[pad], 48, (4, 4, 44, 44))]
-        self.assertEqual(same, ['a', 'b', 'x', 'y', 0xE049])
+        self.assertEqual(same, ['a', 'b', 'x', 'y', 'l3', 0xE049])      # a stick press stands in as the Switch's in every style
         self.assertNotEqual(bp.render(switch['menu'], 48, (4, 4, 44, 44)), bp.render(switch['view'], 48, (4, 4, 44, 44)))   # + and -
         self.assertEqual(bp.style_parts('switch'), (bp.SWITCH_TEXT, 'Switch'))
 
@@ -938,8 +955,10 @@ class Scale(unittest.TestCase):
             self.assertEqual(bf.r8_read(blob, textures[name]), changed[name])
         for name, pad in zip(NAMES[:4], 'bayx'):
             self.assertEqual(changed[name], expected_texture(self.letters, 'xbox', pad, self.pics[name], 2))
-        for name, pad in zip(NAMES[4:], ('l1', 'l2', 'l3', 'l3')):
+        for name, pad in zip(NAMES[4:6], ('l1', 'l2')):
             self.assertEqual(changed[name], expected_texture(self.letters, 'xbox', pad, self.pics[name], 2, 'key'))
+        for name in NAMES[6:]:
+            self.assertEqual(changed[name], expected_stick(self.pics[name], 2))
         other = 'Nt_Other_00^d'
         self.assertEqual((textures[other].width, textures[other].height), (48, 48))
         self.assertEqual(bf.r8_read(blob, textures[other]), bf.r8_read(old_blob, old_textures[other]))     # an unchanged texture

@@ -380,14 +380,16 @@ eight 48x48 key textures in `Pack/Bootup.pack` > `Layout/Common.sblarc`, and six
 
 - A, B, X and Y become a disc with the letter you press, on the place of the game's disc.
 - L and ZL become the Xbox LB, LT, RB or RT key, in the box of the game's key.
-- The left stick press (two textures) gets LS or RS.
+- The left stick press (two textures) keeps the game's stick with its small L, traced sharp at `--scale 2` or more (with a
+  `controls.txt` remap, the stick you press).
 - The new letters come from the Switch system font that your app already holds, made bolder to match the game's letters.
 
 The icons inside text (the controller tips, the pick-up window, camera mode, and R, ZR, + and − in messages) are glyphs of the
 button font, `External_00.bffnt` in every `Font/Font_*.sbfarc` (a BC4 glyph sheet). Each button has one drawing (the drawings
 of `make_button_icons.py`), and the tool makes the texture and the glyph from it, so the two match. In the font, A,
-B, X and Y show the letter you press. L, R, ZL and ZR become LB, RB, LT and RT, and + and − become the Xbox Menu and View buttons. The two stick
-press glyphs become plain LS and RS icons: the game's drawing (a stick with an arrow and a small L or R) has no room for two letters.
+B, X and Y show the letter you press. L, R, ZL and ZR become LB, RB, LT and RT, and + and − become the Xbox Menu and View buttons. Every stick
+keeps the game's drawing (a stick with a small L or R), in both styles: the two stick press glyphs and the glyphs of a stick being
+moved (with arrows that show the way). At `--scale 2` or more they are traced sharp, as with `--style switch`.
 The d-pad glyphs and the d-pad of the shortcut icons on the screen (four dots on the Switch) become a d-pad cross.
 A 4x4 BC4 block can hold pixels of a changed glyph and of its neighbour. The tool encodes such a block again, so a grey
 neighbour pixel there can move to the nearest of the block's eight levels. At `--scale 1`, in the seven 1.9.0 fonts no neighbour pixel changes. At 2x or more the whole sheet is encoded again, so an unchanged glyph can also shift a grey pixel by a level.
@@ -411,7 +413,8 @@ buttons from the game, so the lines still end on a button of the same kind:
   so it changes the prompts in the text, not the diamond. The ring and dot of a hint box (panes `N_A_00` to `N_Y_00` of
   `PaMessageTipsDrcImageNN_00`) move to the diamond button you press for that Switch button (a button no face button drives keeps
   its ring, and the tool prints a note). Each shoulder button shows the button you press for the Switch
-  button of that place, the same chain as for the prompts; one that nothing drives stays blank.
+  button of that place, the same chain as for the prompts; one that nothing drives stays blank. A button driven by a stick
+  press stays blank too: the pictures carry no LS, RS, L3 or R3.
 - The Pro Controller picture (`amiiboProConNN_00`) is only in the amiibo scan hint, and the Wii U GamePad pictures
   (`Nt_GamePadIllustS_*`, `amiiboDRCNN_00`) are for the Wii U layouts. The tool leaves them as they are.
 - The DualSense keeps the same places. Its touchpad, a plain PS button and the mute button sit between the sticks. The d-pad
@@ -427,11 +430,12 @@ buttons from the game, so the lines still end on a button of the same kind:
 
 These prompts keep the Switch look:
 
-- The right stick press texture: the game has no texture of its own for it.
+- The sticks: the game's own stick with a small L or R, in both styles (see above). The right stick press texture is a
+  drawn Switch R button: the game has no texture of its own for it.
 - A prompt whose button has no Xbox picture or letter here, for example Switch A on a shoulder button. The tool prints a
   note for it.
 
-`--style playstation` shows PlayStation buttons instead: L1, L2 and L3 (R1, R2 and R3 in the font), and Options and Create for + and −.
+`--style playstation` shows PlayStation buttons instead: L1 and L2 (R1 and R2 in the font), and Options and Create for + and −.
 The tool draws the Cross, Circle, Square and Triangle on a disc of the same
 size and place as the game's. It was tested in play with the controller pictures (see above).
 
@@ -940,14 +944,14 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 
 - A、B、X、Y 换成一个带有你实际要按的字母的圆盘，放在游戏原来圆盘的位置。
 - L 和 ZL 换成 Xbox 的 LB、LT、RB 或 RT 按键，放在游戏原来按键的框里。
-- 左摇杆按下（两张贴图）换成 LS 或 RS。
+- 左摇杆按下（两张贴图）保留游戏的摇杆和上面的小 L，`--scale 2` 及以上时描摹得清晰（`controls.txt` 改了键位时显示你实际按的摇杆）。
 - 新字母取自你的 App 里已有的 Switch 系统字体，并加粗到与游戏的字母一致。
 
 文字里的图标（手柄提示、拾取窗口、相机模式，以及消息里的 R、ZR、+、−）是按键字体的字形，即每个 `Font/Font_*.sbfarc` 里的
 `External_00.bffnt`（一张 BC4 字形表）。每个按键只有一幅图（`make_button_icons.py` 的图），工具用它同时生成贴图和字形，所以两者一样。
 字体里 A、B、X、Y 显示你实际要按的字母。L、R、ZL、ZR 变成 LB、RB、LT、RT，
-+ 和 − 变成 Xbox 的 Menu 和 View 按键。两个摇杆按下的字形换成简单的 LS 和 RS 图标：游戏原来的图（摇杆、箭头和一个小 L 或 R）
-放不下两个字母。十字键的字形和屏幕上快捷图标的十字键（Switch 上是四个圆点）换成十字键。
++ 和 − 变成 Xbox 的 Menu 和 View 按键。两种风格里所有摇杆都保留游戏的图（摇杆和一个小 L 或 R）：
+两个摇杆按下的字形，以及推摇杆的字形（带表示方向的箭头）。`--scale 2` 及以上时它们像 `--style switch` 一样描摹得清晰。十字键的字形和屏幕上快捷图标的十字键（Switch 上是四个圆点）换成十字键。
 一个 4x4 的 BC4 块里可能同时有被改字形和相邻字形的像素。工具会重新编码这样的块，所以块里相邻字形的灰色像素可能变成块的八个灰度中最近的一个。
 在 `--scale 1` 时，1.9.0 的七个字体里没有相邻像素改变。2 倍或以上时整张字形表重新编码，所以未改的字形也可能有灰色像素变动一级。
 
@@ -964,7 +968,7 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 - 四个面键保持手柄本身的布局：上 Y、左 X、右 B、下 A（`--style playstation` 时是三角、方、圆、叉）。`controls.txt` 只改变按键
   执行的动作，所以它改变文字里的按键提示，不改变菱形。提示框（`PaMessageTipsDrcImageNN_00` 的 `N_A_00` 到 `N_Y_00`）里的圆环和圆点会移到你为
   这个 Switch 按键实际要按的菱形按键上（没有任何面键对应的按键，圆环留在原处，工具会打印一行说明）。每个肩键上写的是这个位置上的 Switch 按键你实际要按的按键（和按键提示是同一条
-  规则）；没有任何按键对应的肩键留空。
+  规则）；没有任何按键对应的肩键留空。由摇杆按下驱动的按键也留空：图上不写 LS、RS、L3 或 R3。
 - Pro 手柄图（`amiiboProConNN_00`）只出现在 amiibo 扫描提示里，Wii U GamePad 图（`Nt_GamePadIllustS_*`、`amiiboDRCNN_00`）属于
   Wii U 版的界面，工具都不改。
 - DualSense 也保持这些位置。触控板、一个不带标志的 PS 键和静音键在两个摇杆之间。十字键是四个箭头键，每个箭头键的中心就是 Switch
@@ -977,10 +981,10 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 
 下面这些提示仍是 Switch 样式：
 
-- 右摇杆按下的贴图：游戏没有它自己的贴图。
+- 摇杆：两种风格都是游戏自己的摇杆和小 L 或 R（见上文）。右摇杆按下的贴图是画出来的 Switch R 按键：游戏没有它自己的贴图。
 - 对应按键在这里没有 Xbox 图案或字母的提示，例如把 Switch A 放在肩键上。工具会为它打印一行说明。
 
-加 `--style playstation` 则显示 PlayStation 按键：L1、L2、L3（字体里还有 R1、R2、R3），+ 和 − 变成 Options 和 Create。
+加 `--style playstation` 则显示 PlayStation 按键：L1、L2（字体里还有 R1、R2），+ 和 − 变成 Options 和 Create。
 工具把叉、圆、方、三角画在与游戏原图同样大小和位置的圆盘上。它和手柄图片一起在游戏里测试过（见上文）。
 
 加 `--style switch` 则保留游戏自己的图标，在 `--scale 2` 及以上时画得清晰。工具从你的 RomFS 描摹每张贴图和每个字形：边缘落在游戏抗锯齿
