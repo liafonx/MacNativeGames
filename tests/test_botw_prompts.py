@@ -567,6 +567,22 @@ class StickGlyphs(unittest.TestCase):
             for code, pad in zip((0xE056, 0xE057), ('l3', 'r3')):
                 self.assertEqual(new[code], bp.render(drawers[pad], 50, bp.stick_body(cells[code])), (style, code))
 
+    @unittest.skipIf(mbi is None, 'needs fontTools')
+    def test_switch_glyphs_are_the_games_own_traced_and_at_2x_every_button_glyph_is(self):
+        cells = {code: disc_picture(25 + i % 3, 22, 13, 50) for i, code in enumerate((*bp.FONT_FACE.values(), *bp.FONT_MENU.values()))}
+        cells.update({code: key_picture() + [bytes(48)] * 2 for code in (0xE044, 0xE045, 0xE046, 0xE047)})
+        cells.update({0xE056: stick_glyph(), 0xE057: stick_glyph(), 0xE050: stick_glyph(), 0xE0A0: stick_glyph()})
+        controls = {**pl.prompt_controls('', 'label'), 'a': 'x', 'rstick': 'l3'}
+        new, notes = bp.font_cells(StubFont(cells), None, controls, StubLetters(), 'switch')
+        self.assertEqual(new[0xE040], bp.traced(cells[0xE042], bp.disc_box(cells[0xE042]), 50, bp.disc_box(cells[0xE040])))   # A <- X
+        self.assertEqual(new[0xE041], bp.traced(cells[0xE041], bp.disc_box(cells[0xE041]), 50, bp.disc_box(cells[0xE041])))
+        self.assertEqual(new[0xE057], bp.traced(cells[0xE056], bp.stick_body(cells[0xE056]), 50, bp.stick_body(cells[0xE057])))
+        self.assertEqual(new[0xE04B], bp.traced(cells[0xE04B], bp.disc_box(cells[0xE04B]), 50, bp.disc_box(cells[0xE04B])))
+        self.assertNotIn(0xE050, new)                                   # a stick being moved: at 1x the game's own
+        new, _ = bp.font_cells(StubFont(cells), None, controls, StubLetters(), 'switch', 2)
+        self.assertEqual(new[0xE050], bp.traced(cells[0xE050], (0, 0, 50, 50), 100, (0, 0, 100, 100)))
+        self.assertNotIn(0xE0A0, new)                                   # not a button glyph: enlarged as the sheet is
+
     @unittest.skipIf(mbi is None, 'needs fontTools (the Menu and View drawers come from make_button_icons.py)')
     def test_the_d_pad_glyphs_become_a_cross_in_the_place_of_the_four_dots(self):
         dots = [bytearray(50) for _ in range(50)]
@@ -800,6 +816,90 @@ class MakePackPlayStation(unittest.TestCase):
             bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters(), 'nintendo')
 
 
+@unittest.skipIf(bf is None or mbi is None, 'needs Python 3.14 and fontTools')
+class MakePackSwitch(unittest.TestCase):
+    """--style switch: the game's own pictures, traced (sharp at a larger scale), of the button pressed (controls.txt)."""
+    setUp, pictures = MakePack.setUp, MakePack.pictures
+
+    def expected(self, source, target, find, scale=1):
+        return bp.traced(self.pics[source], find(self.pics[source]), 48 * scale, bp.enlarged(find(self.pics[target]), scale))
+
+    def test_default_layout_by_label_traces_each_switch_button_from_itself(self):
+        new_pack, changed, drawn, _, _ = bp.make_pack(self.pack, pl.prompt_controls('', 'label'), StubLetters(), 'switch')
+        got = self.pictures(new_pack)
+        for name in NAMES[:4]:
+            self.assertEqual(got[name], self.expected(name, name, bp.disc_box))
+        for name in NAMES[4:]:
+            self.assertEqual(got[name], self.expected(name, name, bp.bright_box))
+        self.assertEqual(sorted(changed), sorted(NAMES))
+        self.assertEqual(drawn, {})                       # the controller pictures stay the Switch's
+
+    def test_a_remap_traces_the_picture_of_the_button_pressed(self):
+        owner = 'north = a\nsouth = x\nwest = y\neast = b\nl1 = zl\nl2 = l\n'
+        new_pack, *_ = bp.make_pack(self.pack, pl.prompt_controls(owner, 'label'), StubLetters(), 'switch')
+        got = self.pictures(new_pack)
+        for name, source in zip(NAMES[:4], (NAMES[2], NAMES[0], NAMES[1], NAMES[3])):       # A <- X, B <- A, X <- B, Y <- Y
+            self.assertEqual(got[name], self.expected(source, name, bp.disc_box), name)
+        self.assertEqual(got[NAMES[4]], self.expected(NAMES[5], NAMES[4], bp.bright_box))     # L <- ZL's key
+        self.assertEqual(got[NAMES[5]], self.expected(NAMES[4], NAMES[5], bp.bright_box))     # ZL <- L's key
+
+    def test_a_button_with_no_texture_is_drawn(self):
+        controls = {**pl.prompt_controls('', 'label'), 'l': 'r1'}          # R has no texture: the drawn R key stands in
+        new_pack, *_ = bp.make_pack(self.pack, controls, StubLetters(), 'switch')
+        self.assertEqual(self.pictures(new_pack)[NAMES[4]], expected_texture(StubLetters(), 'switch', 'r1', self.pics[NAMES[4]], shape='key'))
+
+    def test_the_drawn_stand_ins_carry_the_switch_names(self):
+        switch, xbox = bp.drawers_of('switch', StubLetters()), bp.drawers_of('xbox', StubLetters())
+        same = [pad for pad in ('a', 'b', 'x', 'y', 'l1', 'menu', 'view', 'l3', 0xE049)        # (ZL and LT: two stub letters each)
+                if bp.render(switch[pad], 48, (4, 4, 44, 44)) == bp.render(xbox[pad], 48, (4, 4, 44, 44))]
+        self.assertEqual(same, ['a', 'b', 'x', 'y', 0xE049])
+        self.assertNotEqual(bp.render(switch['menu'], 48, (4, 4, 44, 44)), bp.render(switch['view'], 48, (4, 4, 44, 44)))   # + and -
+        self.assertEqual(bp.style_parts('switch'), (bp.SWITCH_TEXT, 'Switch'))
+
+
+@unittest.skipIf(bf is None, 'needs Python 3.14')
+class Traced(unittest.TestCase):
+    """bp.traced: the game's picture drawn again larger, with sharp edges where its anti-aliasing puts them."""
+    def ring(self, size=48):
+        """A white disc with a grey ring (150) on it, anti-aliased (4x4 samples per pixel), on a dark (5) ground."""
+        rows = []
+        for y in range(size):
+            row = bytearray()
+            for x in range(size):
+                total = 0
+                for i in range(4):
+                    for j in range(4):
+                        d = ((x + (i + 0.5) / 4 - 24) ** 2 + (y + (j + 0.5) / 4 - 24) ** 2) ** 0.5
+                        total += 5 if d > 18 else 150 if 11 < d < 14 else 255
+                row.append(round(total / 16))
+            rows.append(bytes(row))
+        return rows
+
+    def test_the_flat_levels_of_a_picture(self):
+        self.assertEqual(bp.levels(self.ring()), [5, 150, 255])
+        self.assertEqual(bp.levels([bytes(10)] * 10), [0])
+
+    def test_twice_as_large_shrinks_back_to_the_picture_and_is_sharper_than_repeated_pixels(self):
+        old = self.ring()
+        new = bp.traced(old, (0, 0, 48, 48), 96, (0, 0, 96, 96))
+        small = downsampled(new, 2)
+        self.assertLess(max(abs(a - b) for r, q in zip(small, old) for a, b in zip(r, q)), 70)
+        self.assertLess(sum(abs(a - b) for r, q in zip(small, old) for a, b in zip(r, q)) / 48 ** 2, 4)
+        def blurred(rows):      # pixels between the levels: the soft edge
+            return sum(1 for r in rows for v in r if all(abs(v - level) > 20 for level in (5, 150, 255)))
+        nearest = [bytes(v for v in r for _ in range(2)) for r in old for _ in range(2)]
+        self.assertLess(blurred(new), blurred(nearest))
+        self.assertEqual(new[48][48], 255)                          # the middle stays white, the ring grey, the ground dark
+        self.assertEqual(new[48][48 + 25], 150)
+        self.assertEqual(new[2][2], 5)
+
+    def test_the_part_in_the_box_is_fitted_on_the_target(self):
+        old = self.ring()
+        new = bp.traced(old, (6, 6, 42, 42), 48, (12, 12, 36, 36))      # the disc made half as large, in the middle
+        xs = [x for r in new for x, v in enumerate(r) if v > 128]
+        self.assertEqual((min(xs), max(xs)), (12, 35))
+
+
 def downsampled(rows, k):
     """`rows` shrunk k times by the mean of each k x k block."""
     return [[sum(rows[y * k + j][x * k + i] for j in range(k) for i in range(k)) / (k * k) for x in range(len(rows[0]) // k)]
@@ -854,6 +954,17 @@ class Scale(unittest.TestCase):
         self.assertEqual(sizes[3], len(layout) - len(self.layout))
         self.assertGreater(sizes[3], 0)
         self.assertEqual(sizes[3] % bf.GROW_ALIGN, 0)
+
+    def test_switch_textures_are_traced_larger_too(self):
+        controls = pl.prompt_controls('', 'label')
+        new_pack, changed, drawn, _, sizes = bp.make_pack(self.pack, controls, self.letters, 'switch', True, 2)
+        _, _, blob, textures = self.textures(new_pack)
+        for name in NAMES[:4]:
+            box = bp.disc_box(self.pics[name])
+            self.assertEqual(changed[name], bp.traced(self.pics[name], box, 96, bp.enlarged(box, 2)))
+            self.assertEqual(bf.r8_read(blob, textures[name]), changed[name])
+        self.assertEqual(drawn, {})
+        self.assertGreater(sizes[3], 0)
 
     def test_scale_1_writes_in_place(self):
         new_pack, changed, _, _, sizes = bp.make_pack(self.pack, self.controls, self.letters, 'xbox', True, 1)

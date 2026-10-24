@@ -203,7 +203,8 @@ static BOOL make_dir(NSString *path) {
 /* Button icons (docs/mods.md, Button prompts): an app built with them (build_app.py: button-icons/kit.txt) draws the game's
    prompts for the controller in use. The style comes from key 6's type in controller-type.txt, or for auto from the
    controller connected now, else the last one the game saw (controller-detected.txt, runtime/gamepad.m); the face mode
-   and controls.txt as the game maps them; the size from the main display (gamepad_icon_scale: 2x for 3456x2234). Each style,
+   and controls.txt as the game maps them; the size from the main display (gamepad_icon_scale: 2x for 3456x2234). Switch
+   icons are drawn only at 2x or more (only the Breath of the Wild tool draws them); at 1x the game keeps its own. Each style,
    face mode, size and controls.txt gets its own folder of RomFS files under
    <controls folder>/button-icons/<version>/<key>, made once by the bundled tool from this app's RomFS (seconds) and
    then reused; runtime/romfs.c loads it like a mod (TOTK_ROMFS_BUTTON_ICONS). The game reads it at start only, so a
@@ -230,13 +231,14 @@ static NSString *button_icons(NSString *root, NSString *controls, NSString **fol
         }
         if (detected < 0) detected = gamepad_type_parse(word(@"controller-detected.txt").UTF8String);
     }
-    int by_position = 1, style = gamepad_icon_style(type, detected, &by_position);
-    if (style < 0) return @"none";
-    NSString *name = [NSString stringWithFormat:@"%s-%s", gamepad_type_name(style), by_position ? "position" : "label"];
     NSScreen *screen = NSScreen.mainScreen;     /* sharper icons for a bigger display: the game's size times this */
     CGFloat backing = screen ? screen.backingScaleFactor : 1;
     int scale = screen && [info[@"tool"] hasSuffix:@"botw_prompts.py"]
         ? gamepad_icon_scale(screen.frame.size.width * backing, screen.frame.size.height * backing) : 1;
+    setenv("TOTK_BUTTON_ICONS_SCALE", @(scale).stringValue.UTF8String, 1);   /* runtime/gamepad.m logs the next start's pick with it */
+    int by_position = 1, style = gamepad_icon_style(type, detected, scale, &by_position);
+    if (style < 0) return @"none";
+    NSString *name = [NSString stringWithFormat:@"%s-%s", gamepad_type_name(style), by_position ? "position" : "label"];
     NSData *layout = [NSData dataWithContentsOfFile:controls];
     NSMutableData *keyed = [[[NSString stringWithFormat:@"%@\n%@\n%d\n", info[@"id"], name, scale] dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
     if (layout) [keyed appendData:layout];

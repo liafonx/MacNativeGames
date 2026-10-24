@@ -85,15 +85,17 @@ static inline int gamepad_type_face_by_position(int type, const char *category, 
     return gamepad_face_by_position(category, vendor);
 }
 
-/* The button icons drawn in the game's prompts (app/launcher.m picks them at start, docs/mods.md): GAMEPAD_TYPE_XBOX or
-   GAMEPAD_TYPE_PLAYSTATION, or -1 for the game's own Switch icons. type: the picked type (key 6); detected: what auto takes
-   the connected controller for (gamepad_type_detect), or the last one seen, -1 none. *by_position: the face mode the
-   icons are drawn for, as gamepad_type_face_by_position maps the buttons. */
-static inline int gamepad_icon_style(int type, int detected, int *by_position) {
+/* The button icons drawn in the game's prompts (app/launcher.m picks them at start, docs/mods.md): GAMEPAD_TYPE_XBOX,
+   GAMEPAD_TYPE_PLAYSTATION, GAMEPAD_TYPE_SWITCH (the game's own icons drawn sharp: only at a scale of 2 or more), or -1 for
+   the game's own icons as they are. type: the picked type (key 6); detected: what auto takes the connected controller for
+   (gamepad_type_detect), or the last one seen, -1 none; scale: gamepad_icon_scale, or 1 when the tool draws at the game's
+   size only. *by_position: the face mode the icons are drawn for, as gamepad_type_face_by_position maps the buttons. */
+static inline int gamepad_icon_style(int type, int detected, int scale, int *by_position) {
     int style = type == GAMEPAD_TYPE_AUTO ? detected : type;
-    if (style != GAMEPAD_TYPE_XBOX && style != GAMEPAD_TYPE_PLAYSTATION) return -1;
+    if (style != GAMEPAD_TYPE_XBOX && style != GAMEPAD_TYPE_PLAYSTATION && (style != GAMEPAD_TYPE_SWITCH || scale < 2)) return -1;
     const char *e = getenv("TOTK_FACE_BUTTONS");
-    *by_position = type != GAMEPAD_TYPE_AUTO || !e || strcmp(e, "label");
+    if (style == GAMEPAD_TYPE_SWITCH) *by_position = type == GAMEPAD_TYPE_AUTO && e && !strcmp(e, "position");
+    else *by_position = type != GAMEPAD_TYPE_AUTO || !e || strcmp(e, "label");
     return style;
 }
 

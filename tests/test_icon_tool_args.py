@@ -36,7 +36,7 @@ class LauncherArguments(unittest.TestCase):
 
     def test_botw_tool_takes_the_launcher_arguments_of_every_version(self):
         for version in ('botw160', 'botw190'):
-            for style, face in (('xbox', 'position'), ('playstation', 'position'), ('xbox', 'label')):
+            for style, face in (('xbox', 'position'), ('playstation', 'position'), ('xbox', 'label'), ('switch', 'label')):
                 with self.subTest(version=version, style=style, face=face):
                     self.assert_accepted(self.run_tool(BOTW, *launcher_arguments(version, style, face, scale=2)))
 

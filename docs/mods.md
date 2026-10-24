@@ -311,7 +311,7 @@ A Breath of the Wild 1.6.0 or 1.9.0 app draws the prompts itself, with no tool t
 | --- | --- |
 | Xbox | Xbox, by position |
 | PlayStation | PlayStation, by position |
-| Switch | the game's own Switch icons |
+| Switch | the game's own Switch icons, traced sharp at 2x or more (at 1x the game's own, with no set made) |
 | auto | the controller connected at start; with none, the last one the game saw (`controller-detected.txt`). Xbox and other controllers: Xbox; DualSense and DualShock: PlayStation; Nintendo controllers and no controller yet: Switch. `TOTK_FACE_BUTTONS=label` draws them by label |
 
 The icons follow your `controls.txt` too: each prompt shows the button you press on that controller, by its own name for
@@ -404,7 +404,8 @@ buttons from the game, so the lines still end on a button of the same kind:
 
 - The left stick, the d-pad (a cross where the Switch has four round buttons), the right stick and the four face buttons are
   in the places of the Switch's. View and Menu are in the places of − and +. LT, LB, RT and RB are in the places of ZL, L,
-  ZR and R. This puts the guide button, grips and body in an Xbox shape; they are not the Switch's shape.
+  ZR and R. The body around them has the controller's own outline: two grips below the d-pad and the right stick and the
+  bumpers above the top corners, not the Switch's flat shape.
 - The four face buttons keep the controller's own layout: Y at the top, X on the left, B on the right and A at the bottom
   (Triangle, Square, Circle and Cross with `--style playstation`). A `controls.txt` changes only which action a button does,
   so it changes the prompts in the text, not the diamond. The ring and dot of a hint box (panes `N_A_00` to `N_Y_00` of
@@ -433,6 +434,13 @@ These prompts keep the Switch look:
 `--style playstation` shows PlayStation buttons instead: L1, L2 and L3 (R1, R2 and R3 in the font), and Options and Create for + and −.
 The tool draws the Cross, Circle, Square and Triangle on a disc of the same
 size and place as the game's. It was tested in play with the controller pictures (see above).
+
+`--style switch` keeps the game's own icons and draws them sharp at `--scale 2` or more. It traces each texture and glyph from
+your RomFS: an edge goes where the game's anti-aliasing puts it, and a grey ring stays grey. So the icons look the same as the
+game's, at the larger size. With a `controls.txt` remap a prompt shows the game's own picture of the button you press. Where a
+texture has no picture of that button (R, ZR, the right stick press, + and −), a drawn Switch key stands in. At 2x or more every
+button glyph of the font is traced, the moving stick glyphs too. The controller pictures stay the Switch's, and the hint box
+rings move to the button you press. Use `--face-buttons label` (key 6 on Switch, or a Nintendo controller).
 
 `--scale 2`, `3` or `4` draws the textures, the font glyphs and the controller pictures that many times the game's size, for
 sharp prompts on a big display. The default, `--scale 1`, keeps the game's size. At 2x or more the textures and the whole glyph
@@ -870,7 +878,7 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
 | --- | --- |
 | Xbox | Xbox，按位置 |
 | PlayStation | PlayStation，按位置 |
-| Switch | 游戏自己的 Switch 图标 |
+| Switch | 游戏自己的 Switch 图标，2x 及以上时描摹成清晰的大图（1x 时就用游戏原图，不生成图标包） |
 | 自动 | 启动时连接的手柄；没有时用游戏上次见到的手柄（`controller-detected.txt`）。Xbox 和其他手柄：Xbox；DualSense 和 DualShock：PlayStation；任天堂手柄和还没连过手柄时：Switch。`TOTK_FACE_BUTTONS=label` 时按标签绘制 |
 
 图标也跟随你的 `controls.txt`：每个提示显示在这个手柄上实际要按的按键，用这个手柄自己对每个位置的叫法（按位置映射时，`south` 是 Xbox
@@ -974,6 +982,11 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 
 加 `--style playstation` 则显示 PlayStation 按键：L1、L2、L3（字体里还有 R1、R2、R3），+ 和 − 变成 Options 和 Create。
 工具把叉、圆、方、三角画在与游戏原图同样大小和位置的圆盘上。它和手柄图片一起在游戏里测试过（见上文）。
+
+加 `--style switch` 则保留游戏自己的图标，在 `--scale 2` 及以上时画得清晰。工具从你的 RomFS 描摹每张贴图和每个字形：边缘落在游戏抗锯齿
+所在的位置，灰色圆环仍是灰色，所以图标和游戏原图一样，只是更大。`controls.txt` 改了键位时，提示显示你实际要按的那个按键在游戏里的原图。
+某张贴图没有那个按键的原图时（R、ZR、右摇杆按下、+ 和 −），用画出来的 Switch 按键代替。2x 及以上时字体里的所有按键字形都会描摹，
+包括推摇杆的字形。手柄图片保持 Switch 原样，提示框的圆圈移到你实际要按的按键上。请用 `--face-buttons label`（6 键选 Switch，或任天堂手柄）。
 
 `--scale 2`、`3` 或 `4` 把贴图、字形和手柄图片画成游戏原尺寸的这么多倍，在大显示器上提示更清晰。默认的 `--scale 1`
 保持游戏原尺寸。2x 及以上时贴图和每个字体的整张字形表都会变大。工具把不改的字形按重复像素放大。游戏按资源大小表给每个文件预留内存，

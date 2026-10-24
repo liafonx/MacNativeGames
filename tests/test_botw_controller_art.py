@@ -151,6 +151,10 @@ class Drawing(unittest.TestCase):
                              (art.DARK, 255), name)
         self.assertEqual((grey[120][288], alpha[120][288]), (art.BODY, 255))       # the body between the grips
         self.assertEqual(alpha[250][288], 0)                                          # the notch under it is empty
+        for x in (60, 516):                                                           # the grips hang below the d-pad and the stick
+            self.assertEqual(alpha[265][x], 255, x)
+        for x in (70, 506):                                                           # the bumpers stand above the top corners
+            self.assertEqual((grey[28][x], alpha[20][x]), (art.DARK, 0), x)
         top = self.draw(TOP)[1]
         for x0, y0, x1, y1 in art.TOP_SHOULDERS.values():
             self.assertEqual(top[(y0 + y1) // 2][(x0 + x1) // 2], 255)
@@ -187,12 +191,14 @@ class Drawing(unittest.TestCase):
         self.draw(SNN[2], controls, wing_right); self.draw(SNN[3], controls, wing_left)
         self.assertEqual(sorted(label for label, *_ in left.calls), ['LB', 'LT'])
         self.assertEqual(sorted(label for label, *_ in right.calls), ['RB', 'RT'])
-        for slot, (cx, cy) in art.PIECE_RIGHT['face'].items():
+        for slot, (cx, cy) in art.FRONT_FACE.items():          # the wing pieces are the front view enlarged: its letters
             self.assertEqual(wing_right.at(cx, cy), [{'x': 'Y', 'y': 'X', 'a': 'B', 'b': 'A'}[slot]])
-        self.assertEqual(wing_left.calls, [])                 # left stick, d-pad and View carry no letter
+        grey, alpha = self.draw(SNN[2])
+        for cx, cy in art.PIECE_RIGHT['face'].values():          # each face button sits where the Switch piece has one
+            self.assertEqual((grey[int(cy)][int(cx) + 8], alpha[int(cy)][int(cx)]), (art.DARK, 255), (cx, cy))
         grey, alpha = self.draw(SNN[3])
-        cx, cy = art.PIECE_LEFT['stick']
-        self.assertEqual((grey[int(cy)][int(cx) + 18], alpha[int(cy)][int(cx)]), (art.DARK, 255))
+        for cx, cy in (art.PIECE_LEFT['stick'], art.PIECE_LEFT['dpad']):
+            self.assertEqual((grey[int(cy)][int(cx) + 18], alpha[int(cy)][int(cx)]), (art.DARK, 255), (cx, cy))
 
     def test_the_playstation_pictures_keep_every_button_in_its_switch_place(self):
         controls = pl.prompt_controls('', 'position')
@@ -210,6 +216,7 @@ class Drawing(unittest.TestCase):
             self.assertEqual(alpha[int(cy)][int(cx)], 255, (cx, cy))
             self.assertLess(min(grey[int(cy) + dy][int(cx) + dx] for dx in range(-3, 4) for dy in range(-3, 4)), art.RIM, (cx, cy))
         self.assertGreater(grey[74][288], art.BODY)          # the touchpad, not the Xbox guide button, is at the top middle
+        self.assertTrue(art.DARK < grey[185][288] < art.RIM)   # the dark middle under it
         for slot, (cx, cy) in art.FRONT_FACE.items():       # the face buttons carry light symbols on dark discs
             ring = [grey[int(cy) + dy][int(cx) + dx] for dx in range(-6, 7) for dy in range(-6, 7)]
             self.assertTrue(max(ring) >= art.LIGHT - 5 and min(ring) <= art.DARK + 5, slot)
@@ -237,20 +244,20 @@ class Drawing(unittest.TestCase):
 
 
 # sha256 (first 16 hex digits) of the grey rows and alpha rows of each picture at scale 1, drawn with StubLetters and the default
-# controls, taken from the code before it had a scale: scale=1 must stay byte-identical.
+# controls: a change to the drawing must update them on purpose.
 SCALE_1_HASHES = {
-    ('xbox', 'Nt_NNillust_00^f'): 'dda5f7f129ddc0d6',
-    ('xbox', 'Nt_NNillust_01^f'): 'e7f764d547b31f17',
-    ('xbox', 'Nt_GamePadIllustSnn_00^f'): '14b9e240fc8f903e',
-    ('xbox', 'Nt_GamePadIllustSnn_01^f'): '082b6bbc0510667e',
-    ('xbox', 'Nt_GamePadIllustSnn_02^f'): 'b9ab3c4a97809797',
-    ('xbox', 'Nt_GamePadIllustSnn_03^f'): '2cc7f201420ff582',
-    ('playstation', 'Nt_NNillust_00^f'): '30414c3914991879',
-    ('playstation', 'Nt_NNillust_01^f'): '2fa169214268ddeb',
-    ('playstation', 'Nt_GamePadIllustSnn_00^f'): '14b9e240fc8f903e',
-    ('playstation', 'Nt_GamePadIllustSnn_01^f'): '082b6bbc0510667e',
-    ('playstation', 'Nt_GamePadIllustSnn_02^f'): '12c52ee3b323640e',
-    ('playstation', 'Nt_GamePadIllustSnn_03^f'): '6ae73cf3c42201bc',
+    ('xbox', 'Nt_NNillust_00^f'): 'c86811608468c665',
+    ('xbox', 'Nt_NNillust_01^f'): '7f0ca1b0cf688ae2',
+    ('xbox', 'Nt_GamePadIllustSnn_00^f'): 'd291bc0ae31da302',
+    ('xbox', 'Nt_GamePadIllustSnn_01^f'): 'c3e800eac0fc4b61',
+    ('xbox', 'Nt_GamePadIllustSnn_02^f'): '8de232e9534c72f8',
+    ('xbox', 'Nt_GamePadIllustSnn_03^f'): '087397cbc02fa1fd',
+    ('playstation', 'Nt_NNillust_00^f'): '4c419e9447e78851',
+    ('playstation', 'Nt_NNillust_01^f'): '01abba41d0b223c9',
+    ('playstation', 'Nt_GamePadIllustSnn_00^f'): 'd291bc0ae31da302',
+    ('playstation', 'Nt_GamePadIllustSnn_01^f'): 'c3e800eac0fc4b61',
+    ('playstation', 'Nt_GamePadIllustSnn_02^f'): '60e52870568dded9',
+    ('playstation', 'Nt_GamePadIllustSnn_03^f'): '223694420f027b53',
 }
 
 
@@ -263,7 +270,7 @@ class Scale(unittest.TestCase):
         controls = pl.prompt_controls('', 'position')
         return art.PICTURES[name][1](controls, StubLetters(), getattr(bp, self.TEXT[style]), style=style, **scale)
 
-    def test_scale_1_is_byte_identical_to_the_code_before_it_had_a_scale(self):
+    def test_scale_1_is_byte_identical_to_the_recorded_pictures(self):
         for (style, name), expected in SCALE_1_HASHES.items():
             for scale in ({}, {'scale': 1}):
                 grey, alpha = self.draw(name, style, **scale)
@@ -461,6 +468,17 @@ class HintRings(unittest.TestCase):
         self.setUp(bflyt=False)
         _, _, _, notes, _ = bp.make_pack(self.pack, pl.prompt_controls(self.OWNER, 'label'), StubLetters())
         self.assertTrue(any(bp.HINT in n and 'not found' in n for n in notes))
+
+    def test_the_switch_style_keeps_the_switch_pictures_and_moves_the_rings_on_them(self):
+        new_pack, _, drawn, _, _ = bp.make_pack(self.pack, pl.prompt_controls(self.OWNER, 'label'), StubLetters(), 'switch', pictures=True)
+        self.assertEqual(drawn, {})
+        got = self.rings(new_pack)
+        # Switch A <- X (the X button of the game's diamond), B <- A, X <- B, Y <- Y
+        want = {'a': self.SPOTS['x'], 'b': self.SPOTS['a'], 'x': self.SPOTS['b'], 'y': self.SPOTS['y']}
+        for slot in 'abxy':
+            self.assertEqual(got[slot], {'Color': want[slot], 'Point': want[slot]}, slot)
+        new_pack, *_ = bp.make_pack(self.pack, pl.prompt_controls('', 'label'), StubLetters(), 'switch')
+        self.assertEqual({k: v['Color'] for k, v in self.rings(new_pack).items()}, self.SPOTS)     # the default layout moves none
 
     def test_the_switch_pictures_keep_the_switch_rings(self):
         new_pack, *_ = bp.make_pack(self.pack, pl.prompt_controls(self.OWNER, 'label'), StubLetters(), 'xbox', pictures=False)
