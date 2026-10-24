@@ -1,6 +1,7 @@
 /* Breath of the Wild game-code patches (botw.md): exclusive loads with acquire, the real-time frame step, and the
    TOTK_JQ_CHECK diagnostics. Key 4 (ultrawide) is 1.9.0 only (end of the file); the output size answers "not available"
    until BotW's own sites are found. */
+#include <sys/sysctl.h>
 #include <stdatomic.h>
 #include "world_survey.h"
 #include <stdio.h>
@@ -1067,7 +1068,8 @@ static void patch_hd_heaps(Module *m) {   /* TOTK_BOTW_HD_HEAPS=1: the comment a
         }
     }
     const char *b = getenv("TOTK_GPU_BUDGET_MB"); unsigned long long mb = b ? strtoull(b, NULL, 10) : 0;   /* 0 = off */
-    if (!b || (mb && mb < HD_GPU_BUDGET_MB)) { char v[16]; snprintf(v, sizeof v, "%d", HD_GPU_BUDGET_MB); setenv("TOTK_GPU_BUDGET_MB", v, 1);
+    if (!b) { uint64_t phys = 0; size_t n = sizeof phys; if (!sysctlbyname("hw.memsize", &phys, &n, NULL, 0)) mb = phys / 5 * 2 >> 20; }   /* nvn_mtl.m's default: 40% */
+    if (mb && mb < HD_GPU_BUDGET_MB) { char v[16]; snprintf(v, sizeof v, "%d", HD_GPU_BUDGET_MB); setenv("TOTK_GPU_BUDGET_MB", v, 1);
         fprintf(stderr, "[botw] HD heaps: GPU memory budget %s -> %d MB\n", b ? b : "default", HD_GPU_BUDGET_MB); }
     for (size_t i = 0; i < sizeof site / sizeof *site; i++) put_word(m, site[i].off, site[i].word, "HD heaps");
     for (size_t i = 0; i < sizeof big / sizeof *big; i++) put_word(m, big[i].off, big[i].word, "HD heaps");

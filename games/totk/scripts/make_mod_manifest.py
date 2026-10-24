@@ -42,7 +42,7 @@ import struct
 import sys
 
 VERSIONS = ('v0', 'v112', 'v121', 'v143')
-APP_VERSIONS = VERSIONS + ('botw160',)   # the folders an app's RomFS can sit in (VERSIONS: Tears of the Kingdom only)
+APP_VERSIONS = VERSIONS + ('botw160', 'botw190')   # the folders an app's RomFS can sit in (VERSIONS: Tears of the Kingdom only)
 CHUNK = 8 << 20
 # Windows/macOS droppings that mod managers (TKMM, Ryujinx output folders) leave in a RomFS tree: never a game file.
 JUNK = {'desktop.ini', 'thumbs.db', '.ds_store'}
@@ -160,13 +160,14 @@ def heapdef_carried(mod_file, app_file):
     return not extra or (len(extra) == len(TWO_K) and len(set(extra.values())) == 1 and next(iter(extra.values())) > 0)
 
 
-def manifest(mod, romfs, excludes=(), app_replaced=None, merged=None, addons=False):
+def manifest(mod, romfs, excludes=(), app_replaced=None, merged=None, addons=False, prefix=''):
     """The manifest lines for every file in the mod folder; files equal to their original are left out, anything matching
     an --exclude pattern is left out, and so is a path the app replaces itself (app_replaced: path -> the app's file).
     `merged` maps a path merged with the build's own patch to the SHA-256 of the build's file, which its line names as the
     original, so the game lets it replace the build's overlay. Returns a Manifest record: misspelt pairs a mod path with
     the RomFS path that differs only in case; taken maps a left-out path to the app's own replacement of it. `addons` leaves
-    out the top-level aoc<N> folders (Breath of the Wild: they have manifests of their own)."""
+    out the top-level aoc<N> folders (Breath of the Wild: they have manifests of their own); `prefix` is put before each name
+    for --exclude, so a pattern matches an add-on file by its path in the mod folder (aoc1/Pack/...)."""
     index = read_index(romfs/'runtime-index.bin')
     folded = {name.lower(): name for name in index}
     app_replaced = app_replaced or {}
@@ -181,7 +182,7 @@ def manifest(mod, romfs, excludes=(), app_replaced=None, merged=None, addons=Fal
                 continue
             if addons and AOC.fullmatch(name.split('/')[0]) and '/' in name:
                 continue
-            if any(fnmatch.fnmatchcase(name, pattern) for pattern in excludes):
+            if any(fnmatch.fnmatchcase(prefix + name, pattern) for pattern in excludes):
                 excluded.append(name)
                 continue
             if name in merged:                       # merged with the build's patch: it takes the overlay's place
@@ -314,15 +315,14 @@ def merge_build_patch(mod, name, romfs, index, folder, build_sha):
 def addon_manifests(mod, romfs, excludes=()):
     """aoc<N> folder name -> its Manifest, checked against the add-on content volume <romfs>/../aoc/<N>. Exits on a missing
     volume, and on a file the volume lacks (add-on content is replaced, never added) or spells in another case. An --exclude
-    pattern whose first part matches the folder (aoc1/Pack/*, aoc*/Pack/*) applies to that folder's files."""
+    pattern matches an add-on file by its path in the mod folder (aoc1/Pack/*.pack, *.pack)."""
     found = {}
     for folder in sorted(p for p in mod.iterdir() if p.is_dir() and AOC.fullmatch(p.name)):
         volume = romfs.parent/'aoc'/folder.name[3:]
         for need in ('romfs.bin', 'runtime-index.bin'):
             if not (volume/need).is_file():
                 sys.exit(f'{folder.name}: the add-on content volume {volume/need} not found')
-        mine = [p.split('/', 1)[1] for p in excludes if '/' in p and fnmatch.fnmatchcase(folder.name, p.split('/', 1)[0])]
-        found[folder.name] = manifest(folder, volume, mine)
+        found[folder.name] = manifest(folder, volume, excludes, prefix=folder.name + '/')
         problems = [f'{folder.name}/{name}: not a file of add-on content volume {folder.name[3:]} (add-on content can only be '
                     f'replaced, not added)' for name in found[folder.name].added]
         problems += [f'{folder.name}/{name}: not a file of add-on content volume {folder.name[3:]} (it has {real}; paths are '

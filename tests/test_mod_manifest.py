@@ -283,6 +283,18 @@ class AddOnContent(unittest.TestCase):
         self.assertEqual([l.split('\t')[0] for l in self.lines(self.mod/'aoc1/manifest.tsv')], ['Pack/Dungeon120.pack'])
         result = run(self.mod, '--romfs', self.romfs, '--exclude', 'aoc*/Pack/*999.pack')
         self.assertEqual(result.returncode, 0, result.stderr)
+        result = run(self.mod, '--romfs', self.romfs, '--exclude', '*999.pack')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_botw190_mod_gets_its_aoc_manifest(self):
+        romfs = fake_romfs(self.root/'extracted/botw190/romfs')
+        fake_romfs(self.root/'extracted/botw190/aoc/1', self.DLC)
+        self.mod = self.root/'mods/botw190'
+        self.put('aoc1/Pack/Dungeon120.pack', b'new dungeon')
+        result = run(self.mod, '--romfs', romfs)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([l.split('\t')[0] for l in self.lines(self.mod/'aoc1/manifest.tsv')], ['Pack/Dungeon120.pack'])
+        self.assertFalse((self.mod/'manifest.tsv').exists())
 
     def test_aoc_folder_of_a_totk_mod_is_as_before(self):
         self.mod = self.root/'mods/v143'
