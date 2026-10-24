@@ -97,6 +97,14 @@ static inline int gamepad_icon_style(int type, int detected, int *by_position) {
     return style;
 }
 
+/* How many times the game's size the launcher draws the button icons for a display of width x height pixels: the height of
+   the 16:9 picture on it over 1080, rounded up, 1 to 4 (1080p 1, 3456x2234 2, 5K 3). */
+static inline int gamepad_icon_scale(double width, double height) {
+    double picture = height < width * 9 / 16 ? height : width * 9 / 16;
+    int scale = (int)((picture + 1079) / 1080);
+    return scale < 1 ? 1 : scale > 4 ? 4 : scale;
+}
+
 /* The physical positions of GameController's buttonA, buttonB, buttonX, buttonY (bits 0 south, 1 east, 2 west, 3 north:
    runtime/controller_map.h). By position they sit as on an Xbox controller (A bottom, B right, X left, Y top); by label
    they name a Nintendo layout (A right, B bottom, X top, Y left). controller_map.h's default layout turns positions into
