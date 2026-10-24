@@ -33,6 +33,7 @@ usage: botw_prompts.py <mod folder> (--app <Breath of the Wild.app> | --romfs <f
 """
 import argparse
 import io
+import math
 import struct
 import sys
 import zlib
@@ -112,6 +113,27 @@ def style_parts(style):
     return STYLES[style]
 
 
+LETTER_STROKE = 0.06    # how far the letters of the buttons grow outward on each side, in capital heights of the font
+
+
+def grown_contour(points, d, miter=2.0):
+    """The polygon `points` (counter-clockwise: its inside on the left) moved outward by `d` on each side; a hole (clockwise)
+    shrinks, so the ink of a letter is always what grows. Corners are mitred up to `miter` times `d`, then cut off flat."""
+    clean = [p for i, p in enumerate(points) if p != points[i - 1]]
+    n, out = len(clean), []
+    for i, (x, y) in enumerate(clean):
+        (ax, ay), (bx, by) = clean[i - 1], clean[(i + 1) % n]
+        l1, l2 = math.hypot(x - ax, y - ay), math.hypot(bx - x, by - y)
+        n1, n2 = ((y - ay) / l1, -(x - ax) / l1), ((by - y) / l2, -(bx - x) / l2)
+        dot = n1[0] * n2[0] + n1[1] * n2[1]
+        if 1 + dot > 1 / (miter * miter) * 2:
+            k = d / (1 + dot)
+            out.append((x + (n1[0] + n2[0]) * k, y + (n1[1] + n2[1]) * k))
+        else:
+            out += [(x + n1[0] * d, y + n1[1] * d), (x + n2[0] * d, y + n2[1] * d)]
+    return out
+
+
 def drawers_of(style, letters):
     """pad control (and d-pad glyph code point, see DPAD_GLYPHS) -> (advance, draw) of the style's buttons: the drawings of
     make_button_icons.py, with their letters from `letters.font` (the Switch system font)."""
@@ -122,12 +144,26 @@ def drawers_of(style, letters):
 
     class Glyphs(mbi.Glyphs):
         """make_button_icons.py cuts a letter out of a shape by drawing it the other way round, and takes the CFF fonts' outlines
-        (outer contours counter-clockwise). The Switch system font is TrueType (outer contours clockwise): its outlines are turned."""
+        (outer contours counter-clockwise). The Switch system font is TrueType (outer contours clockwise): its outlines are turned.
+        The game's own button letters are bolder than the font's regular weight (as high, but with thicker strokes): each outline
+        is grown outward by LETTER_STROKE of the capital height, a length of the drawing, so the picture is the same at every scale."""
         def outline(self, ch):
             rec, bounds, upm, advance = super().outline(ch)
             if 'glyf' in self.fonts[0]:
                 turned = RecordingPen(); rec.replay(ReverseContourPen(turned)); rec = turned
-            return rec, bounds, upm, advance
+            font = self.fonts[0]
+            cap = font['OS/2'].sCapHeight or 0.7 * upm
+            grown = RecordingPen()
+            ink = [1e9, 1e9, -1e9, -1e9]
+            for contour in bf.flatten(rec.value):
+                points = grown_contour(contour, LETTER_STROKE * cap)
+                grown.moveTo(points[0])
+                for point in points[1:]:
+                    grown.lineTo(point)
+                grown.closePath()
+                ink = [min(ink[0], *(p[0] for p in points)), min(ink[1], *(p[1] for p in points)),
+                       max(ink[2], *(p[0] for p in points)), max(ink[3], *(p[1] for p in points))]
+            return grown, tuple(ink) if grown.value else bounds, upm, advance + 2 * LETTER_STROKE * cap   # the growth keeps the gaps
     drawers, dpads = (mbi.xbox_drawers if style == 'xbox' else mbi.playstation_drawers)(Glyphs([letters.font]))
     return {**drawers, **dpads}
 

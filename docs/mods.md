@@ -340,7 +340,7 @@ eight 48x48 key textures in `Pack/Bootup.pack` > `Layout/Common.sblarc`, and six
 - A, B, X and Y become a disc with the letter you press, on the place of the game's disc.
 - L and ZL become the Xbox LB, LT, RB or RT key, in the box of the game's key.
 - The left stick press (two textures) gets LS or RS.
-- The new letters come from the Switch system font that your app already holds (regular weight).
+- The new letters come from the Switch system font that your app already holds, made bolder to match the game's letters.
 
 The icons inside text (the controller tips, the pick-up window, camera mode, and R, ZR, + and − in messages) are glyphs of the
 button font, `External_00.bffnt` in every `Font/Font_*.sbfarc` (a BC4 glyph sheet). Each button has one drawing (the drawings
@@ -802,7 +802,7 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 - A、B、X、Y 换成一个带有你实际要按的字母的圆盘，放在游戏原来圆盘的位置。
 - L 和 ZL 换成 Xbox 的 LB、LT、RB 或 RT 按键，放在游戏原来按键的框里。
 - 左摇杆按下（两张贴图）换成 LS 或 RS。
-- 新字母取自你的 App 里已有的 Switch 系统字体（常规字重）。
+- 新字母取自你的 App 里已有的 Switch 系统字体，并加粗到与游戏的字母一致。
 
 文字里的图标（手柄提示、拾取窗口、相机模式，以及消息里的 R、ZR、+、−）是按键字体的字形，即每个 `Font/Font_*.sbfarc` 里的
 `External_00.bffnt`（一张 BC4 字形表）。每个按键只有一幅图（`make_button_icons.py` 的图），工具用它同时生成贴图和字形，所以两者一样。
