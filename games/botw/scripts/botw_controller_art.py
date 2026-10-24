@@ -2,23 +2,18 @@
 
 The game shows the Switch in handheld mode on its controller tips page (layout PaAllControllerTipsNN_00) as two pictures, a front view
 (Nt_NNillust_00, 576x288) and the top edge (Nt_NNillust_01, 576x100), and labelled lines (callouts) end on its buttons. This
-module draws an Xbox controller (style 'xbox') or a DualSense (style 'playstation') in the same two pictures. Nothing of the game is copied: the pictures are made of curves, discs,
-rounded rectangles and the letters of the Switch system font (the `Letters` of botw_prompts.py), and the only game facts used are the
+module draws an Xbox controller (style 'xbox') or a DualSense (style 'playstation') in the same two pictures. Nothing of the game is copied: the pictures are made of discs, rounded
+rectangles and the letters of the Switch system font (the `Letters` of botw_prompts.py), and the only game facts used are the
 places of the buttons, so the game's callout lines still end on a button of the same kind:
   front view   the left stick, the d-pad cross, the right stick, the four face buttons, and View and Menu in the places of the
                Switch's - and +; the face buttons keep the Xbox layout (Y top, X left, B right, A bottom) whatever the controls.txt;
   top edge     the LT, LB, RT and RB shoulder buttons in the places of the Switch's ZL, L, ZR and R.
-Each body has its controller's own outline round those places: two grips that hang below the d-pad and the right stick and
-the bumpers standing above the top corners (the Xbox controller's grips short and round, the DualSense's longer, with a flat top,
-the touchpad and a dark middle). The pictures keep the Switch's places because the tips page draws its lines and its rings round
-the d-pad and the face buttons as panes of the layout, at fixed spots.
 The DualSense keeps those places too: its touchpad, PS button and mute button sit between the sticks, the d-pad is four arrow
 buttons whose middles are the Switch's four d-pad buttons, the face buttons carry the Cross, Circle, Square and Triangle
 symbols, Options and Create are small upright buttons in the places of + and -, and the shoulders read L2 L1 R2 R1.
 The in-game hint boxes (PaMessageTipsDrcImageNN_00) show four 228x228 pieces of the Switch and ring the button of a hint: a left
 and a right shoulder view (Nt_GamePadIllustSnn_00, _01) and the right and left front of the handheld (_02: face buttons, right
-stick; _03: left stick, d-pad). The two front pieces are the front view enlarged 1.2 times (as the Switch's are), the shoulder
-views the corner of the controller seen from above.
+stick; _03: left stick, d-pad). Those are drawn again as the pieces of the same controller with the buttons in the same places.
 The grey of each pixel and its alpha are the two channels of the game's R8G8 textures.
 Every draw function takes `scale` (an integer 1 to 4): the same picture drawn `scale` times as large and as sharp, (width * scale)
 x (height * scale) pixels. All the numbers in this module are pixels of the game's size (scale 1); the Canvas multiplies them.
@@ -128,32 +123,23 @@ def inset(points, d):
 
 class Canvas:
     """A picture of grey levels and alpha, drawn on by painting shapes one over another (alpha blending, edges anti-aliased).
-    `width` x `height` is the picture at scale 1; the shapes are in those pixels too, and the Canvas multiplies them by `scale`.
-    `view` (zoom, dx, dy) first moves every shape point p to p * zoom + (dx, dy): a hint piece is the front view enlarged."""
-    def __init__(self, width, height, scale=1, view=(1, 0, 0)):
-        self.scale, self.view = scale, view
+    `width` x `height` is the picture at scale 1; the shapes are in those pixels too, and the Canvas multiplies them by `scale`."""
+    def __init__(self, width, height, scale=1):
+        self.scale = scale
         self.width, self.height = width * scale, height * scale
         self.grey = [[255.0] * self.width for _ in range(self.height)]
         self.alpha = [[0.0] * self.width for _ in range(self.height)]
 
-    def place(self, shapes):
-        zoom, dx, dy = self.view
-        if (zoom * self.scale, dx, dy) == (1, 0, 0):
-            return shapes
-        return [[((x * zoom + dx) * self.scale, (y * zoom + dy) * self.scale) for x, y in shape] for shape in shapes]
-
-    def paint(self, shapes, grey, opacity=1.0, clip=None):
-        """Paint the union of `shapes` (contours, all wound the same way) in `grey`; with `clip` (contours) only inside them."""
-        shapes = self.place(shapes)
+    def paint(self, shapes, grey, opacity=1.0):
+        """Paint the union of `shapes` (contours, all wound the same way) in `grey`."""
+        if self.scale != 1:
+            shapes = [[(x * self.scale, y * self.scale) for x, y in shape] for shape in shapes]
         points = [p for shape in shapes for p in shape]
         x0, x1 = max(0, math.floor(min(p[0] for p in points))), min(self.width, math.ceil(max(p[0] for p in points)))
         y0, y1 = max(0, math.floor(min(p[1] for p in points))), min(self.height, math.ceil(max(p[1] for p in points)))
         if x1 <= x0 or y1 <= y0:
             return
         cover = bf.coverage_rect([[(x - x0, y - y0) for x, y in shape] for shape in shapes], x1 - x0, y1 - y0)
-        if clip:
-            mask = bf.coverage_rect([[(x - x0, y - y0) for x, y in shape] for shape in self.place(clip)], x1 - x0, y1 - y0)
-            cover = [[c * m // 255 for c, m in zip(row, mrow)] for row, mrow in zip(cover, mask)]
         for dy, row in enumerate(cover):
             grey_row, alpha_row = self.grey[y0 + dy], self.alpha[y0 + dy]
             for dx, c in enumerate(row):
@@ -290,91 +276,14 @@ def arrow_pad(canvas, cx, cy, k=1.0):
         canvas.paint([arrow], DARK)
 
 
-def both_halves(half, width=FRONT[0]):
-    """A body outline from its left half (from the top middle round to the bottom middle) and that half's mirror image."""
-    return half + mirror(half, width)[1:-1]
-
-
-# The Xbox controller: a top that dips beside the guide button and rises to the bumpers, short round grips that hang below the
-# d-pad and the right stick, and a round arch between them.
-FRONT_BODY = both_halves(outline((288, 33), ((250, 33), (226, 36), (196, 36)), ((162, 36), (140, 27), (108, 27)),
-                                 ((64, 27), (30, 46), (22, 84)), ((16, 114), (9, 160), (10, 198)), ((11, 248), (34, 283), (72, 283)),
-                                 ((106, 283), (126, 262), (148, 236)), ((172, 208), (210, 191), (248, 191)), (288, 191)))
-# The DualSense: a flat top the width of the touchpad, longer grips that end rounder and lower, a higher, wider arch.
-FRONT_BODY_PS = both_halves(outline((288, 30), (150, 30), ((114, 30), (102, 24), (80, 24)), ((44, 24), (24, 44), (19, 80)),
-                                    ((15, 112), (8, 150), (8, 196)), ((8, 244), (22, 285), (58, 285)), ((92, 285), (110, 264), (126, 238)),
-                                    ((148, 204), (180, 194), (228, 194)), (288, 194)))
-# The DualSense's touchpad (narrower at the bottom), Options and Create at its top corners in the places of + and -.
-TOUCHPAD = outline((126, 33), (450, 33), ((459, 33), (464, 39), (463, 47)), (447, 118), ((445, 126), (439, 129), (430, 129)), (146, 129),
-                   ((137, 129), (131, 126), (129, 118)), (113, 47), ((112, 39), (117, 33), (126, 33)))
-PANEL = [(124, 126), (452, 126), (436, 290), (140, 290)]       # the DualSense's dark middle under the touchpad (cut by the body)
-
-
-def bumper(body, lift, reach, width=FRONT[0]):
-    """The left and right bumper of the front view: crescents `lift` pixels high at their middle that follow the body's top
-    corners as far as `reach` (x0 of the top run, y1 of the side run); they are painted before the body, which hides their
-    lower edge."""
-    out = inset(body, -1)
-    run = [i for i in range(len(body) // 2) if body[i][0] < reach[0] and body[i][1] < reach[1]]
-    shapes = []
-    for rim in (0, 1.7):
-        outer, inner = [], []
-        for j, i in enumerate(run):
-            (x, y), (ox, oy) = body[i], out[i]
-            k = max(0.0, lift * math.sin(math.pi * j / (len(run) - 1)) ** 0.6 - rim)
-            outer.append((x + (ox - x) * k, y + (oy - y) * k))
-            inner.append((x - (ox - x) * 6, y - (oy - y) * 6))
-        left = outer + inner[::-1]
-        shapes.append([left, mirror(left, width)])
-    return shapes
-
-
-def xbox_logo(canvas, cx, cy, r):
-    """The guide button: a light button with a dark sphere cut by a light X (two bars that widen to their ends)."""
-    canvas.paint([circle(cx, cy, r + 1.7)], RIM)
-    canvas.paint([circle(cx, cy, r)], 226)
-    sphere = circle(cx, cy, r * 0.68)
-    canvas.paint([sphere], 96)
-    for a in (math.pi / 4, -math.pi / 4):
-        ux, uy, vx, vy = math.cos(a) * r, math.sin(a) * r, -math.sin(a) * r, math.cos(a) * r
-        bar = [(cx - ux - vx * 0.2, cy - uy - vy * 0.2), (cx - vx * 0.05, cy - vy * 0.05), (cx + ux - vx * 0.2, cy + uy - vy * 0.2),
-               (cx + ux + vx * 0.2, cy + uy + vy * 0.2), (cx + vx * 0.05, cy + vy * 0.05), (cx - ux + vx * 0.2, cy - uy + vy * 0.2)]
-        canvas.paint([bar], 226, clip=[sphere])
-
-
-def draw_front(canvas, controls, letters, text, style):
-    """The front of the controller on `canvas` (the front view, or a hint piece that shows part of it enlarged)."""
-    playstation = style == 'playstation'
-    body = FRONT_BODY_PS if playstation else FRONT_BODY
-    edge, dark = bumper(body, 7, (172, 80)) if playstation else bumper(body, 9, (186, 96))
-    canvas.paint(edge, EDGE)
-    canvas.paint(dark, DARK)
-    canvas.paint([body], RIM)
-    face = inset(body, 3.2)
-    canvas.paint([face], BODY)
-    if playstation:
-        canvas.paint([PANEL], RIM, clip=[face])
-        canvas.paint([inset(PANEL, 1.5)], 118, clip=[face])
-        canvas.paint([TOUCHPAD], RIM)
-        canvas.paint([inset(TOUCHPAD, 2)], 214)
-        for side in ([(110, 50), (113.5, 50), (131.5, 127), (128, 127)], [(466, 50), (462.5, 50), (444.5, 127), (448, 127)]):
-            canvas.paint([side], 236)                                     # the light bars beside the touchpad
-        canvas.paint([circle(288, 152, 10.5)], LIGHT)                     # the PS button
-        canvas.paint([circle(288, 152, 9.3)], EDGE)
-        canvas.paint([circle(288, 152, 7.8)], DARK)
-        canvas.paint([rounded_rect(278, 170, 298, 177, 3.5)], LIGHT)       # the mute button
-        canvas.paint([rounded_rect(279.3, 171.3, 296.7, 175.7, 2.2)], DARK)
-    else:
-        xbox_logo(canvas, 288, 70, 14.5)
-        canvas.paint([rounded_rect(280, 101, 296, 111, 4)], EDGE)         # the Share button
-        canvas.paint([rounded_rect(281.7, 102.7, 294.3, 109.3, 3)], DARK)
-    for cx, cy in FRONT_STICKS.values():
-        stick(canvas, cx, cy)
-    (arrow_pad if playstation else dpad)(canvas, *FRONT_DPAD)
-    for slot, (cx, cy) in FRONT_FACE.items():
-        dark_button(canvas, cx, cy, 10, letters, text.get(FACE_LAYOUT[slot]))
-    for slot, (cx, cy) in FRONT_MENUS.items():
-        center_button(canvas, cx, cy, controls.get(slot), letters, text, style=style)
+FRONT_BODY = outline((288, 36), (112, 36), ((66, 36), (19, 66), (19, 116)), (19, 214), ((19, 246), (42, 262), (72, 262)), (112, 262),
+                     ((146, 262), (164, 238), (182, 216)), ((196, 200), (212, 196), (232, 196)), (288, 196))
+FRONT_BODY = FRONT_BODY + mirror(FRONT_BODY, FRONT[0])[1:-1]
+# The DualSense: a flatter top, longer and rounder grips, a wider gap between them.
+FRONT_BODY_PS = outline((288, 34), (118, 34), ((68, 34), (22, 54), (17, 104)), (14, 206), ((12, 252), (40, 276), (76, 276)),
+                        ((112, 276), (136, 252), (160, 222)), ((178, 200), (204, 190), (232, 190)), (288, 190))
+FRONT_BODY_PS = FRONT_BODY_PS + mirror(FRONT_BODY_PS, FRONT[0])[1:-1]
+TOUCHPAD = (146, 36, 430, 126)      # x0, y0, x1, y1 of the DualSense's touchpad, between the places of - and +
 
 
 @scaled
@@ -383,7 +292,30 @@ def front_view(controls, letters, text, style='xbox', scale=1):
     `controls` is prompt_layout.prompt_controls(); `text` names the pad buttons (botw_prompts.XBOX_TEXT or PLAYSTATION_TEXT);
     `letters` is a botw_prompts.Letters. With `scale` the picture is (576 * scale) x (288 * scale)."""
     canvas = Canvas(*FRONT, scale)
-    draw_front(canvas, controls, letters, text, style)
+    playstation = style == 'playstation'
+    body = FRONT_BODY_PS if playstation else FRONT_BODY
+    canvas.paint([body], RIM)
+    canvas.paint([inset(body, 3.2)], BODY)
+    if playstation:
+        pad = rounded_rect(*TOUCHPAD, 16)
+        canvas.paint([pad], RIM)
+        canvas.paint([inset(pad, 2)], 214)
+        canvas.paint([rounded_rect(TOUCHPAD[0] + 10, TOUCHPAD[3] - 7, TOUCHPAD[2] - 10, TOUCHPAD[3] - 4, 1.5)], 232)   # the light bar
+        canvas.paint([rounded_rect(277, 136, 299, 143, 3.5)], EDGE)        # the mute button
+        canvas.paint([rounded_rect(278.5, 137.5, 297.5, 141.5, 2)], DARK)
+        canvas.paint([circle(288, 166, 10)], EDGE)                          # the PS button (a plain disc)
+        canvas.paint([circle(288, 166, 8.3)], DARK)
+    else:
+        canvas.paint([circle(288, 74, 15)], RIM)                # the guide button
+        canvas.paint([circle(288, 74, 13.3)], 226)
+        canvas.paint([circle(288, 74, 8)], 200)
+    for name, (cx, cy) in FRONT_STICKS.items():
+        stick(canvas, cx, cy)
+    (arrow_pad if playstation else dpad)(canvas, *FRONT_DPAD)
+    for slot, (cx, cy) in FRONT_FACE.items():
+        dark_button(canvas, cx, cy, 10, letters, text.get(FACE_LAYOUT[slot]))
+    for slot, (cx, cy) in FRONT_MENUS.items():
+        center_button(canvas, cx, cy, controls.get(slot), letters, text, style=style)
     return canvas.rows()
 
 
@@ -396,32 +328,21 @@ def shoulder(left, x0, y0, x1, y1, trigger, width=TOP[0]):
     return mirror(shoulder(True, width - x1, y0, width - x0, y1, True, width), width)
 
 
-# The top edge seen from above, the back up: the back runs straight between the shoulders and the grips stand out towards the
-# player at both ends (the DualSense's further and narrower).
-TOP_BODY = both_halves(outline((288, 47), (100, 46), ((40, 46), (12, 52), (10, 68)), ((9, 84), (24, 97), (52, 97)),
-                               ((96, 97), (124, 92), (160, 87)), ((200, 82), (240, 81), (288, 81))), TOP[0])
-TOP_BODY_PS = both_halves(outline((288, 45), (100, 45), ((40, 45), (12, 50), (10, 66)), ((9, 86), (20, 98), (44, 98)),
-                                  ((80, 98), (104, 93), (138, 86)), ((180, 79), (236, 78), (288, 78))), TOP[0])
-
-
 @scaled
 def top_view(controls, letters, text, style='xbox', scale=1):
     """The top edge of an Xbox controller (or a DualSense) as (grey rows, alpha rows), 576x100 pixels: the triggers and bumpers
     in the places of the Switch's ZL, L, ZR and R."""
     canvas = Canvas(*TOP, scale)
-    playstation = style == 'playstation'
-    body = TOP_BODY_PS if playstation else TOP_BODY
+    body = outline((60, 44), (516, 44), ((545, 44), (566, 56), (566, 66)), ((566, 80), (552, 88), (536, 88)), (40, 88),
+                   ((24, 88), (10, 80), (10, 66)), ((10, 56), (31, 44), (60, 44)))
     canvas.paint([body], RIM)
     canvas.paint([inset(body, 3)], BODY)
-    if playstation:
-        canvas.paint([rounded_rect(116, 48, 460, 55, 3)], 214)            # the top edge of the touchpad
-    else:
-        canvas.paint([rounded_rect(100, 50, 476, 53, 1.5)], 208)          # a light edge along the back
-    canvas.paint([rounded_rect(262, 58, 314, 69, 5)], EDGE)             # the USB-C port
-    canvas.paint([rounded_rect(264.5, 60.5, 311.5, 66.5, 3)], DARK)
-    if not playstation:
-        canvas.paint([circle(352, 63, 5)], EDGE)                         # the pairing button (the DualSense has none on top)
-        canvas.paint([circle(352, 63, 3.4)], DARK)
+    canvas.paint([rounded_rect(96, 49, 480, 53, 2)], 208)            # a light edge along the top face
+    canvas.paint([rounded_rect(262, 56, 314, 67, 5)], EDGE)         # the USB-C port
+    canvas.paint([rounded_rect(264.5, 58.5, 311.5, 64.5, 3)], DARK)
+    if style != 'playstation':
+        canvas.paint([circle(352, 61, 5)], EDGE)                     # the pairing button (the DualSense has none on top)
+        canvas.paint([circle(352, 61, 3.4)], DARK)
     for slot, (x0, y0, x1, y1) in TOP_SHOULDERS.items():
         trigger = slot in ('zl', 'zr')
         shape = shoulder(x0 < TOP[0] / 2, x0, y0, x1, y1, trigger)
@@ -433,30 +354,36 @@ def top_view(controls, letters, text, style='xbox', scale=1):
     return canvas.rows()
 
 
-# The hint pieces _02 and _03 are the front view enlarged 1.2 times: (zoom, dx, dy) that put the right stick (left stick) where
-# the Switch piece has it.
-WING_VIEW = {False: (1.2, PIECE_RIGHT['stick'][0] - 1.2 * FRONT_STICKS['rstick'][0], PIECE_RIGHT['stick'][1] - 1.2 * FRONT_STICKS['rstick'][1]),
-             True: (1.2, PIECE_LEFT['stick'][0] - 1.2 * FRONT_STICKS['lstick'][0], PIECE_LEFT['stick'][1] - 1.2 * FRONT_STICKS['lstick'][1])}
-
-
 @scaled
 def wing(left, controls, letters, text, style='xbox', scale=1):
-    """Nt_GamePadIllustSnn_02 (the right front: face buttons and right stick) or _03 (the left front: left stick and d-pad) as
-    (grey rows, alpha rows), 228x228 pixels: that part of the front view, 1.2 times as large."""
-    canvas = Canvas(*PIECE, scale, WING_VIEW[left])
-    draw_front(canvas, controls, letters, text, style)
+    """Nt_GamePadIllustSnn_02 (the right front: face buttons and right stick, the body cut at its left) or _03 (the left front:
+    left stick and d-pad, cut at its right) as (grey rows, alpha rows), 228x228 pixels."""
+    canvas = Canvas(*PIECE, scale)
+    right_wing = outline((-10, 24), (118, 24), ((146, 24), (162, 44), (162, 78)), (162, 240), (-10, 240))
+    body = mirror(right_wing, PIECE[0]) if left else right_wing
+    canvas.paint([body], RIM)
+    canvas.paint([inset(body, 3.2)], BODY)
+    k = 1.2
+    if left:
+        stick(canvas, *PIECE_LEFT['stick'], k)
+        (arrow_pad if style == 'playstation' else dpad)(canvas, *PIECE_LEFT['dpad'], k)
+        slot, place = PIECE_LEFT['menu']
+    else:
+        for slot, (cx, cy) in PIECE_RIGHT['face'].items():
+            dark_button(canvas, cx, cy, 12, letters, text.get(FACE_LAYOUT[slot]))
+        stick(canvas, *PIECE_RIGHT['stick'], k)
+        slot, place = PIECE_RIGHT['menu']
+    center_button(canvas, *place, controls.get(slot), letters, text, k, style)
     return canvas.rows()
 
 
 @scaled
 def shoulders(left, controls, letters, text, style='xbox', scale=1):
     """Nt_GamePadIllustSnn_00 (the left shoulder: LT and LB) or _01 (the right: RT and RB) as (grey rows, alpha rows), 228x228
-    pixels: the shoulder buttons over the corner of the controller seen from above, its grip standing out towards the player,
-    the body cut at the picture's inner edge."""
+    pixels: the shoulder buttons over the body of the controller, which is cut at the picture's inner edge."""
     canvas = Canvas(*PIECE, scale)
     width = PIECE[0]
-    band = outline((60, 124), (248, 124), (248, 168), (156, 171), ((122, 172), (110, 198), (82, 199)), ((60, 200), (49, 178), (49, 150)),
-                   ((49, 134), (53, 124), (60, 124)))
+    band = outline((60, 124), (248, 124), (248, 176), (84, 176), ((68, 176), (52, 160), (50, 142)), ((50, 132), (54, 124), (60, 124)))
     band = band if left else mirror(band, width)
     canvas.paint([band], RIM)
     canvas.paint([inset(band, 3)], BODY)

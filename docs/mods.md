@@ -368,8 +368,7 @@ buttons from the game, so the lines still end on a button of the same kind:
 
 - The left stick, the d-pad (a cross where the Switch has four round buttons), the right stick and the four face buttons are
   in the places of the Switch's. View and Menu are in the places of − and +. LT, LB, RT and RB are in the places of ZL, L,
-  ZR and R. The body around them has the controller's own outline: two grips below the d-pad and the right stick and the
-  bumpers above the top corners, not the Switch's flat shape.
+  ZR and R. This puts the guide button, grips and body in an Xbox shape; they are not the Switch's shape.
 - The four face buttons keep the controller's own layout: Y at the top, X on the left, B on the right and A at the bottom
   (Triangle, Square, Circle and Cross with `--style playstation`). A `controls.txt` changes only which action a button does,
   so it changes the prompts in the text, not the diamond. The ring and dot of a hint box (panes `N_A_00` to `N_Y_00` of
