@@ -123,13 +123,14 @@ class BntxResize(unittest.TestCase):
             bf.bntx_resize(bytes(broken), {'b': (96, 96, *bf.r8_pack(r8_rows(96, 96, 1)))})
 
 
-def font(sheet_rows, codes=(0xE040, 0xE041)):
-    """A BFFNT: FINF (pointers to the TGLP, CWDH and CMAP data), TGLP with a full BNTX sheet at 0x1000, then CWDH and CMAP."""
+def font(sheet_rows, codes=(0xE040, 0xE041), cell=(50, 50), grid=(5, 4)):
+    """A BFFNT: FINF (pointers to the TGLP, CWDH and CMAP data), TGLP with a full BNTX sheet at 0x1000, then CWDH and CMAP. Cells
+    of cell (width, height) pixels in a grid of (columns, rows)."""
     image, bh = bf.bc4_pack(sheet_rows)
     sheet = full_bntx({'sheet': (bf.BC4_UNORM, len(sheet_rows[0]), len(sheet_rows), image, bh)})
     out = bytearray(b'FFNT\xff\xfe' + struct.pack('<HIIHH', 0x14, 0x04010000, 0, 4, 0))
     finf = len(out); out += b'FINF' + struct.pack('<I', 0x20) + bytes(0x18)
-    tglp = len(out); out += b'TGLP' + bytes(4) + struct.pack('<BBBBIHHHHHHI', 50, 50, 1, 48, len(sheet), 36, 12, 5, 4, 256, 208, 0x1000)
+    tglp = len(out); out += b'TGLP' + bytes(4) + struct.pack('<BBBBIHHHHHHI', *cell, 1, 48, len(sheet), 36, 12, *grid, len(sheet_rows[0]), len(sheet_rows), 0x1000)
     out += bytes(0x1000 - len(out)) + sheet
     cwdh = len(out); widths = bytes(3 * len(codes)) + bytes(-(16 + 3 * len(codes)) % 4)
     out += b'CWDH' + struct.pack('<IHHI', 16 + len(widths), 0, len(codes) - 1, 0) + widths

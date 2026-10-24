@@ -532,7 +532,9 @@ def bc4_image(blob, texture, rows, boxes):
 
 class Bffnt:
     """The glyph sheet of a BFFNT (the bitmap fonts of Font/Font_*.sbfarc): a BNTX with one BC4 texture inside the TGLP section,
-    a grid of cells, and a CMAP that gives each code point its cell. Glyph cells are counted from the bottom of the sheet."""
+    a grid of cells, and a CMAP that gives each code point its cell. A cell is `cell` pixels wide and `cell_height` high (1.9.0:
+    50x50 in 5 x 20 on a 256x1024 sheet; 1.6.0: 44x39 in 2 x 25 on 128x1024). Upright, the grid starts at the sheet's top left
+    corner with a one-pixel gap before each cell; the spare rows and columns are at the right and the bottom."""
     def __init__(self, data):
         if data[:4] != b'FFNT':
             raise ValueError('not a BFFNT')
@@ -541,7 +543,7 @@ class Bffnt:
             self.sections[data[position:position + 4]] = position
             position += struct.unpack_from('<I', data, position + 4)[0]
         tglp = self.sections[b'TGLP']
-        self.cell, _, self.sheets, _, size, _, _, self.columns, self.rows, _, _, sheet = struct.unpack_from('<BBBBIHHHHHHI', data, tglp + 8)
+        self.cell, self.cell_height, self.sheets, _, size, _, _, self.columns, self.rows, _, _, sheet = struct.unpack_from('<BBBBIHHHHHHI', data, tglp + 8)
         if self.sheets != 1:
             raise ValueError('a BFFNT with more than one sheet is not supported')
         self.sheet_at = sheet
@@ -597,8 +599,8 @@ class Bffnt:
         return edits
 
     def cell_box(self, code):
-        """(x0, y0, x1, y1) of the glyph cell of `code` in the sheet's pixels."""
+        """(x0, y0, x1, y1) of the glyph cell of `code` in the sheet's stored pixels (upside down: y0 counts from the bottom)."""
         i = self.cells[code]
-        step = self.cell + 1
-        return (i % self.columns * step, (self.rows - 1 - i // self.columns) * step,
-                i % self.columns * step + self.cell, (self.rows - 1 - i // self.columns) * step + self.cell)
+        step, rise = self.cell + 1, self.cell_height + 1
+        x0, y0 = 1 + i % self.columns * step, self.texture.height - (i // self.columns + 1) * rise
+        return x0, y0, x0 + self.cell, y0 + self.cell_height

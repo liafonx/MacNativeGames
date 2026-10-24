@@ -313,12 +313,14 @@ def bc4_bntx(width, height, block_height, rows):
     return bytes(head + name + entry + struct.pack('<Q', data_at) + image)
 
 
-def bffnt(rows, columns=5, grid_rows=4, cell=50, block_height=1, codes=(0xE040, 0xE041, 0xE042, 0xE043)):
-    """A BFFNT: header, TGLP with the sheet (a BNTX) and a CMAP table starting at 0xE040 (glyph i = code 0xE040 + i)."""
-    sheet = bc4_bntx(256, grid_rows * 51 + 4, block_height, rows)
+def bffnt(rows, columns=5, grid_rows=4, cell=50, block_height=1, codes=(0xE040, 0xE041, 0xE042, 0xE043), cell_height=None):
+    """A BFFNT: header, TGLP with the sheet (a BNTX) and a CMAP table starting at 0xE040 (glyph i = code 0xE040 + i). Cells are
+    cell x cell_height pixels (default square)."""
+    cell_height = cell_height or cell
+    sheet = bc4_bntx(256, grid_rows * (cell_height + 1) + 4, block_height, rows)
     tglp_at = 0x14
     sheet_at = 0x1000
-    tglp = b'TGLP' + struct.pack('<I', sheet_at + len(sheet) - tglp_at) + struct.pack('<BBBBIHHHHHHI', cell, cell, 1, cell, len(sheet), 36, 12, columns, grid_rows, 256, grid_rows * 51 + 4, sheet_at)
+    tglp = b'TGLP' + struct.pack('<I', sheet_at + len(sheet) - tglp_at) + struct.pack('<BBBBIHHHHHHI', cell, cell_height, 1, cell, len(sheet), 36, 12, columns, grid_rows, 256, grid_rows * (cell_height + 1) + 4, sheet_at)
     table = struct.pack('<%dH' % len(codes), *range(len(codes)))
     cmap = b'CMAP' + struct.pack('<I', 24 + len(table)) + struct.pack('<IIHHI', codes[0], codes[-1], 1, 0, 0) + table
     out = bytearray(b'FFNT' + b'\xff\xfe' + struct.pack('<H', 0x14) + bytes(4) + bytes(4) + struct.pack('<H', 2) + bytes(2))
@@ -349,7 +351,7 @@ class FontGlyphs(unittest.TestCase):
         decoded = bf.bc4_read(data[font.sheet_at:], font.texture)
         x0, y0, x1, y1 = font.cell_box(0xE042)
         self.assertEqual(font.get(decoded, 0xE042), [bytes(r[x0:x1]) for r in reversed(decoded[y0:y1])])
-        self.assertEqual(font.cell_box(0xE040)[1], (4 - 1) * 51)            # glyph 0 is the bottom row of the sheet
+        self.assertEqual(font.cell_box(0xE040)[:2], (1, 4 * 51 + 4 - 51))     # glyph 0: top left upright, behind a one-pixel gap
 
     def test_only_the_blocks_under_the_changed_cell_are_written_again(self):
         data = bffnt(self.sheet())
@@ -515,7 +517,7 @@ def stick_glyph(size=50):
 class StubFont:
     """The part of botw_formats.Bffnt that font_cells uses: cells by code point."""
     def __init__(self, cells, cell=50):
-        self.cells, self.cell = cells, cell
+        self.cells, self.cell, self.cell_height = cells, cell, cell
 
     def get(self, sheet_rows, code):
         return self.cells[code]
@@ -901,6 +903,25 @@ class Scale(unittest.TestCase):
         cells, _ = bp.font_cells(StubFont({0xE040: self.pics[NAMES[0]]}, cell=self.SIZE), None, self.controls, self.letters, 'xbox', 2)
         self.assertEqual(len(cells[0xE040]), 2 * self.SIZE)
         self.assertEqual(cells[0xE040], textures[NAMES[0]])
+
+    def test_a_font_whose_cells_are_not_square_is_redrawn_at_1x_and_2x(self):
+        # 1.6.0's External_00.bffnt: 44 x 39 cells in a 2 x 25 grid on a 128 x 1024 sheet (1.9.0: 50 x 50, 5 x 20 on 256 x 1024)
+        from test_botw_grow import font
+        sheet = [bytearray(((x // 4) * 9 + (y // 4) * 5) % 256 for x in range(128)) for y in range(1024)]
+        codes = (0xE040, 0xE041, 0xE042, 0xE043)
+        data = font(sheet, codes, (44, 39), (2, 25))
+        stream = yaz0_encode(sarc({'External_00.bffnt': data}))
+        old = bf.Bffnt(data)
+        self.assertEqual((old.cell, old.cell_height), (44, 39))
+        self.assertEqual(old.cell_box(0xE040), (1, 1024 - 40, 45, 1024 - 1))          # glyph 0: top left upright (the sheet is stored
+        self.assertEqual(old.cell_box(0xE043), (46, 1024 - 80, 90, 1024 - 41))        # upside down), behind a one-pixel gap
+        for scale in (1, 2):
+            new_stream, cells, _, _ = bp.make_font(stream, self.controls, self.letters, 'xbox', scale)
+            self.assertEqual(sorted(cells), list(codes))
+            self.assertTrue(all((len(c), len(c[0])) == (39 * scale, 44 * scale) for c in cells.values()))
+            out = bf.yaz0_decode(new_stream)
+            new = bf.Bffnt(out[slice(*bf.sarc_members(out)['External_00.bffnt'])])
+            self.assertEqual((new.texture.width, new.texture.height, new.cell, new.cell_height), (128 * scale, 1024 * scale, 44, 39))
 
     def test_the_font_sheet_grows_unchanged_cells_are_repeated_and_the_rest_is_the_original(self):
         new_stream, cells, _, grown = bp.make_font(self.font_stream, self.controls, self.letters, 'xbox', 2)
