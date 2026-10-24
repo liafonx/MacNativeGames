@@ -216,7 +216,8 @@ static NSString *button_icons(NSString *root, NSString *controls, NSString **fol
     NSString *name = [NSString stringWithFormat:@"%s-%s", gamepad_type_name(style), by_position ? "position" : "label"];
     NSScreen *screen = NSScreen.mainScreen;     /* sharper icons for a bigger display: the game's size times this */
     CGFloat backing = screen ? screen.backingScaleFactor : 1;
-    int scale = screen ? gamepad_icon_scale(screen.frame.size.width * backing, screen.frame.size.height * backing) : 1;
+    int scale = screen && [info[@"tool"] hasSuffix:@"botw_prompts.py"]
+        ? gamepad_icon_scale(screen.frame.size.width * backing, screen.frame.size.height * backing) : 1;
     NSData *layout = [NSData dataWithContentsOfFile:controls];
     NSMutableData *keyed = [[[NSString stringWithFormat:@"%@\n%@\n%d\n", info[@"id"], name, scale] dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
     if (layout) [keyed appendData:layout];
@@ -231,8 +232,9 @@ static NSString *button_icons(NSString *root, NSString *controls, NSString **fol
         [fm removeItemAtPath:temporary error:nil];
         if (![fm createDirectoryAtPath:temporary withIntermediateDirectories:YES attributes:nil error:nil]) return @"none";
         NSMutableArray *arguments = [@[@"-B", [kit stringByAppendingPathComponent:info[@"tool"]], temporary,   /* -B: nothing written into the signed app */ @"--romfs", @"extracted/" TOTK_GAME_DIR "/romfs",
-                                       @"--version", @TOTK_GAME_DIR, @"--style", @(gamepad_type_name(style)), @"--face-buttons", by_position ? @"position" : @"label",
-                                       @"--scale", @(scale).stringValue] mutableCopy];
+                                       @"--version", @TOTK_GAME_DIR, @"--style", @(gamepad_type_name(style)), @"--face-buttons", by_position ? @"position" : @"label"] mutableCopy];
+        if ([info[@"tool"] hasSuffix:@"botw_prompts.py"])      /* only the Breath of the Wild tool draws at a scale */
+            [arguments addObjectsFromArray:@[@"--scale", @(scale).stringValue]];
         if (layout) [arguments addObjectsFromArray:@[@"--controls", controls]];
         fprintf(stderr, "[launcher] button icons: making %s (%s, %dx) in %s\n", name.UTF8String, layout ? "controls.txt" : "default layout", scale, target.fileSystemRepresentation);
         NSTask *task = [NSTask new];
