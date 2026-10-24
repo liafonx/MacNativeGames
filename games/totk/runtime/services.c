@@ -39,7 +39,7 @@ static uint64_t alias_size(void){if(!alias_len)alias_len=alias_requested();retur
 #define LOW_SEARCH_FROM 0x300000000ULL
 #if TARGET_OS_IPHONE
 #define LOW_SIZE (HEAP_OFF+HEAP_CAP)   /* iOS: no slack after the heap cap; address space is scarce */
-#elif defined(GAME_BOTW190)
+#elif defined(GAME_BOTW190) || defined(GAME_BOTW160)
 #define LOW_SIZE (runtime_botw_hd_heaps()?9ULL<<30:6ULL<<30)   /* HD heaps: room for the 8 GiB heap cap after HEAP_OFF */
 #else
 #define LOW_SIZE (6ULL<<30)
@@ -63,7 +63,7 @@ static uint8_t user_exception_context[0x1000] __attribute__((aligned(0x1000)));
 #else
 #define GAME_PROGRAM_ID 0x0100f2c0115b6000ULL
 #endif
-#ifdef GAME_BOTW190
+#if defined(GAME_BOTW190) || defined(GAME_BOTW160)
 int runtime_botw_hd_heaps(void);   /* TOTK_BOTW_HD_HEAPS=1 (game_patches_botw.c): a 7.5 GiB memory heap for HD texture packs */
 #define HEAP_CAP (runtime_botw_hd_heaps()?8ULL<<30:4ULL<<30)
 #else
