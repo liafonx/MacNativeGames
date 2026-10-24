@@ -291,8 +291,10 @@ After a move to another display, the icons of its size also show from the next s
 - A mod in `mods/<version>` that replaces a file of the set wins: the whole set is left out, and the log says so. The set
   holds `Pack/Bootup.pack` and the `Font/Font_*.sbfarc`, and at 2x or more also
   `System/Resource/ResourceSizeTable.product.srsizetable`. So a mod with its own icons (for example one made with
-  `botw_prompts.py` below) turns the automatic icons off. A mod with its own size table (for example a translation) does
-  the same at 2x or more. The game then shows that mod's icons or its own. Delete the mod's icon files to use the automatic icons.
+  `botw_prompts.py` below) turns the automatic icons off. The game then shows that mod's icons or its own. Delete the mod's
+  icon files to use the automatic icons. A mod whose only file of the set is the size table (for example an HD texture pack) keeps them: at 2x
+  or more the launcher makes the set's size table from the mod's table (`botw_prompts.py --mods`), with each icon entry at the
+  larger of the two sizes, and that table is loaded in place of the mod's. The set is made again when the mod's table changes.
 - If the set cannot be made (the work folder's Python is gone, for example), the game starts with the Switch icons and
   the log names the cause. The tools run with the Python of the work folder the app was built from (fontTools comes with
   `games/totk/requirements.txt`).
@@ -761,7 +763,9 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
 - `mods/<版本>` 里的模组如果替换了这套图标里的任何一个文件，以模组为准：整套自动图标都不加载，日志会写明。这套图标包括
   `Pack/Bootup.pack` 和各个 `Font/Font_*.sbfarc`，2x 及以上还包括
   `System/Resource/ResourceSizeTable.product.srsizetable`。所以带有自己图标的模组（例如用下面的 `botw_prompts.py`
-  生成的）会关掉自动图标。2x 及以上时，带有自己资源大小表的模组（例如翻译模组）也会这样。游戏这时显示那个模组的图标或游戏自己的图标。删掉模组里的图标文件即可使用自动图标。
+  生成的）会关掉自动图标。游戏这时显示那个模组的图标或游戏自己的图标。删掉模组里的图标文件即可使用自动图标。
+  如果模组在这套文件里只替换了资源大小表（例如高清贴图包），自动图标照常加载：2x 及以上时，启动器用模组的大小表生成这套图标的大小表
+  （`botw_prompts.py --mods`），每个图标条目取两者中较大的值，加载时它代替模组的大小表。模组的大小表改变后，这套图标会重新生成。
 - 生成失败时（例如构建用的工作目录里的 Python 已删除），游戏以 Switch 图标启动，日志写明原因。工具用构建这个 App 的
   工作目录里的 Python 运行（fontTools 随 `games/totk/requirements.txt` 安装）。
 - 1.6.0 还没在游戏里测试。某个版本的文件和 1.9.0 不同时，那张贴图或那个字体保留游戏自己的图标，日志会写明。2x 及以上时，

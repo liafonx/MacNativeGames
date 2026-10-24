@@ -25,6 +25,9 @@ kind. --keep-switch-pictures leaves them alone.
 every font grow (the unchanged glyphs are enlarged by repeating their pixels), the layout and font archives get bigger, and
 the resource size table (System/Resource/ResourceSizeTable.product.srsizetable) is written into the mod too, with the growth
 added to the entries of Layout/Common.blarc and Font/Font_*.bfarc. Scale 1 (the default) keeps every picture at the game's size.
+--mods names the player's mod folder (the launcher passes it): when its manifest.tsv replaces the resource size table (an HD
+texture pack ships one), that table is the one raised, each entry to the larger of the mod's size and the game's grown one, and
+the manifest names it as the original, so runtime/romfs.c loads these icons over the mod's table instead of leaving them out.
 
 Another game version may differ from 1.9.0: a texture that is missing or not the expected format or size, or a font file with no
 External_00.bffnt or an unexpected glyph sheet, is skipped with a note and stays the game's. With --scale above 1, a resource size
@@ -34,9 +37,10 @@ table that is missing or lacks an entry for an archive that grows (or an archive
 Needs Python 3.14 and fontTools (python3.14 -m pip install fonttools). An existing Pack/Bootup.pack (with --scale above 1 also the
 resource size table) in the mod folder (another mod's, or an earlier run) is only overwritten with --replace.
 usage: botw_prompts.py <mod folder> (--app <Breath of the Wild.app> | --romfs <folder>) [--version botw190]
-                       [--style xbox|playstation] [--face-buttons position|label] [--controls controls.txt] [--replace] [--keep-switch-pictures] [--scale 1..4] [--preview picture.png]
+                       [--style xbox|playstation] [--face-buttons position|label] [--controls controls.txt] [--replace] [--keep-switch-pictures] [--scale 1..4] [--mods <folder>] [--preview picture.png]
 """
 import argparse
+import hashlib
 import io
 import math
 import struct
@@ -492,6 +496,23 @@ def resource_name(name):
     return f'{stem}.{ext[1:]}' if ext.startswith('s') else name
 
 
+def mod_table(mods):
+    """The resource size table that the mods in folder `mods` replace, as (Yaz0 bytes, SHA-256), or None when their manifest.tsv
+    does not list it (or there is none). A file that does not match its manifest line is refused (the game would stop on it)."""
+    try:
+        lines = (mods / 'manifest.tsv').read_text().splitlines()
+    except FileNotFoundError:
+        return None
+    for line in lines:
+        fields = line.split('\t')
+        if fields[0] == bf.RSTB and len(fields) == 4:
+            data = (mods / bf.RSTB).read_bytes()
+            if hashlib.sha256(data).hexdigest() != fields[2]:
+                raise ValueError(f'{mods / bf.RSTB} does not match its line in {mods / "manifest.tsv"}')
+            return data, fields[2]
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('mod', type=Path, help='the mod folder to write into (other files in it are kept and listed too)')
@@ -508,6 +529,7 @@ def main():
                         help='draw every picture this many times as large (1 to 4; default 1, the game\'s size): sharper on a big screen, and the archives and the resource size table grow')
     parser.add_argument('--keep-switch-pictures', action='store_true',
                         help='leave the controller pictures of the controller tips page as the Switch\'s (otherwise an Xbox controller or a DualSense is drawn there)')
+    parser.add_argument('--mods', type=Path, help='the player\'s mod folder: with --scale above 1, a resource size table its manifest.tsv replaces is raised instead of the game\'s')
     parser.add_argument('--preview', type=Path, help='also write a picture of the changed textures (PNG)')
     args = parser.parse_args()
     version = args.version or (args.mod.resolve().name if args.mod.resolve().name in APP_VERSIONS else None)
@@ -528,17 +550,20 @@ def main():
     if PACK not in index:
         parser.error(f'{PACK} not found in the RomFS ({romfs / "runtime-index.bin"}); nothing written')
     fonts = sorted(n for n in index if n.startswith('Font/Font_') and n.endswith('.sbfarc'))
-    rstb, scale = None, args.scale
+    rstb, mods_rstb, scale = None, None, args.scale
     if scale > 1:      # the resource size table is read first: archives that grow need their entries raised, else nothing grows
         try:
             if bf.RSTB not in index:
                 raise ValueError('not found in the RomFS')
             with (romfs / 'romfs.bin').open('rb') as image:
                 offset, size = index[bf.RSTB]; image.seek(offset); rstb = image.read(size)
-            bf.rstb_edits(bf.yaz0_decode(rstb), dict.fromkeys((resource_name(LAYOUT), *map(resource_name, fonts)), 0))
-        except BAD_DATA as error:
+            # --mods naming the folder written into: its own table is raised in place, and the original stays the game's
+            mods_rstb = mod_table(args.mods) if args.mods and args.mods.resolve() != args.mod.resolve() else None
+            for table in (rstb, *(mods_rstb[:1] if mods_rstb else ())):
+                bf.rstb_edits(bf.yaz0_decode(table), dict.fromkeys((resource_name(LAYOUT), *map(resource_name, fonts)), 0))
+        except (OSError, *BAD_DATA) as error:
             print(f'note: {bf.RSTB}: {error}; drawing at --scale 1 instead (nothing grows, so the table is not needed)')
-            rstb, scale = None, 1
+            rstb, mods_rstb, scale = None, None, 1
     exists = [n for n in (PACK, *fonts, *([bf.RSTB] if scale > 1 else [])) if (args.mod / n).exists()]
     if exists and not args.replace:      # checked before anything is written
         parser.error(f'{args.mod / exists[0]} already exists (another mod\'s, or an earlier run): pass --replace to overwrite it')
@@ -608,12 +633,16 @@ def main():
     for note in dict.fromkeys(font_notes) if fonts else ():
         print('note (font glyphs):', note)
     if growth:      # the game sets memory aside for each resource by this table: it must hold what the archives grew
+        if mods_rstb:   # the mods' table: each entry to the larger of the mod's size and the game's size plus the growth
+            game, mine = bf.rstb_sizes(bf.yaz0_decode(rstb), growth), bf.rstb_sizes(bf.yaz0_decode(mods_rstb[0]), growth)
+            growth = {name: max(0, game[name] + grow - mine[name]) for name, grow in growth.items()}
+            rstb = mods_rstb[0]
         table = bf.yaz0_decode(rstb)
         data = bf.yaz0_splice(rstb, table, bf.rstb_edits(table, growth))
         (args.mod / bf.RSTB).parent.mkdir(parents=True, exist_ok=True)
         (args.mod / bf.RSTB).write_bytes(data)
-        print(f'{args.mod / bf.RSTB}: raised {", ".join(f"{name} by {grow}" for name, grow in sorted(growth.items()))}')
-    found = write_manifest(args.mod, romfs)
+        print(f'{args.mod / bf.RSTB}: {"from the mods, " if mods_rstb else ""}raised {", ".join(f"{name} by {grow}" for name, grow in sorted(growth.items()))}')
+    found = write_manifest(args.mod, romfs, merged={bf.RSTB: mods_rstb[1]} if growth and mods_rstb else None)
     if found.misspelt:
         sys.exit('manifest not written: ' + ', '.join(f'{a} (the RomFS has {b})' for a, b in found.misspelt))
     print(f'{args.mod / "manifest.tsv"}: {len(found.lines)} files ({len(found.lines) - len(found.added)} replaced, {len(found.added)} added)')

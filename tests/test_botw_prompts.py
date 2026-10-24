@@ -1083,6 +1083,45 @@ class Scale(unittest.TestCase):
             self.main_with(mod, romfs, '--scale', '2', '--replace')         # --replace writes it again, the same
             self.assertEqual((mod / bf.RSTB).read_bytes(), before)
 
+    def test_with_mods_that_replace_the_size_table_the_icons_raise_that_table_and_name_it_as_the_original(self):
+        import hashlib
+        import tempfile
+        import zlib
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            romfs, entries = self.romfs_with_everything(tmp)
+            mods = tmp / 'mods'                 # the mod's table: Common.blarc far above the game's, the font at the game's, Other.bin raised
+            theirs = {zlib.crc32(b'Layout/Common.blarc'): 900000, zlib.crc32(b'Font/Font_US.bfarc'): 2000, zlib.crc32(b'Other.bin'): 7777}
+            table = b'RSTB' + struct.pack('<II', len(entries), 0) + b''.join(struct.pack('<II', crc, theirs[crc]) for crc, _ in entries)
+            (mods / bf.RSTB).parent.mkdir(parents=True)
+            (mods / bf.RSTB).write_bytes(yaz0_encode(table))
+            sha = hashlib.sha256((mods / bf.RSTB).read_bytes()).hexdigest()
+            (mods / 'manifest.tsv').write_text(f'# header\n{bf.RSTB}\t{(mods / bf.RSTB).stat().st_size}\t{sha}\t{"0" * 64}\n')
+            mod = tmp / 'botw190'
+            self.main_with(mod, romfs, '--scale', '2', '--mods', str(mods))
+            font_grown = bp.make_font(self.font_stream, self.controls, self.letters, 'xbox', 2)[3]
+            out = bf.yaz0_decode((mod / bf.RSTB).read_bytes())
+            sizes = dict(struct.unpack_from('<II', out, 12 + 8 * i) for i in range(3))
+            self.assertEqual(sizes[zlib.crc32(b'Layout/Common.blarc')], 900000)         # the mod's is larger than the game's grown one
+            self.assertEqual(sizes[zlib.crc32(b'Font/Font_US.bfarc')], 2000 + font_grown)
+            self.assertEqual(sizes[zlib.crc32(b'Other.bin')], 7777)                     # the mod's other entries are kept
+            line = [l for l in (mod / 'manifest.tsv').read_text().splitlines() if l.startswith(bf.RSTB + '\t')][0]
+            self.assertEqual(line.split('\t')[3], sha)                                  # romfs.c: it takes the mod table's place
+            (mods / 'manifest.tsv').write_text('# header\n')                             # mods without a table: the game's is raised
+            self.main_with(mod, romfs, '--scale', '2', '--mods', str(mods), '--replace')
+            out = bf.yaz0_decode((mod / bf.RSTB).read_bytes())
+            self.assertEqual(dict(struct.unpack_from('<II', out, 12 + 8 * i) for i in range(3))[zlib.crc32(b'Other.bin')], 3000)
+            self.main_with(mods, romfs, '--scale', '2', '--mods', str(mods), '--replace')   # written into the mods folder itself
+            line = [l for l in (mods / 'manifest.tsv').read_text().splitlines() if l.startswith(bf.RSTB + '\t')][0]
+            with (romfs / 'romfs.bin').open('rb') as image:
+                offset, size = bp.read_index(romfs / 'runtime-index.bin')[bf.RSTB]; image.seek(offset); game = hashlib.sha256(image.read(size)).hexdigest()
+            self.assertEqual(line.split('\t')[3], game)                                 # the original is the game's table
+            (mods / 'manifest.tsv').write_text(f'{bf.RSTB}\t1\t{"1" * 64}\t-\n')        # a table that does not match its line:
+            fresh = tmp / 'fresh'                                                          # the icons are drawn at 1x, with no table
+            self.main_with(fresh, romfs, '--scale', '2', '--mods', str(mods), '--version', 'botw190')
+            self.assertTrue((fresh / bp.PACK).is_file())
+            self.assertFalse((fresh / bf.RSTB).exists())
+
     def test_an_existing_resource_size_table_alone_stops_a_scale_2_run_but_not_a_scale_1_run(self):
         import tempfile
         with tempfile.TemporaryDirectory() as tmp:

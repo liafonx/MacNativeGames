@@ -132,6 +132,22 @@ def sarc_member_edits(sarc, name, edits):
 RSTB = 'System/Resource/ResourceSizeTable.product.srsizetable'
 
 
+def rstb_sizes(table, names):
+    """The sizes the decoded RSTB `table` lists for the resource `names`, as name -> size. A name it does not list by its CRC32
+    is refused."""
+    import zlib
+    if table[:4] != b'RSTB':
+        raise ValueError('not an RSTB')
+    crcs = struct.unpack_from('<I', table, 4)[0]
+    at = dict(struct.unpack_from('<II', table, 12 + 8 * i) for i in range(crcs))
+    sizes = {}
+    for name in names:
+        if zlib.crc32(name.encode()) not in at:
+            raise ValueError(f'{name}: not in the resource size table')
+        sizes[name] = at[zlib.crc32(name.encode())]
+    return sizes
+
+
 def rstb_edits(table, growth):
     """Same-size edits of the decoded RSTB `table` that raise the entries of `growth` (resource name, e.g. Layout/Common.blarc,
     -> bytes it grew) by that much. A name the table does not list by its CRC32 is refused."""

@@ -221,6 +221,14 @@ static NSString *button_icons(NSString *root, NSString *controls, NSString **fol
     NSData *layout = [NSData dataWithContentsOfFile:controls];
     NSMutableData *keyed = [[[NSString stringWithFormat:@"%@\n%@\n%d\n", info[@"id"], name, scale] dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
     if (layout) [keyed appendData:layout];
+#ifdef GAME_BOTW
+    /* A mod with its own resource size table (an HD texture pack): the tool raises that table (botw_prompts.py --mods), so a
+       new table of the mods makes a new set at 2x or more. TOTK_ROMFS_MODS is set before this runs. */
+    const char *mods = getenv("TOTK_ROMFS_MODS");
+    NSString *modsFolder = scale > 1 && mods && *mods && strcmp(mods, "0") ? @(mods) : nil;   /* at 1x the set has no table */
+    for (NSString *line in [[NSString stringWithContentsOfFile:[modsFolder stringByAppendingPathComponent:@"manifest.tsv"] encoding:NSUTF8StringEncoding error:nil] componentsSeparatedByString:@"\n"])
+        if ([line hasPrefix:@"System/Resource/ResourceSizeTable.product.srsizetable\t"]) [keyed appendData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+#endif
     uint8_t digest[CC_SHA256_DIGEST_LENGTH]; CC_SHA256(keyed.bytes, (CC_LONG)keyed.length, digest);
     NSMutableString *key = [NSMutableString string];
     for (int i = 0; i < 8; i++) [key appendFormat:@"%02x", digest[i]];
@@ -235,6 +243,9 @@ static NSString *button_icons(NSString *root, NSString *controls, NSString **fol
                                        @"--version", @TOTK_GAME_DIR, @"--style", @(gamepad_type_name(style)), @"--face-buttons", by_position ? @"position" : @"label"] mutableCopy];
         if ([info[@"tool"] hasSuffix:@"botw_prompts.py"])      /* only the Breath of the Wild tool draws at a scale */
             [arguments addObjectsFromArray:@[@"--scale", @(scale).stringValue]];
+#ifdef GAME_BOTW
+        if (modsFolder && [info[@"tool"] hasSuffix:@"botw_prompts.py"]) [arguments addObjectsFromArray:@[@"--mods", modsFolder]];
+#endif
         if (layout) [arguments addObjectsFromArray:@[@"--controls", controls]];
         fprintf(stderr, "[launcher] button icons: making %s (%s, %dx) in %s\n", name.UTF8String, layout ? "controls.txt" : "default layout", scale, target.fileSystemRepresentation);
         NSTask *task = [NSTask new];
