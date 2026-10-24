@@ -350,7 +350,7 @@ class MakePackPictures(unittest.TestCase):
         self.assertEqual(drawn, {})
         blob, textures = self.textures(new_pack)
         self.assertEqual(bf.rg8_read(blob, textures[FRONT]), (self.front_grey, self.front_alpha))
-        self.assertEqual(bf.r8_read(blob, textures[bp.DPAD_TEXTURE]), bp.dpad_cross(DOTS))     # the screen's d-pad is a cross
+        self.assertEqual(bf.r8_read(blob, textures[bp.DPAD_TEXTURE]), bp.render(bp.drawers_of('xbox', StubLetters())[0xE049], 64, bp.disc_box(DOTS)))     # the screen's d-pad is a cross
         self.assertEqual(sorted(changed), sorted(NAMES + [bp.DPAD_TEXTURE]))
 
     @unittest.skipIf(mbi is None, 'needs fontTools (the PlayStation drawers come from make_button_icons.py)')

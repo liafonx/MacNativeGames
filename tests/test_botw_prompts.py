@@ -1,11 +1,14 @@
 """Breath of the Wild prompt tool (games/botw/scripts/botw_formats.py, botw_prompts.py) on small made-up archives: no game data."""
+import io
 import random
+import string
 import struct
 import sys
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT/'tests'))
 sys.path.insert(0, str(ROOT/'games/botw/scripts'))
 sys.path.insert(0, str(ROOT/'games/totk/scripts'))
 try:
@@ -151,7 +154,39 @@ def same_disc(test, new, old, tolerance=2):
         test.assertAlmostEqual(a, b, delta=tolerance)
 
 
+_STUB_FONT = []
+
+
+def stub_font():
+    """A tiny TrueType font (made up: every capital letter and digit is a clockwise square, like the Switch system font's outer
+    contours), the `font` the button drawings take their letters from."""
+    if not _STUB_FONT:
+        from fontTools.fontBuilder import FontBuilder
+        from fontTools.pens.ttGlyphPen import TTGlyphPen
+        chars = string.ascii_uppercase + string.digits
+        names = ['.notdef'] + [f'g{ord(c)}' for c in chars]
+        builder = FontBuilder(1000, isTTF=True)
+        builder.setupGlyphOrder(names)
+        builder.setupCharacterMap({ord(c): f'g{ord(c)}' for c in chars})
+        glyphs = {}
+        for name in names:
+            pen = TTGlyphPen(None)
+            pen.moveTo((100, 0)); pen.lineTo((100, 700)); pen.lineTo((500, 700)); pen.lineTo((500, 0)); pen.closePath()
+            glyphs[name] = pen.glyph()
+        builder.setupGlyf(glyphs)
+        builder.setupHorizontalMetrics({name: (600, 100) for name in names})
+        builder.setupHorizontalHeader(ascent=800, descent=-200)
+        builder.setupNameTable({'familyName': 'Stub', 'styleName': 'Regular'})
+        builder.setupOS2(); builder.setupPost()
+        _STUB_FONT.append(builder.font)
+    return _STUB_FONT[0]
+
+
 class StubLetters:
+    @property
+    def font(self):
+        return stub_font()
+
     def text(self, label, cap, cx, cy, max_width):    # a square of side `cap`, so the new "letter" shows where it was put
         h = cap / 2
         return [[(cx - h, cy - h), (cx + h, cy - h), (cx + h, cy + h), (cx - h, cy + h)]]
@@ -361,13 +396,16 @@ class FontGlyphs(unittest.TestCase):
         with self.assertRaises(ValueError):
             bf.Bffnt(b'NOPE' + bytes(100))
 
-    def test_make_font_trades_the_face_glyphs_and_keeps_the_rest_of_the_archive(self):
+    @unittest.skipIf(mbi is None, 'needs fontTools (the button drawings come from make_button_icons.py)')
+    def test_make_font_redraws_the_face_glyphs_and_keeps_the_rest_of_the_archive(self):
         rows = self.sheet()
         data = bffnt(rows)
         archive = sarc({'External_00.bffnt': data, 'Other.bffnt': sample(2000, 9)})
         stream = yaz0_encode(archive)
-        new_stream, cells, _ = bp.make_font(stream, pl.prompt_controls('', 'position'), StubLetters())
+        letters = StubLetters()
+        new_stream, cells, _, grown = bp.make_font(stream, pl.prompt_controls('', 'position'), letters)
         self.assertEqual(sorted(cells), [0xE040, 0xE041, 0xE042, 0xE043])    # the synthetic font has no other glyphs
+        self.assertEqual(grown, 0)                                           # scale 1: the archive keeps its size
         new_archive = bf.yaz0_decode(new_stream)
         self.assertEqual(len(new_archive), len(archive))
         before, after = bf.sarc_members(archive), bf.sarc_members(new_archive)
@@ -376,26 +414,31 @@ class FontGlyphs(unittest.TestCase):
         new_data = new_archive[slice(*after['External_00.bffnt'])]
         old_rows = bf.bc4_read(archive[slice(*before['External_00.bffnt'])][font.sheet_at:], font.texture)
         new_rows = bf.bc4_read(new_data[font.sheet_at:], font.texture)
-        # Switch A (E040) now shows the cell of Xbox B (E041) and the other way round, up to BC4's own rounding.
-        for a, b in ((0xE040, 0xE041), (0xE041, 0xE040)):
-            want, got = font.get(old_rows, b), font.get(new_rows, a)
-            self.assertLess(max(abs(x - y) for rw, rg in zip(want, got) for x, y in zip(rw, rg)), 130)
-            self.assertNotEqual(font.get(old_rows, a), got)
+        drawers = bp.drawers_of('xbox', letters)
+        # Switch A (E040) now shows the drawing of Xbox B (position mode) on the disc of its own cell, and so on.
+        for code, pad in ((0xE040, 'b'), (0xE041, 'a'), (0xE042, 'y'), (0xE043, 'x')):
+            self.assertEqual(cells[code], bp.render(drawers[pad], 50, bp.disc_box(font.get(old_rows, code))))
+            got = font.get(new_rows, code)
+            self.assertLess(max(abs(x - y) for rw, rg in zip(cells[code], got) for x, y in zip(rw, rg)), 130)    # up to BC4's own rounding
+            self.assertNotEqual(font.get(old_rows, code), got)
 
     @unittest.skipIf(mbi is None, 'needs fontTools (the Menu and View drawers come from make_button_icons.py)')
     def test_menu_and_view_discs_sit_where_the_games_disc_sits(self):
         # The game's + and - glyphs fill only the left part of their cell and the game draws only that part (a disc at the middle of
         # the cell was cut off): the new disc keeps the old one's place.
         old = [bytes(255 if (x - 15) ** 2 + (y - 22) ** 2 <= 13 ** 2 else 0 for x in range(50)) for y in range(50)]
-        for kind in ('menu', 'view'):
-            new = bp.button_cell(kind, old)
-            xs = [x for row in new for x, v in enumerate(row) if v > 128]
-            ys = [y for y, row in enumerate(new) for v in row if v > 128]
+        new, notes = bp.font_cells(StubFont({0xE04B: old, 0xE04C: old}), None, pl.prompt_controls('', 'position'), StubLetters())
+        self.assertEqual(sorted(new), [0xE04B, 0xE04C])
+        for code in new:
+            xs = [x for row in new[code] for x, v in enumerate(row) if v > 128]
+            ys = [y for y, row in enumerate(new[code]) for v in row if v > 128]
             self.assertLessEqual(abs((min(xs) + max(xs)) / 2 - 15), 2)
             self.assertLessEqual(abs((min(ys) + max(ys)) / 2 - 22), 2)
             self.assertLess(max(xs), 30)                                        # nothing in the half the game does not draw
-        with self.assertRaises(ValueError):                                   # negative control: a blank cell has no disc
-            bp.button_cell('menu', [bytes(50)] * 50)
+        self.assertNotEqual(new[0xE04B], new[0xE04C])                           # Menu and View are two drawings
+        new, notes = bp.font_cells(StubFont({0xE04B: [bytes(50)] * 50}), None, pl.prompt_controls('', 'position'), StubLetters())
+        self.assertNotIn(0xE04B, new)                                           # negative control: a blank cell has no disc
+        self.assertTrue(any(n.startswith('plus glyph') for n in notes))
 
     def test_unknown_style_is_refused(self):      # negative control
         data = bffnt(self.sheet())
@@ -414,8 +457,8 @@ class FontGlyphs(unittest.TestCase):
         data = bffnt(rows)
         archive = sarc({'External_00.bffnt': data})
         controls = pl.prompt_controls('', 'position')
-        _, xbox, _ = bp.make_font(yaz0_encode(archive), controls, StubLetters())
-        new_stream, cells, _ = bp.make_font(yaz0_encode(archive), controls, StubLetters(), 'playstation')
+        _, xbox, _, _ = bp.make_font(yaz0_encode(archive), controls, StubLetters())
+        new_stream, cells, _, _ = bp.make_font(yaz0_encode(archive), controls, StubLetters(), 'playstation')
         self.assertEqual(sorted(cells), [0xE040, 0xE041, 0xE042, 0xE043])
         font = bf.Bffnt(data)
         old_rows = bf.bc4_read(data[font.sheet_at:], font.texture)
@@ -454,43 +497,47 @@ class StubFont:
 
 @unittest.skipIf(bf is None, 'needs Python 3.14')
 class StickGlyphs(unittest.TestCase):
-    def test_the_glyph_becomes_a_disc_with_the_label_on_the_stick_s_place(self):
+    def test_the_stick_body_is_found_and_the_press_is_drawn_on_it(self):
         old = stick_glyph()
-        with self.assertRaises(ValueError):
-            bp.relabel(old, 'LS', StubLetters())                 # its letter is not enclosed: relabel finds nothing
-        new = bp.stick_cell(old, 'LS', StubLetters())
-        self.assertLess(new[21][17], 64)                           # the label is cut out in the middle of the stick's body
-        self.assertEqual((new[21][4], new[8][17]), (255, 255))     # the disc fills the body, ring included
-        self.assertEqual((new[21][40], new[45][17], new[2][14]), (0, 0, 0))      # nothing outside it, the old letter's tail gone
-        xs = [x for row in new for x, v in enumerate(row) if v > 128]
-        self.assertEqual((min(xs), max(xs)), (1, 32))              # as wide as the body
+        self.assertEqual(bp.stick_body(old), (1, 5.5, 33, 37.5))              # the body's disc: 32 wide, on the rows that are wide enough
+        if mbi is None:
+            return
+        new, _ = bp.font_cells(StubFont({0xE056: old}), None, pl.prompt_controls('', 'position'), StubLetters())
+        self.assertEqual(new[0xE056], bp.render(bp.drawers_of('xbox', StubLetters())['l3'], 50, (1, 5.5, 33, 37.5)))
+        self.assertGreater(sum(v < 64 for row in new[0xE056][14:30] for v in row[8:26]), 30)     # the label is cut out in the middle of the stick's body
+        self.assertEqual((new[0xE056][21][4], new[0xE056][8][17]), (255, 255))   # the disc fills the body
+        self.assertEqual((new[0xE056][21][40], new[0xE056][45][17], new[0xE056][2][14]), (0, 0, 0))      # nothing outside it, the old letter's tail gone
+        xs = [x for row in new[0xE056] for x, v in enumerate(row) if v > 128]
+        self.assertEqual((min(xs), max(xs)), (1, 32))                         # as wide as the body
 
-    def test_dpad_cross_fills_the_box_of_the_dots_and_cuts_the_lit_arrows(self):
+    @unittest.skipIf(mbi is None, 'needs fontTools (the d-pad drawers come from make_button_icons.py)')
+    def test_the_d_pad_cross_fills_the_box_of_the_dots_and_cuts_the_lit_arrows(self):
         dots = [bytes(255 if any((x + 0.5 - cx) ** 2 + (y + 0.5 - cy) ** 2 <= 36 for cx, cy in ((32, 14), (14, 32), (50, 32), (32, 50))) else 0
                       for x in range(64)) for y in range(64)]
-        all_lit, up = bp.dpad_cross(dots), bp.dpad_cross(dots, ('up',))
+        drawers = bp.drawers_of('xbox', StubLetters())
+        box = bp.disc_box(dots)
+        all_lit, up = bp.render(drawers[0xE049], 64, box), bp.render(drawers[0xE060], 64, box)
         self.assertEqual((all_lit[32][32], all_lit[32][10], all_lit[32][4], all_lit[10][10]), (255, 255, 0, 0))     # middle, arm's end, outside the box, a corner
         self.assertLess(all_lit[16][32], 64)                      # the up arrow is cut out of the top arm
         self.assertEqual((up[16][32] < 64, up[48][32]), (True, 255))   # only the up arrow when only up is lit
         with self.assertRaises(ValueError):
-            bp.dpad_cross([bytes(64)] * 64)                      # negative control: no shape to cover
+            bp.disc_box([bytes(64)] * 64)                        # negative control: no shape to cover
 
     def test_a_cell_without_a_stick_is_refused(self):     # negative control
         with self.assertRaises(ValueError):
-            bp.stick_cell([bytes(50)] * 50, 'LS', StubLetters())
+            bp.stick_body([bytes(50)] * 50)
 
     @unittest.skipIf(mbi is None, 'needs fontTools (the Menu and View drawers come from make_button_icons.py)')
     def test_font_cells_redraw_both_stick_glyphs_for_both_styles(self):
         disc = disc_picture(25, 22, 13, 50)
         cells = {code: disc for code in (*bp.FONT_FACE.values(), *bp.FONT_SHAPE.values(), *bp.FONT_MENU.values())}
         cells[0xE056] = cells[0xE057] = stick_glyph()
-        for style, labels in (('xbox', ('LS', 'RS')), ('playstation', ('L3', 'R3'))):
-            letters = Recorder()
-            new, notes = bp.font_cells(StubFont(cells), None, pl.prompt_controls('', 'position'), letters, style)
-            self.assertIn(0xE056, new)
-            self.assertIn(0xE057, new)
+        for style in ('xbox', 'playstation'):
+            new, notes = bp.font_cells(StubFont(cells), None, pl.prompt_controls('', 'position'), StubLetters(), style)
             self.assertFalse([n for n in notes if 'STICK' in n], style)
-            self.assertTrue(set(labels) <= {label for label, *_ in letters.calls}, style)
+            drawers = bp.drawers_of(style, StubLetters())
+            for code, pad in zip((0xE056, 0xE057), ('l3', 'r3')):
+                self.assertEqual(new[code], bp.render(drawers[pad], 50, bp.stick_body(cells[code])), (style, code))
 
     @unittest.skipIf(mbi is None, 'needs fontTools (the Menu and View drawers come from make_button_icons.py)')
     def test_the_d_pad_glyphs_become_a_cross_in_the_place_of_the_four_dots(self):
@@ -513,15 +560,6 @@ class StickGlyphs(unittest.TestCase):
         self.assertLess(max(xs), 30)                                 # it stays in the place of the dots
 
 
-class Recorder(StubLetters):
-    def __init__(self):
-        self.calls = []
-
-    def text(self, label, cap, cx, cy, max_width):
-        self.calls.append((label, cx, cy))
-        return super().text(label, cap, cx, cy, max_width)
-
-
 @unittest.skipIf(bf is None, 'needs Python 3.14')
 class SystemFont(unittest.TestCase):
     def test_bfttf_decodes_to_the_font_inside(self):
@@ -533,7 +571,14 @@ class SystemFont(unittest.TestCase):
         self.assertEqual(bp.bfttf_decode(blob), font)
 
 
-@unittest.skipIf(bf is None, 'needs Python 3.14')
+def expected_texture(letters, style, pad, old, scale=1, shape='disc'):
+    """What the texture of the button `pad` must be for the game's picture `old`: the drawer of the button, fitted on the white
+    shape of `old` (its disc, or its bright box for a key), `scale` times as large."""
+    box = bp.disc_box(old) if shape == 'disc' else bp.bright_box(old)
+    return bp.render(bp.drawers_of(style, letters)[pad], len(old) * scale, bp.enlarged(box, scale))
+
+
+@unittest.skipIf(bf is None or mbi is None, 'needs Python 3.14 and fontTools')
 class MakePack(unittest.TestCase):
     def setUp(self):
         self.pics = {n: picture(i) for i, n in enumerate(NAMES)}
@@ -547,24 +592,24 @@ class MakePack(unittest.TestCase):
         inner = bf.sarc_members(layout); blob = layout[slice(*inner['timg/__Combined.bntx'])]
         return {n: bf.r8_read(blob, t) for n, t in bf.bntx_textures(blob).items()}
 
-    def test_default_layout_trades_the_face_pictures_and_redraws_the_keys(self):
-        new_pack, changed, _, notes, _ = bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters())
+    def test_default_layout_draws_the_buttons_that_are_pressed_on_the_games_shapes(self):
+        letters = StubLetters()
+        new_pack, changed, _, notes, _ = bp.make_pack(self.pack, pl.prompt_controls('', 'position'), letters)
         got = self.pictures(new_pack)
-        self.assertEqual(got[NAMES[0]], self.pics[NAMES[1]])      # Switch A shows the Xbox B picture (position mode)
-        self.assertEqual(got[NAMES[1]], self.pics[NAMES[0]])
-        self.assertEqual(got[NAMES[2]], self.pics[NAMES[3]])
-        self.assertEqual(got[NAMES[3]], self.pics[NAMES[2]])
-        for name in NAMES[4:]:
-            self.assertNotEqual(got[name], self.pics[name])       # the letter was replaced
-            self.assertEqual(got[name][2], self.pics[name][2])    # the rest of the key is as it was
+        for name, pad in zip(NAMES[:4], 'bayx'):          # Switch A shows the Xbox B drawing (position mode), and so on
+            self.assertEqual(got[name], expected_texture(letters, 'xbox', pad, self.pics[name]))
+        for name, pad in zip(NAMES[4:], ('l1', 'l2', 'l3', 'l3')):
+            self.assertEqual(got[name], expected_texture(letters, 'xbox', pad, self.pics[name], shape='key'))
+            self.assertNotEqual(got[name], self.pics[name])
         self.assertEqual(sorted(changed), sorted(NAMES))
 
     def test_owner_layout_by_label(self):
         owner = 'north = a\nsouth = x\nwest = y\neast = b\n'
         new_pack, _, _, _, _ = bp.make_pack(self.pack, pl.prompt_controls(owner, 'label'), StubLetters())
         got = self.pictures(new_pack)
-        self.assertEqual((got[NAMES[0]], got[NAMES[1]], got[NAMES[2]], got[NAMES[3]]),
-                         (self.pics[NAMES[2]], self.pics[NAMES[0]], self.pics[NAMES[1]], self.pics[NAMES[3]]))   # A <- X, B <- A, X <- B, Y <- Y
+        letters = StubLetters()
+        for name, pad in zip(NAMES[:4], 'xaby'):        # A <- X, B <- A, X <- B, Y <- Y
+            self.assertEqual(got[name], expected_texture(letters, 'xbox', pad, self.pics[name]))
 
     def test_everything_else_is_the_original(self):
         new_pack, _, _, _, sizes = bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters())
@@ -574,6 +619,7 @@ class MakePack(unittest.TestCase):
             if name != 'Layout/Common.sblarc':
                 self.assertEqual(self.pack[slice(*before[name])], new_pack[slice(*after[name])], name)
         self.assertEqual(sizes[2], len(self.layout))              # the decompressed size is unchanged
+        self.assertEqual(sizes[3], 0)
         old = bf.yaz0_decode(self.pack[slice(*before['Layout/Common.sblarc'])])
         new = bf.yaz0_decode(new_pack[slice(*after['Layout/Common.sblarc'])])
         a, b = bf.sarc_members(old), bf.sarc_members(new)
@@ -595,7 +641,7 @@ class MakePack(unittest.TestCase):
             bp.make_pack(pack, pl.prompt_controls('', 'position'), StubLetters())
 
 
-@unittest.skipIf(bf is None, 'needs Python 3.14')
+@unittest.skipIf(bf is None or mbi is None, 'needs Python 3.14 and fontTools')
 class MakePackPlayStation(unittest.TestCase):
     def setUp(self):
         self.pics = {n: disc_picture(24 + i * 0.5, 23 + i * 0.5, 17 + i * 0.5) for i, n in enumerate(NAMES[:4])}
@@ -619,9 +665,8 @@ class MakePackPlayStation(unittest.TestCase):
             self.assertNotEqual(got[name], self.pics[name])
             self.assertNotEqual(got[name], xbox[name])
             same_disc(self, got[name], self.pics[name])
-        for name in NAMES[4:]:
-            self.assertNotEqual(got[name], self.pics[name])       # the key got its PlayStation letter
-            self.assertEqual(got[name][2], self.pics[name][2])    # the rest of the key is as it was
+        for name, pad in zip(NAMES[4:], ('l1', 'l2', 'l3', 'l3')):
+            self.assertEqual(got[name], expected_texture(StubLetters(), 'playstation', pad, self.pics[name], shape='key'))
         self.assertEqual(sorted(changed), sorted(NAMES))
         self.assertFalse([n for n in notes if 'stay the Switch' in n])     # PlayStation has its own controller pictures now
         self.assertTrue(all('not found' in n for n in notes))               # this made-up layout holds none of them
@@ -648,6 +693,211 @@ class MakePackPlayStation(unittest.TestCase):
     def test_unknown_style_is_refused(self):      # negative control
         with self.assertRaises(ValueError):
             bp.make_pack(self.pack, pl.prompt_controls('', 'position'), StubLetters(), 'nintendo')
+
+
+def downsampled(rows, k):
+    """`rows` shrunk k times by the mean of each k x k block."""
+    return [[sum(rows[y * k + j][x * k + i] for j in range(k) for i in range(k)) / (k * k) for x in range(len(rows[0]) // k)]
+            for y in range(len(rows) // k)]
+
+
+@unittest.skipIf(bf is None or mbi is None, 'needs Python 3.14 and fontTools')
+class Scale(unittest.TestCase):
+    """--scale above 1: new larger textures (full BNTX of the game's layout) and a larger glyph sheet, one drawing for both."""
+    SIZE = 50       # the face textures are as large as the font's cells here, so one button has one picture in both
+
+    def setUp(self):
+        from test_botw_grow import full_bntx, font
+        self.letters, self.controls = StubLetters(), pl.prompt_controls('', 'position')
+        self.pics = {n: disc_picture(24 + i * 0.5, 23 + i * 0.5, 17 + i * 0.5, self.SIZE) for i, n in enumerate(NAMES[:4])}
+        self.pics.update({n: key_picture() for n in NAMES[4:]})
+        self.pics['Nt_Other_00^d'] = picture(77)                     # a texture nobody changes
+        specs = {n: (bf.R8_UNORM, len(rows), len(rows), *bf.r8_pack(rows)) for n, rows in self.pics.items()}
+        self.layout = sarc({'blyt/other.bflyt': sample(3000, 5), 'timg/__Combined.bntx': full_bntx(specs), 'anim/x.bflan': sample(500, 6)})
+        self.pack = sarc({'Pack/other': sample(2000, 7), 'Layout/Common.sblarc': yaz0_encode(self.layout), 'Pack/tail': sample(900, 8)})
+        self.sheet = [bytearray(((x // 4) * 9 + (y // 4) * 5) % 256 for x in range(256)) for y in range(208)]
+        self.font_archive = sarc({'Ancient_00.bffnt': sample(3000, 5), 'External_00.bffnt': font(self.sheet), 'z.bin': sample(5000, 6)})
+        self.font_stream = yaz0_encode(self.font_archive)
+
+    def textures(self, pack):
+        layout = bf.yaz0_decode(pack[slice(*bf.sarc_members(pack)['Layout/Common.sblarc'])])
+        inner = bf.sarc_members(layout); blob = layout[slice(*inner['timg/__Combined.bntx'])]
+        return layout, inner, blob, bf.bntx_textures(blob)
+
+    def test_textures_are_new_and_larger_and_the_rest_is_the_original(self):
+        new_pack, changed, drawn, notes, sizes = bp.make_pack(self.pack, self.controls, self.letters, 'xbox', True, 2)
+        layout, inner, blob, textures = self.textures(new_pack)
+        old_layout, old_inner, old_blob, old_textures = self.textures(self.pack)
+        for name in NAMES:
+            self.assertEqual((textures[name].width, textures[name].height), (2 * old_textures[name].width, 2 * old_textures[name].height))
+            self.assertEqual(bf.r8_read(blob, textures[name]), changed[name])
+        for name, pad in zip(NAMES[:4], 'bayx'):
+            self.assertEqual(changed[name], expected_texture(self.letters, 'xbox', pad, self.pics[name], 2))
+        for name, pad in zip(NAMES[4:], ('l1', 'l2', 'l3', 'l3')):
+            self.assertEqual(changed[name], expected_texture(self.letters, 'xbox', pad, self.pics[name], 2, 'key'))
+        other = 'Nt_Other_00^d'
+        self.assertEqual((textures[other].width, textures[other].height), (48, 48))
+        self.assertEqual(bf.r8_read(blob, textures[other]), bf.r8_read(old_blob, old_textures[other]))     # an unchanged texture
+        before, after = bf.sarc_members(self.pack), bf.sarc_members(new_pack)
+        for name in before:
+            if name != 'Layout/Common.sblarc':
+                self.assertEqual(self.pack[slice(*before[name])], new_pack[slice(*after[name])], name)       # other members: byte for byte
+        for name in old_inner:
+            if name != 'timg/__Combined.bntx':
+                self.assertEqual(old_layout[slice(*old_inner[name])], layout[slice(*inner[name])], name)
+        self.assertEqual(sizes[2], len(self.layout))                    # the growth of the decompressed layout archive is reported
+        self.assertEqual(sizes[3], len(layout) - len(self.layout))
+        self.assertGreater(sizes[3], 0)
+        self.assertEqual(sizes[3] % bf.GROW_ALIGN, 0)
+
+    def test_scale_1_writes_in_place(self):
+        new_pack, changed, _, _, sizes = bp.make_pack(self.pack, self.controls, self.letters, 'xbox', True, 1)
+        self.assertEqual((sizes[2], sizes[3]), (len(self.layout), 0))
+        layout, _, blob, textures = self.textures(new_pack)
+        self.assertEqual(len(layout), len(self.layout))
+        self.assertEqual(bf.r8_read(blob, textures[NAMES[0]]), changed[NAMES[0]])
+
+    def test_a_scale_2_texture_is_the_scale_1_drawing_finer(self):
+        _, one, _, _, _ = bp.make_pack(self.pack, self.controls, self.letters, 'xbox', False, 1)
+        _, two, _, _, _ = bp.make_pack(self.pack, self.controls, self.letters, 'xbox', False, 2)
+        for name in NAMES:
+            small = downsampled(two[name], 2)
+            self.assertLess(max(abs(a - b) for r, q in zip(small, one[name]) for a, b in zip(r, q)), 100, name)
+
+    def test_a_texture_in_another_format_stops_the_tool_at_scale_2(self):     # negative control
+        bad = sarc({'timg/__Combined.bntx': bntx({n: picture(1) for n in NAMES}, fmt=0x1d01)})
+        with self.assertRaises(ValueError):
+            bp.make_pack(sarc({'Layout/Common.sblarc': yaz0_encode(bad)}), self.controls, self.letters, 'xbox', True, 2)
+
+    def test_pictures_come_from_the_art_at_the_same_scale(self):
+        from test_botw_grow import full_bntx
+        calls = []
+
+        def draw(controls, letters, text, style='xbox', scale=1):
+            calls.append(scale)
+            return [bytes([60]) * 64 * scale] * 32 * scale, [bytes([200]) * 64 * scale] * 32 * scale
+        name = 'Nt_Picture_00^f'
+        specs = {n: (bf.R8_UNORM, len(rows), len(rows), *bf.r8_pack(rows)) for n, rows in self.pics.items() if n in NAMES}
+        specs[name] = (bf.R8G8_UNORM, 64, 32, *bf.rg8_pack([bytes(64)] * 32, [bytes(64)] * 32))
+        pack = sarc({'Layout/Common.sblarc': yaz0_encode(sarc({'timg/__Combined.bntx': full_bntx(specs)}))})
+        old, bp.PICTURES = bp.PICTURES, {name: ((64, 32), draw)}
+        try:
+            new_pack, _, drawn, _, _ = bp.make_pack(pack, self.controls, self.letters, 'xbox', True, 2)
+        finally:
+            bp.PICTURES = old
+        self.assertEqual(calls, [2])
+        _, _, blob, textures = self.textures(new_pack)
+        self.assertEqual((textures[name].width, textures[name].height), (128, 64))
+        self.assertEqual(bf.rg8_read(blob, textures[name]), drawn[name])
+
+    def test_a_button_has_one_drawing_in_its_texture_and_in_its_font_glyph(self):
+        _, textures, _, _, _ = bp.make_pack(self.pack, self.controls, self.letters, 'xbox', False, 2)
+        # the font cell of Switch A is a disc of the texture's size and place (both are 50 pixel pictures here)
+        cells, _ = bp.font_cells(StubFont({0xE040: self.pics[NAMES[0]]}), None, self.controls, self.letters, 'xbox', 2)
+        self.assertEqual(len(cells[0xE040]), 100)
+        self.assertEqual(cells[0xE040], textures[NAMES[0]])
+
+    def test_the_font_sheet_grows_unchanged_cells_are_repeated_and_the_rest_is_the_original(self):
+        new_stream, cells, _, grown = bp.make_font(self.font_stream, self.controls, self.letters, 'xbox', 2)
+        archive = bf.yaz0_decode(self.font_stream)
+        out = bf.yaz0_decode(new_stream)
+        self.assertEqual(grown, len(out) - len(archive))
+        self.assertGreater(grown, 0)
+        self.assertEqual(grown % bf.GROW_ALIGN, 0)
+        before, after = bf.sarc_members(archive), bf.sarc_members(out)
+        for name in ('Ancient_00.bffnt', 'z.bin'):
+            self.assertEqual(archive[slice(*before[name])], out[slice(*after[name])], name)
+        old = bf.Bffnt(archive[slice(*before['External_00.bffnt'])])
+        data = out[slice(*after['External_00.bffnt'])]
+        new = bf.Bffnt(data)
+        self.assertEqual((new.texture.width, new.texture.height, new.cell, new.columns, new.rows), (512, 416, old.cell, old.columns, old.rows))
+        self.assertEqual(sorted(cells), [0xE040, 0xE041])
+        big = bf.bc4_read(data[new.sheet_at:], new.texture)
+        # outside the two redrawn cells the sheet is the old one with every pixel repeated 2 x 2 (this sheet is flat in 4 pixel blocks)
+        redrawn = [tuple(2 * v for v in old.cell_box(code)) for code in cells]
+        for y in range(0, 416, 7):
+            for x in range(0, 512, 5):
+                if not any(x0 <= x < x1 and y0 <= y < y1 for x0, y0, x1, y1 in redrawn):
+                    self.assertEqual(big[y][x], self.sheet[y // 2][x // 2], (x, y))
+        for code in cells:      # a redrawn cell is the drawing at twice the size, up to BC4's own rounding
+            x0, y0, x1, y1 = (2 * v for v in old.cell_box(code))       # the TGLP's grid stays: the cell's place doubles
+            got = [bytes(r[x0:x1]) for r in reversed(big[y0:y1])]
+            self.assertEqual((len(got), len(got[0])), (100, 100))
+            self.assertLess(sum(abs(a - b) for r, q in zip(got, cells[code]) for a, b in zip(r, q)) / 10000, 40)
+
+    def romfs_with_everything(self, tmp):
+        """A RomFS folder (made up) holding the pack, a font archive and a resource size table, and the firmware's system font."""
+        import zlib
+        names = ['Layout/Common.blarc', 'Font/Font_US.bfarc', 'Other.bin']
+        entries = sorted((zlib.crc32(n.encode()), 1000 * (i + 1)) for i, n in enumerate(names))
+        table = b'RSTB' + struct.pack('<II', len(entries), 0) + b''.join(struct.pack('<II', *e) for e in entries)
+        files = {bp.PACK: self.pack, 'Font/Font_US.sbfarc': self.font_stream, bf.RSTB: yaz0_encode(table)}
+        index, blob = {}, b''
+        for name, data in files.items():
+            index[name] = (len(blob), len(data)); blob += data
+        romfs = tmp / 'game' / 'botw190' / 'romfs'
+        romfs.mkdir(parents=True)
+        (romfs / 'romfs.bin').write_bytes(blob)
+        (romfs / 'runtime-index.bin').write_bytes(runtime_index(index))
+        buffer = io.BytesIO(); stub_font().save(buffer); ttf, key = buffer.getvalue(), 0x12345678
+        words = ttf[:len(ttf) - len(ttf) % 4]
+        (tmp / 'game' / 'firmware' / bp.FONT).parent.mkdir(parents=True)
+        (tmp / 'game' / 'firmware' / bp.FONT).write_bytes(
+            struct.pack('>II', bp.BFTTF_MAGIC ^ key, len(ttf) ^ key)
+            + b''.join(struct.pack('>I', struct.unpack('>I', words[i:i + 4])[0] ^ key) for i in range(0, len(words), 4)) + ttf[len(words):])
+        return romfs, entries
+
+    def main_with(self, mod, romfs, *args):
+        import contextlib
+        argv = sys.argv
+        sys.argv = ['botw_prompts.py', str(mod), '--romfs', str(romfs), *args]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                bp.main()
+        finally:
+            sys.argv = argv
+
+    def test_the_command_line_at_scale_2_writes_the_resource_size_table_and_refuses_an_existing_one(self):
+        import tempfile
+        import zlib
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            romfs, _ = self.romfs_with_everything(tmp)
+            mod = tmp / 'botw190'
+            self.main_with(mod, romfs, '--scale', '2')
+            layout_grown = bp.make_pack(self.pack, self.controls, self.letters, 'xbox', True, 2)[4][3]
+            font_grown = bp.make_font(self.font_stream, self.controls, self.letters, 'xbox', 2)[3]
+            table = bf.yaz0_decode((mod / bf.RSTB).read_bytes())
+            sizes = {struct.unpack_from('<II', table, 12 + 8 * i)[0]: struct.unpack_from('<II', table, 12 + 8 * i)[1] for i in range(3)}
+            self.assertEqual(sizes[zlib.crc32(b'Layout/Common.blarc')], 1000 + layout_grown)
+            self.assertEqual(sizes[zlib.crc32(b'Font/Font_US.bfarc')], 2000 + font_grown)
+            self.assertEqual(sizes[zlib.crc32(b'Other.bin')], 3000)
+            self.assertTrue(layout_grown > 0 and font_grown > 0)
+            self.assertEqual(sorted(p.relative_to(mod).as_posix() for p in mod.rglob('*') if p.is_file()),
+                             ['Font/Font_US.sbfarc', 'Pack/Bootup.pack', 'System/Resource/ResourceSizeTable.product.srsizetable', 'manifest.tsv'])
+            before = (mod / bf.RSTB).read_bytes()
+            with self.assertRaises(SystemExit) as stop:             # the run is refused: everything is already there
+                self.main_with(mod, romfs, '--scale', '2')
+            self.assertEqual(stop.exception.code, 2)
+            self.main_with(mod, romfs, '--scale', '2', '--replace')         # --replace writes it again, the same
+            self.assertEqual((mod / bf.RSTB).read_bytes(), before)
+
+    def test_an_existing_resource_size_table_alone_stops_a_scale_2_run_but_not_a_scale_1_run(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            romfs, _ = self.romfs_with_everything(tmp)
+            mod = tmp / 'botw190'
+            (mod / bf.RSTB).parent.mkdir(parents=True)
+            (mod / bf.RSTB).write_bytes(b'another mod')
+            with self.assertRaises(SystemExit) as stop:
+                self.main_with(mod, romfs, '--scale', '2')
+            self.assertEqual(stop.exception.code, 2)
+            self.assertEqual(sorted(p.relative_to(mod).as_posix() for p in mod.rglob('*') if p.is_file()), [bf.RSTB])
+            self.assertEqual((mod / bf.RSTB).read_bytes(), b'another mod')
+            self.main_with(mod, romfs)                                      # scale 1 never touches the table
+            self.assertEqual((mod / bf.RSTB).read_bytes(), b'another mod')
+            self.assertTrue((mod / bp.PACK).is_file())
 
 
 def runtime_index(files):

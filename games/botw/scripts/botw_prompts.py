@@ -2,35 +2,37 @@
 """Make a RomFS mod that shows Xbox or PlayStation button names in Breath of the Wild's on-screen prompts, for the buttons you really press.
 
 The game draws its main prompts ("A: Talk") as 48x48 textures of the button, one texture for each of A, B, X, Y, L, ZL and
-the left stick press, in Pack/Bootup.pack > Layout/Common.sblarc > timg/__Combined.bntx. A button's texture is a white shape
-with its letter cut out. This tool reads that archive from your own RomFS and, for each Switch button, shows the Xbox button
-you press for it (the chain of prompt_layout.py: face buttons by position or label, then your controls.txt):
-  A B X Y   take the picture of the letter you press (the four face textures trade places);
-  L, ZL     keep the game's key shape, and the letter is replaced by LB, LT, RB or RT;
-  left stick press   keeps its shape, and the letter becomes LS (or RS).
-With --style playstation the keys read L1 L2 R1 R2 and L3 R3, and the face textures are drawn again (the game's textures carry
-Xbox letters): a disc of the same size and place as the game's, with the Cross, Circle, Square or Triangle of make_button_icons.py.
+the left stick press, in Pack/Bootup.pack > Layout/Common.sblarc > timg/__Combined.bntx. This tool reads that archive from
+your own RomFS and, for each Switch button, shows the Xbox (or PlayStation) button you press for it (the chain of
+prompt_layout.py: face buttons by position or label, then your controls.txt). Every button is drawn again from one drawing of
+make_button_icons.py (A B X Y as discs, L ZL as the LB LT keys, the stick press as an LS disc, Menu and View, the d-pad cross)
+and fitted on the place of the game's own picture: the disc of the face buttons and the d-pad, the box of the white shape of the
+L and ZL keys and of the stick press textures, the body of the stick in the font. With --style playstation the keys read L1 L2
+R1 R2 and L3 R3 and the faces are the Cross, Circle, Square and Triangle.
 Letters are drawn from the Switch's own system font, which your Breath of the Wild app already holds (shared-fonts/
 0-standard.bfttf). Nothing of the game ships with the project: every picture comes from your files, and the result is written
 only into the mod folder you name (then manifest.tsv, made with make_mod_manifest.py; runtime/romfs.c checks it at start).
 The icons inside text (controller tips, the pick-up window, camera mode) are glyphs of the button font in Font/Font_*.sbfarc
-(External_00.bffnt, a BC4 glyph sheet): the same changes are made there for A B X Y, L R ZL ZR (as LB RB LT RT), and + and -
-(as the Menu and View buttons, or Options and Create), the two stick press glyphs become plain LS and RS (or L3, R3)
-icons, and the d-pad glyphs (four dots) become a d-pad cross, as does the d-pad of the shortcut icons on the screen
-(ButtonIconL46NN_00). The glyphs of a stick being moved keep their Switch look.
+(External_00.bffnt, a BC4 glyph sheet): the same drawings are used there for A B X Y, L R ZL ZR (as LB RB LT RT), + and -
+(as the Menu and View buttons, or Options and Create), the two stick press glyphs (plain LS and RS, or L3, R3, icons) and the
+d-pad glyphs (four dots become a d-pad cross), as does the d-pad of the shortcut icons on the screen (ButtonIconL46NN_00). A
+button's texture and its font glyph therefore look the same. The glyphs of a stick being moved keep their Switch look.
 The controller pictures of the controller tips page are drawn again too: the handheld Switch (Nt_NNillust_00, _01) and the four pieces
 of the hint boxes (Nt_GamePadIllustSnn_00 to _03) become an Xbox controller (or with --style playstation a DualSense) drawn by
 botw_controller_art.py, with the buttons in the places of the Switch's, so the game's callout lines still end on a button of the same
 kind. --keep-switch-pictures leaves them alone.
+--scale 2 to 4 draws every picture that many times as large (sharp on a big screen): the textures and the whole glyph sheet of
+every font grow (the unchanged glyphs are enlarged by repeating their pixels), the layout and font archives get bigger, and
+the resource size table (System/Resource/ResourceSizeTable.product.srsizetable) is written into the mod too, with the growth
+added to the entries of Layout/Common.blarc and Font/Font_*.bfarc. Scale 1 (the default) keeps every picture at the game's size.
 
-Needs Python 3.14 and fontTools (python3.14 -m pip install fonttools). An existing Pack/Bootup.pack in the mod folder (another
-mod's, or an earlier run) is only overwritten with --replace.
+Needs Python 3.14 and fontTools (python3.14 -m pip install fonttools). An existing Pack/Bootup.pack (with --scale above 1 also the
+resource size table) in the mod folder (another mod's, or an earlier run) is only overwritten with --replace.
 usage: botw_prompts.py <mod folder> (--app <Breath of the Wild.app> | --romfs <folder>) [--version botw190]
-                       [--style xbox|playstation] [--face-buttons position|label] [--controls controls.txt] [--replace] [--keep-switch-pictures] [--preview picture.png]
+                       [--style xbox|playstation] [--face-buttons position|label] [--controls controls.txt] [--replace] [--keep-switch-pictures] [--scale 1..4] [--preview picture.png]
 """
 import argparse
 import io
-import math
 import struct
 import sys
 import zlib
@@ -103,40 +105,60 @@ def png(rows, path, scale=4):
                            + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
 
 
-def relabel(rows, label, letters, dark=0xE0, grow=1):   # rows: a square picture (a 48 pixel texture or a 50 pixel font cell)
-    """The key `rows` with its old letter replaced by `label`: the marks (the old letter) are filled white, and the new letter
-    is cut out in the same place, as high as 70 % of the old one."""
-    size = len(rows)
-    marks = bf.enclosed_marks(rows, (3, 3, size - 3, size - 3), dark)
-    if not marks:
-        raise ValueError('no letter found in the texture')
-    points = set().union(*marks)
-    xs, ys = [p[0] for p in points], [p[1] for p in points]
-    out = [bytearray(r) for r in rows]
-    for x, y in points:
-        for dy in range(-grow, grow + 1):
-            for dx in range(-grow, grow + 1):
-                if 0 <= y + dy < size and 0 <= x + dx < size:
-                    out[y + dy][x + dx] = 255
-    return cut_label(out, label, letters, (min(xs) + max(xs) + 1) / 2, (min(ys) + max(ys) + 1) / 2, (max(ys) - min(ys) + 1) * 0.7, 26)
+def style_parts(style):
+    """(button names, brand) of a style; a style other than xbox and playstation is refused."""
+    if style not in STYLES:
+        raise ValueError(f'style: {" or ".join(STYLES)}, not {style!r}')
+    return STYLES[style]
 
 
-def cut_label(out, label, letters, cx, cy, cap, max_width, bold=0.6):
-    """The square picture `out` (rows of bytes) with `label` cut out, centred on (cx, cy), capital height `cap` pixels, the
-    strokes thickened by `bold` pixels."""
-    size = len(out)
-    cut = bf.coverage(letters.text(label, cap, cx, cy, max_width), size)
-    # The game's letters are bold and the system font's regular: thicken the cut (by about half a pixel by default).
-    cut = [bytes(max(c, int(bold * max(cut[yy + dy][xx + dx] for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0))
-                                      if 0 <= yy + dy < size and 0 <= xx + dx < size)))
-                 for xx, c in enumerate(row)) for yy, row in enumerate(cut)]
-    return [bytes(min(o, 255 - c) for o, c in zip(out_row, cov_row)) for out_row, cov_row in zip(out, cut)]
+def drawers_of(style, letters):
+    """pad control (and d-pad glyph code point, see DPAD_GLYPHS) -> (advance, draw) of the style's buttons: the drawings of
+    make_button_icons.py, with their letters from `letters.font` (the Switch system font)."""
+    style_parts(style)
+    import make_button_icons as mbi
+    from fontTools.pens.recordingPen import RecordingPen
+    from fontTools.pens.reverseContourPen import ReverseContourPen
+
+    class Glyphs(mbi.Glyphs):
+        """make_button_icons.py cuts a letter out of a shape by drawing it the other way round, and takes the CFF fonts' outlines
+        (outer contours counter-clockwise). The Switch system font is TrueType (outer contours clockwise): its outlines are turned."""
+        def outline(self, ch):
+            rec, bounds, upm, advance = super().outline(ch)
+            if 'glyf' in self.fonts[0]:
+                turned = RecordingPen(); rec.replay(ReverseContourPen(turned)); rec = turned
+            return rec, bounds, upm, advance
+    drawers, dpads = (mbi.xbox_drawers if style == 'xbox' else mbi.playstation_drawers)(Glyphs([letters.font]))
+    return {**drawers, **dpads}
 
 
-def stick_cell(rows, label, letters, bright=128):
-    """A plain icon of the stick press `label` (LS / RS, or L3 / R3) for the stick press glyph `rows` (a font cell: the stick seen
-    from the side, an arrow pressing down on its cap, a small L or R on it). The game's drawing has no room for two letters, so the
-    whole glyph becomes a white disc with `label` cut out, as wide as the stick's body and on its place (the widest bright rows)."""
+DPAD_GLYPHS = (0xE049, 0xE060, 0xE061, 0xE062, 0xE063, 0xE064, 0xE065)      # the d-pad glyphs of the button font (0xE049: all four lit)
+DPAD_TEXTURE = 'ButtonIconL46NN_00^d'       # the d-pad of the shortcut icons on the screen (four dots)
+
+
+def bright_box(rows, level=128):
+    """(x0, y0, x1, y1) of the pixels of `rows` above `level` (x1 and y1 are one past the last pixel): the white shape of a key."""
+    points = [(x, y) for y, row in enumerate(rows) for x, v in enumerate(row) if v > level]
+    if not points:
+        raise ValueError('no shape found in the picture')
+    return min(p[0] for p in points), min(p[1] for p in points), max(p[0] for p in points) + 1, max(p[1] for p in points) + 1
+
+
+def disc_of(rows, level=128):
+    """(centre x, centre y, diameter) of the white disc of a face picture: the bounding box of its pixels above `level`."""
+    x0, y0, x1, y1 = bright_box(rows, level)
+    return (x0 + x1) / 2, (y0 + y1) / 2, ((x1 - x0) + (y1 - y0)) / 2
+
+
+def disc_box(rows):
+    """The square box of the white disc of `rows`: where a round button goes (a face button, Menu and View, the d-pad)."""
+    cx, cy, d = disc_of(rows)
+    return cx - d / 2, cy - d / 2, cx + d / 2, cy + d / 2
+
+
+def stick_body(rows, bright=128):
+    """The square box of the body of the stick in the stick press glyph `rows` (a font cell: the stick seen from the side, an arrow
+    pressing down on its cap, a small L or R on it): as wide as the widest bright rows and on the place of those rows."""
     spans = {y: (min(x for x, v in enumerate(row) if v > bright), max(x for x, v in enumerate(row) if v > bright))
              for y, row in enumerate(rows) if any(v > bright for v in row)}
     if not spans:
@@ -146,103 +168,62 @@ def stick_cell(rows, label, letters, bright=128):
     r = widest / 2
     cx = sum(spans[y][0] + spans[y][1] + 1 for y in body) / (2 * len(body))
     cy = (min(body) + max(body) + 1) / 2
-    size = len(rows)
-    disc = [(cx + r * math.cos(2 * math.pi * i / 64), cy + r * math.sin(2 * math.pi * i / 64)) for i in range(64)]
-    return cut_label(bf.coverage([disc], size), label, letters, cx, cy, r * 0.75, r * 1.45, 0.4)
+    return cx - r, cy - r, cx + r, cy + r
 
 
-def style_parts(style):
-    """(button names, brand) of a style; a style other than xbox and playstation is refused."""
-    if style not in STYLES:
-        raise ValueError(f'style: {" or ".join(STYLES)}, not {style!r}')
-    return STYLES[style]
-
-
-def drawers_of(style):
-    """pad control -> (advance, draw) of the style's buttons: the drawings of make_button_icons.py (they need no text font here)."""
-    import make_button_icons as mbi
-    return (mbi.xbox_drawers if style == 'xbox' else mbi.playstation_drawers)(None)[0]
-
-
-DPAD_GLYPHS = {0xE049: ('up', 'down', 'left', 'right'), 0xE060: ('up',), 0xE061: ('down',), 0xE062: ('left',), 0xE063: ('right',),
-               0xE064: ('up', 'down'), 0xE065: ('left', 'right')}      # the d-pad glyphs of the button font -> their lit directions
-DPAD_TEXTURE = 'ButtonIconL46NN_00^d'       # the d-pad of the shortcut icons on the screen (four dots)
-
-
-def dpad_cross(rows, lit=('up', 'down', 'left', 'right')):
-    """A d-pad cross (the drawing of make_button_icons.py: arms 0.8 of the radius wide, an arrow cut out of each `lit` arm) as a
-    picture the size of `rows`, on the box of the white shape of `rows` (the game's four dots)."""
-    cx, cy, d = disc_of(rows)
-    r = d / 2; arm = 0.4 * r; m, t, h = (r + arm) / 2, 0.72 * arm, 0.8 * arm
-
-    def wound(points, sign):        # counter-clockwise on screen (y down) for a shape, the other way for a hole
-        area = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(points, points[1:] + points[:1]))
-        return points if (area > 0) == (sign > 0) else points[::-1]
-    cross = [(cx + r, cy - arm), (cx + r, cy + arm), (cx + arm, cy + arm), (cx + arm, cy + r), (cx - arm, cy + r), (cx - arm, cy + arm),
-             (cx - r, cy + arm), (cx - r, cy - arm), (cx - arm, cy - arm), (cx - arm, cy - r), (cx + arm, cy - r), (cx + arm, cy - arm)]
-    heads = {'up': [(cx - t, cy - m + h / 2), (cx, cy - m - h / 2), (cx + t, cy - m + h / 2)],
-             'down': [(cx - t, cy + m - h / 2), (cx, cy + m + h / 2), (cx + t, cy + m - h / 2)],
-             'left': [(cx - m + h / 2, cy - t), (cx - m - h / 2, cy), (cx - m + h / 2, cy + t)],
-             'right': [(cx + m - h / 2, cy - t), (cx + m + h / 2, cy), (cx + m - h / 2, cy + t)]}
-    return bf.coverage([wound(cross, 1)] + [wound(heads[k], -1) for k in lit], len(rows))
-
-
-def disc_of(rows, level=128):
-    """(centre x, centre y, diameter) of the white disc of a face picture: the bounding box of its pixels above `level`."""
-    points = [(x, y) for y, row in enumerate(rows) for x, v in enumerate(row) if v > level]
-    if not points:
-        raise ValueError('no disc found in the picture')
-    x0, x1, y0, y1 = min(p[0] for p in points), max(p[0] for p in points), min(p[1] for p in points), max(p[1] for p in points)
-    return (x0 + x1 + 1) / 2, (y0 + y1 + 1) / 2, ((x1 - x0 + 1) + (y1 - y0 + 1)) / 2
-
-
-def draw_button(drawer, size, cx, cy, diameter):
-    """The button drawn by `drawer` ((advance, draw) of make_button_icons.py) as a size x size picture, its circle `diameter` pixels
-    across and centred on (cx, cy)."""
+def render(drawer, size, box):
+    """The button drawn by `drawer` ((advance, draw) of make_button_icons.py) as a size x size picture (rows of bytes): the
+    drawing's ink is made as large as fits in `box` (x0, y0, x1, y1 in the picture's pixels, y down) with its shape kept, and is
+    centred in it. Every picture of a button, a texture or a font glyph, at any scale, is made by this one function."""
+    from fontTools.pens.boundsPen import BoundsPen
     from fontTools.pens.recordingPen import RecordingPen
-    import make_button_icons as mbi
     pen = RecordingPen(); drawer[1](pen)
-    scale = diameter / (2 * mbi.R)
-    contours = [[(cx + (x - drawer[0] / 2) * scale, cy - (y - mbi.CY) * scale) for x, y in c] for c in bf.flatten(pen.value)]
-    return bf.coverage(contours, size)
+    bounds = BoundsPen(None); pen.replay(bounds)
+    x0, y0, x1, y1 = bounds.bounds
+    k = min((box[2] - box[0]) / (x1 - x0), (box[3] - box[1]) / (y1 - y0))
+    cx, cy, mx, my = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2, (x0 + x1) / 2, (y0 + y1) / 2
+    return bf.coverage([[(cx + (x - mx) * k, cy - (y - my) * k) for x, y in c] for c in bf.flatten(pen.value, max(12, size // 4))], size)
 
 
-def draw_face(drawer, rows):
-    """A new face picture for `rows` (a 48 pixel texture or a 50 pixel font cell): the drawer's button on a disc of the same
-    size and place as the white disc of `rows`."""
-    return draw_button(drawer, len(rows), *disc_of(rows))
+def enlarged(box, scale):
+    return tuple(v * scale for v in box)
 
 
-def plan(bntx, textures, controls, letters, style='xbox'):
-    """texture name -> new pixel rows for the prompts `controls` (prompt_layout.prompt_controls) asks for, and notes."""
+def plan(bntx, textures, controls, letters, style='xbox', scale=1):
+    """texture name -> new pixel rows (`scale` times the size of the game's texture) for the prompts `controls`
+    (prompt_layout.prompt_controls) asks for, and notes. Each is `render` of the button that is pressed, fitted on the white shape
+    of the game's picture (analysed at the game's size): the disc of the face buttons and the d-pad, the box of the keys L and ZL
+    and of the stick press."""
     text, brand = style_parts(style)
+    drawers = drawers_of(style, letters)
     new, notes = {}, []
     for slot, name in FACE.items():
         pad = controls[slot]
-        if pad in FACE and style == 'xbox':   # a face button: take the picture of the letter you press
-            new[name] = bf.r8_read(bntx, textures[FACE[pad]])
-        elif pad in FACE:   # the game's pictures carry Xbox letters: draw the button on a disc like the game's
-            new[name] = draw_face(drawers_of(style)[pad], bf.r8_read(bntx, textures[name]))
+        if pad in FACE:
+            old = bf.r8_read(bntx, textures[name])
+            new[name] = render(drawers[pad], len(old) * scale, enlarged(disc_box(old), scale))
         else:
             notes.append(f'{slot.upper()}: {pad or "nothing"} has no face picture; the Switch icon stays')
     if DPAD_TEXTURE in textures:
-        new[DPAD_TEXTURE] = dpad_cross(bf.r8_read(bntx, textures[DPAD_TEXTURE]))
+        old = bf.r8_read(bntx, textures[DPAD_TEXTURE])
+        new[DPAD_TEXTURE] = render(drawers[0xE049], len(old) * scale, enlarged(disc_box(old), scale))
     else:
         notes.append(f'{DPAD_TEXTURE}: not found; the Switch d-pad icon stays')
     for slot, names in SHAPE.items():
-        label = text.get(controls[slot])
-        if label is None:
-            notes.append(f'{slot.upper()}: {controls[slot] or "nothing"} has no {brand} letter here; the Switch icon stays')
+        pad = controls[slot]
+        if text.get(pad) is None:
+            notes.append(f'{slot.upper()}: {pad or "nothing"} has no {brand} letter here; the Switch icon stays')
             continue
         for name in names:
-            new[name] = relabel(bf.r8_read(bntx, textures[name]), label, letters)
+            old = bf.r8_read(bntx, textures[name])
+            new[name] = render(drawers[pad], len(old) * scale, enlarged(bright_box(old), scale))
     return new, notes
 
 
-def plan_pictures(bntx, textures, controls, letters, style='xbox'):
+def plan_pictures(bntx, textures, controls, letters, style='xbox', scale=1):
     """texture name -> (grey rows, alpha rows) of the controller pictures of the controller tips page, drawn again as an Xbox
-    controller or a DualSense (botw_controller_art.py), and notes. A picture whose texture is not the size of the drawing
-    (another game version) stays as it was."""
+    controller or a DualSense (botw_controller_art.py), `scale` times as large as the game's, and notes. A picture whose texture
+    is not the size of the drawing (another game version) stays as it was."""
     text, _ = style_parts(style)
     new, notes = {}, []
     for name, ((width, height), draw) in PICTURES.items():
@@ -251,7 +232,7 @@ def plan_pictures(bntx, textures, controls, letters, style='xbox'):
             notes.append(f'{name}: not found as a {width}x{height} texture; the Switch picture stays')
             continue
         bf.check_rg8(texture)
-        new[name] = draw(controls, letters, text, style=style)
+        new[name] = draw(controls, letters, text, style=style, **({'scale': scale} if scale != 1 else {}))
     return new, notes
 
 
@@ -281,12 +262,14 @@ def ring_edits(layout, inner, controls):
     return edits, notes
 
 
-def make_pack(pack, controls, letters, style='xbox', pictures=True):
+def make_pack(pack, controls, letters, style='xbox', pictures=True, scale=1):
     """Pack/Bootup.pack with the prompts of `controls` (prompt_layout.prompt_controls) redrawn, and with `pictures` the controller
     pictures of the controller tips page too. Returns (the new pack, texture name -> new pixel rows, texture name -> (grey rows,
-    alpha rows) of the pictures, notes, (Common.sblarc size before, after, decompressed size)). Only the changed textures' bytes
-    (and, with a remap and the redrawn face picture, the hint box ring positions: ring_edits) differ: every other byte of the
-    decompressed layout archive, and every other member of the pack, is the original."""
+    alpha rows) of the pictures, notes, (Common.sblarc size before, after, decompressed size before, decompressed growth)).
+    At scale 1 only the changed textures' bytes (and, with a remap and the redrawn face picture, the hint box ring positions:
+    ring_edits) differ. At a larger scale the changed textures are new, `scale` times as large (botw_formats.bntx_resize), the layout
+    archive grows by whole GROW_ALIGN steps, and every other member of it stays as it was. Every other member of the pack is the
+    original."""
     members = bf.sarc_members(pack)
     stream = pack[slice(*members[LAYOUT])]
     layout = bf.yaz0_decode(stream)
@@ -294,16 +277,24 @@ def make_pack(pack, controls, letters, style='xbox', pictures=True):
     start = inner[BNTX][0]
     bntx = layout[start:inner[BNTX][1]]
     textures = bf.bntx_textures(bntx)
-    new, notes = plan(bntx, textures, controls, letters, style)
-    drawn, more = plan_pictures(bntx, textures, controls, letters, style) if pictures else ({}, [])
-    edits = [(start + textures[name].offset, bf.r8_image(bntx, textures[name], rows)) for name, rows in sorted(new.items())]
+    new, notes = plan(bntx, textures, controls, letters, style, scale)
+    drawn, more = plan_pictures(bntx, textures, controls, letters, style, scale) if pictures else ({}, [])
+    if scale == 1:
+        edits = [(start + textures[name].offset, bf.r8_image(bntx, textures[name], rows)) for name, rows in sorted(new.items())]
+        edits += [(start + textures[name].offset, bf.rg8_image(bntx, textures[name], *drawn[name])) for name in sorted(drawn)]
+    else:
+        for name in new:
+            bf.check_r8(textures[name])
+        images = {name: (len(rows[0]), len(rows), *bf.r8_pack(rows)) for name, rows in new.items()}
+        for name, (grey, alpha) in drawn.items():      # (plan_pictures has checked their format)
+            images[name] = (len(grey[0]), len(grey), *bf.rg8_pack(grey, alpha))
+        edits = bf.sarc_member_edits(layout, BNTX, bf.bntx_resize(bntx, images)) if images else []
     if HINT_PIECE in drawn:       # the diamond is ours: the rings of the hint boxes go to the buttons the player presses
-        moved, more_notes = ring_edits(layout, inner, controls)
+        moved, more_notes = ring_edits(layout, inner, controls)       # the offsets are in the layout archive as it was
         edits, more = edits + moved, more + more_notes
-    edits += [(start + textures[name].offset, bf.rg8_image(bntx, textures[name], *drawn[name])) for name in sorted(drawn)]
     spliced = bf.yaz0_splice(stream, layout, edits)
     new_pack = bf.sarc_replace(pack, LAYOUT, spliced)
-    return new_pack, new, drawn, notes + more, (len(stream), len(spliced), len(layout))
+    return new_pack, new, drawn, notes + more, (len(stream), len(spliced), len(layout), struct.unpack_from('>I', spliced, 4)[0] - len(layout))
 
 
 FONT_FACE = {'a': 0xE040, 'b': 0xE041, 'x': 0xE042, 'y': 0xE043}              # Switch button -> code point in External_00.bffnt
@@ -312,59 +303,52 @@ FONT_MENU = {'plus': 0xE04B, 'minus': 0xE04C}
 BFFNT = 'External_00.bffnt'
 
 
-def button_cell(kind, rows, drawers=None):
-    """The Menu ('menu') or View ('view') button (of `drawers`, default the Xbox ones) as a picture the size of the cell `rows`,
-    on the disc of the game's + or -: the glyph sits in the left part of its cell and the game draws only that part."""
-    drawers = drawers or drawers_of('xbox')
-    return draw_button(drawers[kind], len(rows), *disc_of(rows))
-
-
-def font_cells(font, sheet_rows, controls, letters, style='xbox'):
-    """code point -> new upright cell for the prompts `controls` asks for, and notes (as plan() does for the textures)."""
+def font_cells(font, sheet_rows, controls, letters, style='xbox', scale=1):
+    """code point -> new upright cell (`scale` times the size of the game's) for the prompts `controls` asks for, and notes (as
+    plan() does for the textures): `render` of the button that is pressed, fitted on the place of the game's glyph (analysed at
+    the game's size): the disc of A B X Y, + and - (the glyph sits in the left part of its cell and the game draws only that part)
+    and the d-pad, the box of L R ZL ZR, the body of the stick for the stick presses."""
     text, brand = style_parts(style)
-    new, notes = {}, []
+    drawers = drawers_of(style, letters)
+    size, new, notes = font.cell * scale, {}, []
+
+    def draw(code, pad, find, what):
+        try:
+            new[code] = render(drawers[pad], size, enlarged(find(font.get(sheet_rows, code)), scale))
+        except ValueError as error:     # no shape found: the glyph stays as it was
+            notes.append(f'{what}: {error}; the Switch glyph stays')
     for slot, code in FONT_FACE.items():
         pad = controls[slot]
-        if pad in FONT_FACE and style == 'xbox':
-            new[code] = font.get(sheet_rows, FONT_FACE[pad])
-        elif pad in FONT_FACE and code in font.cells:
-            try:
-                new[code] = draw_face(drawers_of(style)[pad], font.get(sheet_rows, code))
-            except ValueError as error:
-                notes.append(f'{slot.upper()} glyph: {error}; the Switch glyph stays')
-        elif pad in FONT_FACE:
-            continue
-        else:
+        if pad not in FONT_FACE:
             notes.append(f'{slot.upper()}: {pad or "nothing"} has no face glyph; the Switch glyph stays')
+        elif code in font.cells:
+            draw(code, pad, disc_box, f'{slot.upper()} glyph')
     for slot, code in FONT_SHAPE.items():
-        label = text.get(controls[slot])
+        pad = controls[slot]
         if code not in font.cells:
             continue
-        if label is None:
-            notes.append(f'{slot.upper()}: {controls[slot] or "nothing"} has no {brand} letter here; the Switch glyph stays')
+        if text.get(pad) is None:
+            notes.append(f'{slot.upper()}: {pad or "nothing"} has no {brand} letter here; the Switch glyph stays')
             continue
-        try:
-            new[code] = (stick_cell if slot in ('lstick', 'rstick') else relabel)(font.get(sheet_rows, code), label, letters)
-        except ValueError as error:     # no letter found: the glyph stays as it was
-            notes.append(f'{slot.upper()} glyph: {error}; the Switch glyph stays')
-    for code, lit in DPAD_GLYPHS.items():     # the d-pad: a cross on the place of the game's four dots
+        draw(code, pad, stick_body if slot in ('lstick', 'rstick') else bright_box, f'{slot.upper()} glyph')
+    for code in DPAD_GLYPHS:     # the d-pad: a cross on the place of the game's four dots
         if code in font.cells:
-            try:
-                new[code] = dpad_cross(font.get(sheet_rows, code), lit)
-            except ValueError as error:
-                notes.append(f'd-pad glyph {code:X}: {error}; the Switch glyph stays')
+            draw(code, code, disc_box, f'd-pad glyph {code:X}')
     for slot, code in FONT_MENU.items():
         kind = controls[slot]
         if kind in ('menu', 'view') and code in font.cells:
-            new[code] = button_cell(kind, font.get(sheet_rows, code), drawers_of(style))
+            draw(code, kind, disc_box, f'{slot} glyph')
         else:
             notes.append(f'{slot}: {kind or "nothing"} has no {brand} picture here; the Switch glyph stays')
     return new, notes
 
 
-def make_font(stream, controls, letters, style='xbox'):
+def make_font(stream, controls, letters, style='xbox', scale=1):
     """A Font/Font_<language>.sbfarc (Yaz0 of a SARC) with the glyphs of `controls` redrawn in its External_00.bffnt. Returns
-    (the new file, glyph code point -> new cell, notes). Only the changed blocks of the glyph sheet differ."""
+    (the new file, glyph code point -> new cell, notes, growth of the decompressed archive in bytes). At scale 1 only the changed
+    blocks of the glyph sheet differ. At a larger scale the whole sheet is `scale` times as wide and high (botw_formats.
+    Bffnt.grow_sheet): the glyphs that stay are enlarged by repeating their pixels (nearest), the redrawn ones are drawn at the
+    larger size."""
     archive = bf.yaz0_decode(stream)
     members = bf.sarc_members(archive)
     start, end = members[BFFNT]
@@ -372,7 +356,20 @@ def make_font(stream, controls, letters, style='xbox'):
     font = bf.Bffnt(data)
     sheet = data[font.sheet_at:]
     rows = bf.bc4_read(sheet, font.texture)
-    new, notes = font_cells(font, rows, controls, letters, style)
+    new, notes = font_cells(font, rows, controls, letters, style, scale)
+    if scale > 1:
+        big = []
+        for row in rows:
+            wide = bytearray(len(row) * scale)
+            for k in range(scale):
+                wide[k::scale] = row
+            big += [bytearray(wide) for _ in range(scale)]
+        for code, cell in sorted(new.items()):
+            x0, y0, x1, y1 = enlarged(font.cell_box(code), scale)
+            for y, line in zip(range(y0, y1), reversed(cell)):
+                big[y][x0:x1] = line
+        edits = bf.sarc_member_edits(archive, BFFNT, font.grow_sheet(big))
+        return bf.yaz0_splice(stream, archive, edits), new, notes, sum(len(b) - old for _, old, b in bf.full_edits(edits))
     boxes = [font.put(rows, code, cell) for code, cell in sorted(new.items())]
     image = bf.bc4_image(sheet, font.texture, rows, boxes)
     base = start + font.sheet_at + font.texture.offset
@@ -386,7 +383,14 @@ def make_font(stream, controls, letters, style='xbox'):
         while j < len(image) and (image[j] != old[j] or (j + 1 < len(image) and image[j + 1] != old[j + 1])):
             j += 1
         edits.append((base + i, image[i:j])); i = j
-    return bf.yaz0_splice(stream, archive, edits), new, notes
+    return bf.yaz0_splice(stream, archive, edits), new, notes, 0
+
+
+def resource_name(name):
+    """The resource name of a RomFS file whose extension starts with the Nintendo compression letter s: Layout/Common.sblarc ->
+    Layout/Common.blarc (the key of the resource size table)."""
+    stem, _, ext = name.rpartition('.')
+    return f'{stem}.{ext[1:]}' if ext.startswith('s') else name
 
 
 def main():
@@ -400,7 +404,9 @@ def main():
     parser.add_argument('--face-buttons', choices=FACE_MODES, default='position',
                         help='how the controller\'s face buttons map (the runtime\'s TOTK_FACE_BUTTONS, or key 6): position (Xbox, PlayStation; default) or label (Switch)')
     parser.add_argument('--controls', type=Path, help='your controls.txt (the prompts then show the button you press)')
-    parser.add_argument('--replace', action='store_true', help=f'overwrite a {PACK} or Font/Font_*.sbfarc already in the mod folder')
+    parser.add_argument('--replace', action='store_true', help=f'overwrite a {PACK}, Font/Font_*.sbfarc or (with --scale above 1) {bf.RSTB} already in the mod folder')
+    parser.add_argument('--scale', type=int, choices=range(1, 5), default=1,
+                        help='draw every picture this many times as large (1 to 4; default 1, the game\'s size): sharper on a big screen, and the archives and the resource size table grow')
     parser.add_argument('--keep-switch-pictures', action='store_true',
                         help='leave the controller pictures of the controller tips page as the Switch\'s (otherwise an Xbox controller or a DualSense is drawn there)')
     parser.add_argument('--preview', type=Path, help='also write a picture of the changed textures (PNG)')
@@ -421,7 +427,17 @@ def main():
         parser.error(f'{app_fonts / FONT} not found (the app\'s copy of the Switch system fonts)')
     index = read_index(romfs / 'runtime-index.bin')
     fonts = sorted(n for n in index if n.startswith('Font/Font_') and n.endswith('.sbfarc'))
-    exists = [n for n in (PACK, *fonts) if (args.mod / n).exists()]
+    rstb = None
+    if args.scale > 1:      # the resource size table is read first: a missing entry stops the run before anything is written
+        if bf.RSTB not in index:
+            parser.error(f'{bf.RSTB} not found in the RomFS (--scale above 1 raises its entries)')
+        with (romfs / 'romfs.bin').open('rb') as image:
+            offset, size = index[bf.RSTB]; image.seek(offset); rstb = image.read(size)
+        try:
+            bf.rstb_edits(bf.yaz0_decode(rstb), dict.fromkeys((resource_name(LAYOUT), *map(resource_name, fonts)), 0))
+        except ValueError as error:
+            parser.error(f'{bf.RSTB}: {error}')
+    exists = [n for n in (PACK, *fonts, *([bf.RSTB] if args.scale > 1 else [])) if (args.mod / n).exists()]
     if exists and not args.replace:      # checked before anything is written
         parser.error(f'{args.mod / exists[0]} already exists (another mod\'s, or an earlier run): pass --replace to overwrite it')
     font_notes = []
@@ -437,14 +453,15 @@ def main():
     letters = Letters(TTFont(io.BytesIO(bfttf_decode((app_fonts / FONT).read_bytes()))))
     with (romfs / 'romfs.bin').open('rb') as image:
         offset, size = index[PACK]; image.seek(offset); pack = image.read(size)
-    new_pack, new, drawn, notes, layout_sizes = make_pack(pack, controls, letters, args.style, not args.keep_switch_pictures)
+    new_pack, new, drawn, notes, layout_sizes = make_pack(pack, controls, letters, args.style, not args.keep_switch_pictures, args.scale)
     for note in notes:
         print('note:', note)
     target = args.mod / PACK
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(new_pack)
     print(f'{target}: {len(new) + len(drawn)} textures changed ({len(drawn)} controller pictures); {PACK} {len(pack)} -> {len(new_pack)} bytes, {LAYOUT} {layout_sizes[0]} -> '
-          f'{layout_sizes[1]} (decompressed {layout_sizes[2]} bytes, unchanged)')
+          f'{layout_sizes[1]} (decompressed {layout_sizes[2]} bytes, {"unchanged" if not layout_sizes[3] else f"+{layout_sizes[3]}"})')
+    growth = {resource_name(LAYOUT): layout_sizes[3]} if layout_sizes[3] else {}
     if args.preview and new:
         names = sorted(new)
         height = max(len(new[name]) for name in names)     # the keys are 48 pixels, the shortcut d-pad 64
@@ -466,12 +483,20 @@ def main():
         offset, size = index[name]
         with (romfs / 'romfs.bin').open('rb') as image:
             image.seek(offset); stream = image.read(size)
-        data, cells, font_notes = make_font(stream, controls, letters, args.style)
+        data, cells, font_notes, grown = make_font(stream, controls, letters, args.style, args.scale)
+        if grown:
+            growth[resource_name(name)] = grown
         (args.mod / name).parent.mkdir(parents=True, exist_ok=True)
         (args.mod / name).write_bytes(data)
-        print(f'{args.mod / name}: {len(cells)} glyphs changed; {size} -> {len(data)} bytes')
+        print(f'{args.mod / name}: {len(cells)} glyphs changed; {size} -> {len(data)} bytes' + (f' (decompressed +{grown})' if grown else ''))
     for note in dict.fromkeys(font_notes) if fonts else ():
         print('note (font glyphs):', note)
+    if growth:      # the game sets memory aside for each resource by this table: it must hold what the archives grew
+        table = bf.yaz0_decode(rstb)
+        data = bf.yaz0_splice(rstb, table, bf.rstb_edits(table, growth))
+        (args.mod / bf.RSTB).parent.mkdir(parents=True, exist_ok=True)
+        (args.mod / bf.RSTB).write_bytes(data)
+        print(f'{args.mod / bf.RSTB}: raised {", ".join(f"{name} by {grow}" for name, grow in sorted(growth.items()))}')
     found = write_manifest(args.mod, romfs)
     if found.misspelt:
         sys.exit('manifest not written: ' + ', '.join(f'{a} (the RomFS has {b})' for a, b in found.misspelt))
