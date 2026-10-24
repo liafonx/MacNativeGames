@@ -18,7 +18,7 @@
 uint32_t runtime_thread_current_handle(void);
 static void botw_aspect_install(Module *m);   /* key 4, end of the file */
 static int patch_output_res(Module *m);   /* native output size, after runtime_output_res */
-#ifdef GAME_BOTW190
+#if defined(GAME_BOTW190) || defined(GAME_BOTW160)
 static void patch_hd_heaps(Module *m);   /* TOTK_BOTW_HD_HEAPS=1: bigger heaps for HD texture packs */
 #endif
 static void botw_output_tick(void);       /* the size static follows the canvas after the start */
@@ -585,7 +585,9 @@ static uint32_t native_word(uint32_t original, int kind, int k) {   /* the same 
     }
     return (original & ~(0xffffu << 5)) | (imm & 0xffffu) << 5;
 }
-/* HD heaps, 1.9.0 (TOTK_BOTW_HD_HEAPS=1, Mac only, default off; the owner, 2026-10-24: "make the pack work in 1.9.0, rise
+#endif
+#if defined(GAME_BOTW190) || defined(GAME_BOTW160)
+/* HD heaps, 1.9.0 and 1.6.0 (TOTK_BOTW_HD_HEAPS=1, Mac only, default off; the owner, 2026-10-24: "make the pack work in 1.9.0, rise
    any mem cap if needed"). The HDPacks 4k texture pack (made for 1.6.0, with its own 1.6.0 heap patch) crashed 1.9.0 in
    two places once its RSTB was right: its 346 MiB TitleBG.pack overflows the 225 MiB StarterPackMgr heap at boot (a null
    resource handle at main+0x155dda8), and at the first world load a texture never loads (fault 0x1c at main+0xef69f4)
@@ -599,7 +601,10 @@ static uint32_t native_word(uint32_t original, int kind, int k) {   /* the same 
    region to 9 GiB, and the application pool takes the memory-heap delta (runtime_output_res_extra_bytes). The GPU memory
    budget (TOTK_GPU_BUDGET_MB, 5000 MB from the launcher on a 16 GB Mac) becomes at least 7000 MB: the 2032 MiB heap took
    the game to 5017 MB in the first world load (the owner, 2026-10-24: "Raise the GPU budget to 7000 MB"); the kernel
-   panics it guards against came at about 15 GB resident. */
+   panics it guards against came at about 15 GB resident.
+   1.6.0 has the same shipped heaps (StarterPackMgr 225 / 20 MiB at main+0x1778ce0, compaction 500 MiB at main+0x182fad0),
+   and the pack's own 1.6.0.pchtxt cannot be used as it stands: its memory and root heap lines are on sites
+   patch_output_res owns, so g_pchtxt_reserved refuses it. patch_hd_heaps writes the pack's other 1.6.0 values instead. */
 enum { HD_MEMORY_HEAP_MIB = 7680, HD_ROOT_HEAP_MIB = 7168, SHIPPED_MEMORY_HEAP_MIB = 3120, HD_GPU_BUDGET_MB = 7000 };
 int runtime_botw_hd_heaps(void) { const char *e = getenv("TOTK_BOTW_HD_HEAPS"); return e && !strcmp(e, "1") && !ios_code(); }
 #endif
@@ -645,6 +650,9 @@ static const PchtxtSite g_pchtxt_reserved[] = {
     {0x12c1020, 0x4}, {0x13a0378, 0x4}, {0x13a0438, 0x4}, {0x13a0440, 0x4}, {0x13a0508, 0x4}, {0x15c2118, 0x38}, {0x161847c, 0xc},
     {0x1804c44, 0x4}, {0x1805028, 0x10}, {0x1821564, 0x2c}, {0x1821670, 0x20}, {0x18216ac, 0x4}, {0x18216c8, 0xc}, {0x18522ec, 0x1c},
     {0x1c0120c, 0x10}, {0x2128690, 0x4}, {0x2c7ef90, 0x8},
+    /* the HD heaps (patch_hd_heaps): StarterPackMgr, texture compaction and the pack's other heap sizes */
+    {0x1778ce0, 0x8}, {0x182fad0, 0x4}, {0x182f368, 0x4}, {0x182f39c, 0x4}, {0x182f3e0, 0x4}, {0xdfa578, 0x4},
+    {0x1c8f060, 0x4}, {0x1c8f0a0, 0x4}, {0x1c8f0d0, 0x4}, {0x1c8f108, 0x4}, {0x1620708, 0x4}, {0x16216e0, 0x4},
 #else
     {0xc617e8, 0x4}, {0xeb0f78, 0x14}, {0x125f114, 0x20}, {0x12660bc, 0x14}, {0x1280ec8, 0x24}, {0x1281064, 0x10},
     {0x1266114, 0xc}, {0x1281080, 0x8}, {0x151d484, 0x10}, {0x15a01a0, 0x4}, {0x1d78198, 0x8},
@@ -662,7 +670,7 @@ void runtime_game_patches(Module *m) {
     patch_pchtxt(m);   /* first: on a Mac the patches below check the original words they replace (the phone's code is patched at build, CODE_PATCHED_AT_BUILD) */
     if (!patch_output_res(m)) patch_render_1080(m);
     patch_phone_render(m);
-#ifdef GAME_BOTW190
+#if defined(GAME_BOTW190) || defined(GAME_BOTW160)
     patch_hd_heaps(m);
 #endif
     botw_aspect_install(m);
@@ -874,7 +882,10 @@ int runtime_output_res(unsigned *w, unsigned *h) {
 uint64_t runtime_output_size_current(void) { uint64_t c = atomic_load(&g_out_cur); return c ? c : 1920ull | (1080ull << 32); }
 #ifdef GAME_BOTW160
 #define OUTPUT_EXTRA (224ull << 20)
-uint64_t runtime_output_res_extra_bytes(void) { return runtime_output_res(NULL, NULL) ? OUTPUT_EXTRA : 0; }
+uint64_t runtime_output_res_extra_bytes(void) {   /* services.c adds it to the application pool */
+    if (runtime_botw_hd_heaps()) return (uint64_t)(HD_MEMORY_HEAP_MIB - SHIPPED_MEMORY_HEAP_MIB) << 20;
+    return runtime_output_res(NULL, NULL) ? OUTPUT_EXTRA : 0;
+}
 #else
 uint64_t runtime_output_res_extra_bytes(void) {   /* services.c adds it to the application pool */
     if (runtime_botw_hd_heaps()) return (uint64_t)(HD_MEMORY_HEAP_MIB - SHIPPED_MEMORY_HEAP_MIB) << 20;
@@ -1032,12 +1043,41 @@ static int patch_output_res(Module *m) {   /* 1.9.0: the swapchain and heaps at 
             w, h, cw, ch, display, gpu, extra, g_out_mode == OUT_AUTO ? (w > 2560 ? "; key 3: off -> MetalFX 2K -> native 2K -> native screen size" : "; key 3: off -> MetalFX 2K -> native size") : "");
     return 1;
 }
+#endif
+#if defined(GAME_BOTW190) || defined(GAME_BOTW160)
 static void patch_hd_heaps(Module *m) {   /* TOTK_BOTW_HD_HEAPS=1: the comment at runtime_botw_hd_heaps */
     if (!runtime_botw_hd_heaps()) {
         const char *e = getenv("TOTK_BOTW_HD_HEAPS");
         if (e && !strcmp(e, "1")) fprintf(stderr, "[botw] HD heaps: Mac only, ignored on the phone (TOTK_BOTW_HD_HEAPS=1)\n");
         return;
     }
+#ifdef GAME_BOTW160
+    /* The pack's own 1.6.0 heap patch (4kTextures/ExeFS/1.6.0.pchtxt, 21 lines): these 13 words as it writes them. Its
+       memory and root heap lines are the two below instead (on the sites patch_output_res owns; the pack's form also
+       overwrites an add x29 and a bl), and its four lines that make the compaction heap's +30 MiB case 64-bit and
+       +512 MiB are left out, as in 1.9.0 (2032 + 512 MiB would pass the 2 GiB pool limit). */
+    static const struct { uint32_t off, original, word; } site[] = {
+        {0x1778ce0u, 0x52a1c208u, 0xd2a37b08u},   /* StarterPackMgr: mov w8, #0xe100000 (225 MiB) -> 445.5 MiB */
+        {0x1778ce4u, 0x52a02809u, 0x52a0c009u},   /* the same, other mode: mov w9, #0x1400000 (20 MiB) -> 96 MiB */
+        {0x182fad0u, 0x52a3e808u, 0xd2afe008u},   /* texture compaction "Main": mov w8, #0x1f400000 (500 MiB) -> 2032 MiB */
+        {0x182f368u, 0x52a2ec00u, 0xd2a8a000u},   /* ForResourceL: 374 -> 1104 MiB */
+        {0x182f3e0u, 0x320607e0u, 0xd2a6e000u},   /* ForResourceS: 192 -> 880 MiB */
+        {0x182f39cu, 0x320a03e0u, 0x52a01800u},   /* 4 -> 12 MiB */
+        {0xdfa578u, 0x52a03600u, 0x52a06c00u},    /* 27 -> 54 MiB */
+        {0x1c8f060u, 0x52a05a00u, 0x52a06f00u},   /* 45 -> 55.5 MiB */
+        {0x1c8f0a0u, 0x52880000u, 0x32110be0u},   /* 0x4000 -> 0x38000 */
+        {0x1c8f0d0u, 0x320f07e0u, 0x52a00120u},   /* 0x60000 -> 0x90000 */
+        {0x1c8f108u, 0x321007e0u, 0x52a00080u},   /* 0x30000 -> 0x40000 */
+        {0x1620708u, 0x320c0fe0u, 0x52a02500u},   /* 15 -> 18.5 MiB */
+        {0x16216e0u, 0x52a00a00u, 0x52a00f00u},   /* 5 -> 7.5 MiB */
+    };
+    int native = runtime_output_res(NULL, NULL);
+    const struct { uint32_t off, original, native, word; } big[] = {   /* patch_output_res may have written them (+224 MiB) */
+        {0xe536dcu, 0x52b86000u, 0x52ba2000u, 0xb2630fe0u},   /* orr x0, xzr, #0x1e0000000: memory heap 7.5 GiB */
+        {0xe53fa0u, 0x52b82015u, 0x52b9e015u, 0xb2620bf5u},   /* orr x21, xzr, #0x1c0000000: RootHeap 7 GiB */
+    };
+#define BIG_WANT(i) (native ? big[i].native : big[i].original)
+#else
     static const struct { uint32_t off, original, word; } site[] = {
         {0x1209a8cu, 0x52a1c208u, 0x52a37a08u},   /* StarterPackMgr: mov w8, #0xe100000 (225 MiB) -> 445 MiB */
         {0x1209a90u, 0x52a02809u, 0x52a0c009u},   /* the same, other mode: mov w9, #0x1400000 (20 MiB) -> 96 MiB */
@@ -1054,6 +1094,8 @@ static void patch_hd_heaps(Module *m) {   /* TOTK_BOTW_HD_HEAPS=1: the comment a
         {0x71cu, 0x52b86000u, NK_MEMORY_HEAP, 0xb2630fe0u},   /* orr x0, xzr, #0x1e0000000: memory heap 7.5 GiB */
         {0xc617c0u, 0x52b82008u, NK_ROOT_HEAP, 0xb2620be8u},  /* orr x8, xzr, #0x1c0000000: RootHeap 7 GiB */
     };
+#define BIG_WANT(i) (native ? native_word(big[i].original, big[i].kind, (int)(w / 16)) : big[i].original)
+#endif
     uint32_t word;
     for (size_t i = 0; i < sizeof site / sizeof *site; i++) {
         memcpy(&word, m->base + site[i].off, 4);
@@ -1063,7 +1105,7 @@ static void patch_hd_heaps(Module *m) {   /* TOTK_BOTW_HD_HEAPS=1: the comment a
         }
     }
     for (size_t i = 0; i < sizeof big / sizeof *big; i++) {
-        uint32_t want = native ? native_word(big[i].original, big[i].kind, (int)(w / 16)) : big[i].original;
+        uint32_t want = BIG_WANT(i);
         memcpy(&word, m->base + big[i].off, 4);
         if (word != want) {
             fprintf(stderr, "[botw] HD heaps main+%#x: found %08x expected %08x\n", big[i].off, word, want);
@@ -1077,8 +1119,9 @@ static void patch_hd_heaps(Module *m) {   /* TOTK_BOTW_HD_HEAPS=1: the comment a
     for (size_t i = 0; i < sizeof site / sizeof *site; i++) put_word(m, site[i].off, site[i].word, "HD heaps");
     for (size_t i = 0; i < sizeof big / sizeof *big; i++) put_word(m, big[i].off, big[i].word, "HD heaps");
     fprintf(stderr, "[botw] HD heaps (TOTK_BOTW_HD_HEAPS=1): memory heap %u MiB, RootHeap %u MiB, StarterPackMgr 445 / 96 MiB, "
-            "texture compaction 2032 MiB, ForResourceL / S 1104 / 880 MiB (default mode) (11 instructions verified)\n",
-            HD_MEMORY_HEAP_MIB, HD_ROOT_HEAP_MIB);
+            "texture compaction 2032 MiB, ForResourceL / S 1104 / 880 MiB (default mode) (%u instructions verified)\n",
+            HD_MEMORY_HEAP_MIB, HD_ROOT_HEAP_MIB, (unsigned)(sizeof site / sizeof *site + sizeof big / sizeof *big));
+#undef BIG_WANT
 }
 #endif
 /* Pre-rendered movies (the memories, the intro): the movie player advances one movie frame per game frame, so above

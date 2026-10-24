@@ -38,7 +38,7 @@ static NSDictionary<NSString *, NSString *> *kv_read(NSString *path) {
     return out;
 }
 
-#if defined(GAME_BOTW190)
+#if defined(GAME_BOTW190) || defined(GAME_BOTW160)
 /* HD texture packs (runtime/game_patches_botw.c runtime_botw_hd_heaps): the bytes the player's mod manifest replaces, and
    the size of its Pack/TitleBG.pack. HDPacks 4k replaces 19.7 GiB, its TitleBG.pack 346 MiB (the shipped StarterPackMgr
    heap is 225 MiB); the largest other mod seen, 0.24 GiB. */
@@ -313,7 +313,7 @@ int main(int argc, char **argv) {
             dup2(fileno(lf), STDERR_FILENO);
             fclose(lf);
         }
-#if defined(GAME_BOTW190)
+#if defined(GAME_BOTW190) || defined(GAME_BOTW160)
         /* A mod that replaces 4 GiB or more, or Pack/TitleBG.pack with 200 MiB or more, is an HD texture pack, which needs
            the HD heaps (about 6.3 GB of memory): TOTK_BOTW_HD_HEAPS=1 then, unless the environment sets it. After the
            redirect, so the line is in the log. */

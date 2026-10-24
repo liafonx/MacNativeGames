@@ -289,8 +289,8 @@ Check `grep "mods/botw160 checked" ~/Library/Logs/MacNativeGames/botw.log | tail
   content (for example `aoc1/Pack/Dungeon120.pack`). `make_mod_manifest.py` writes `aoc1/manifest.tsv` for it, checked
   against the app's add-on content. DLC files can only be replaced, not added. A mod with only `aoc1/` files is valid.
   Check `grep "add-on content overlay" ~/Library/Logs/MacNativeGames/botw.log | tail -1` after the first DLC load.
-- Large texture packs (1.9.0, Mac only): `TOTK_BOTW_HD_HEAPS=1` gives the game bigger heaps (a 7.5 GiB memory heap and the
-  texture heaps of the pack's own 1.6.0 patch) and a GPU memory budget of at least 7000 MB. It needs about 6.3 GB of memory. Without it, HDPacks 4k stops at boot or at the first world load.
+- Large texture packs (1.9.0 and 1.6.0, Mac only): `TOTK_BOTW_HD_HEAPS=1` gives the game bigger heaps (a 7.5 GiB memory heap and the
+  texture heaps of the pack's own 1.6.0 patch, which the app applies itself: do not add the pack's `ExeFS/1.6.0.pchtxt`) and a GPU memory budget of at least 7000 MB. It needs about 6.3 GB of memory. Without it, HDPacks 4k stops at boot or at the first world load.
   The app turns it on by itself when the mod's `manifest.tsv` replaces 4 GiB or more (HDPacks 4k: 19.7 GiB), or
   `Pack/TitleBG.pack` with 200 MiB or more. `botw.log` says so in a `[launcher] HD heaps` line. `TOTK_BOTW_HD_HEAPS=0` or `=1` in the environment wins.
 
@@ -596,8 +596,8 @@ python3 games/totk/scripts/make_mod_manifest.py "$MODDIR" --app "/path/to/Breath
   `aoc1/Pack/Dungeon120.pack`）。`make_mod_manifest.py` 为它生成 `aoc1/manifest.tsv`，并按 App 的追加内容校验。DLC
   文件只能替换，不能新增。只有 `aoc1/` 文件的 mod 也可以。第一次加载 DLC 后用
   `grep "add-on content overlay" ~/Library/Logs/MacNativeGames/botw.log | tail -1` 检查。
-- 大型材质包（1.9.0，仅 Mac）：`TOTK_BOTW_HD_HEAPS=1` 让游戏使用更大的堆（7.5 GiB 内存堆，以及材质包自带 1.6.0
-  补丁里的材质堆大小），显存预算至少 7000 MB，约需 6.3 GB 内存。不设置它，HDPacks 4k 会在启动时或第一次进入世界时停止。
+- 大型材质包（1.9.0 和 1.6.0，仅 Mac）：`TOTK_BOTW_HD_HEAPS=1` 让游戏使用更大的堆（7.5 GiB 内存堆，以及材质包自带 1.6.0
+  补丁里的材质堆大小，由 App 自己写入：不要再加入材质包的 `ExeFS/1.6.0.pchtxt`），显存预算至少 7000 MB，约需 6.3 GB 内存。不设置它，HDPacks 4k 会在启动时或第一次进入世界时停止。
   当 mod 的 `manifest.tsv` 替换 4 GiB 或更多数据（HDPacks 4k：19.7 GiB），或以 200 MiB 或更大的文件
   替换 `Pack/TitleBG.pack` 时，App 会自动开启它，并在 `botw.log` 中写一行
   `[launcher] HD heaps`。环境变量中的 `TOTK_BOTW_HD_HEAPS=0` 或 `=1` 优先。
