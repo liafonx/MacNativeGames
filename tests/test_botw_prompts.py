@@ -1111,7 +1111,10 @@ class Scale(unittest.TestCase):
             self.main_with(mod, romfs, '--scale', '2', '--mods', str(mods), '--replace')
             out = bf.yaz0_decode((mod / bf.RSTB).read_bytes())
             self.assertEqual(dict(struct.unpack_from('<II', out, 12 + 8 * i) for i in range(3))[zlib.crc32(b'Other.bin')], 3000)
+            (mods / 'manifest.tsv').write_text(f'# header\n{bf.RSTB}\t{(mods / bf.RSTB).stat().st_size}\t{sha}\t{"0" * 64}\n')
             self.main_with(mods, romfs, '--scale', '2', '--mods', str(mods), '--replace')   # written into the mods folder itself
+            out = bf.yaz0_decode((mods / bf.RSTB).read_bytes())
+            self.assertEqual(dict(struct.unpack_from('<II', out, 12 + 8 * i) for i in range(3))[zlib.crc32(b'Other.bin')], 7777)
             line = [l for l in (mods / 'manifest.tsv').read_text().splitlines() if l.startswith(bf.RSTB + '\t')][0]
             with (romfs / 'romfs.bin').open('rb') as image:
                 offset, size = bp.read_index(romfs / 'runtime-index.bin')[bf.RSTB]; image.seek(offset); game = hashlib.sha256(image.read(size)).hexdigest()

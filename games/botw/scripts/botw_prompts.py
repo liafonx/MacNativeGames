@@ -557,8 +557,7 @@ def main():
                 raise ValueError('not found in the RomFS')
             with (romfs / 'romfs.bin').open('rb') as image:
                 offset, size = index[bf.RSTB]; image.seek(offset); rstb = image.read(size)
-            # --mods naming the folder written into: its own table is raised in place, and the original stays the game's
-            mods_rstb = mod_table(args.mods) if args.mods and args.mods.resolve() != args.mod.resolve() else None
+            mods_rstb = mod_table(args.mods) if args.mods else None
             for table in (rstb, *(mods_rstb[:1] if mods_rstb else ())):
                 bf.rstb_edits(bf.yaz0_decode(table), dict.fromkeys((resource_name(LAYOUT), *map(resource_name, fonts)), 0))
         except (OSError, *BAD_DATA) as error:
@@ -642,7 +641,9 @@ def main():
         (args.mod / bf.RSTB).parent.mkdir(parents=True, exist_ok=True)
         (args.mod / bf.RSTB).write_bytes(data)
         print(f'{args.mod / bf.RSTB}: {"from the mods, " if mods_rstb else ""}raised {", ".join(f"{name} by {grow}" for name, grow in sorted(growth.items()))}')
-    found = write_manifest(args.mod, romfs, merged={bf.RSTB: mods_rstb[1]} if growth and mods_rstb else None)
+    # --mods naming the folder written into: its own table is raised in place, so the original stays the game's
+    in_place = args.mods and args.mods.resolve() == args.mod.resolve()
+    found = write_manifest(args.mod, romfs, merged={bf.RSTB: mods_rstb[1]} if growth and mods_rstb and not in_place else None)
     if found.misspelt:
         sys.exit('manifest not written: ' + ', '.join(f'{a} (the RomFS has {b})' for a, b in found.misspelt))
     print(f'{args.mod / "manifest.tsv"}: {len(found.lines)} files ({len(found.lines) - len(found.added)} replaced, {len(found.added)} added)')
