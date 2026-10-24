@@ -17,6 +17,9 @@
 uint32_t runtime_thread_current_handle(void);
 static void botw_aspect_install(Module *m);   /* key 4, end of the file */
 static int patch_output_res(Module *m);   /* native output size, after runtime_output_res */
+#ifdef GAME_BOTW190
+static void patch_hd_heaps(Module *m);   /* TOTK_BOTW_HD_HEAPS=1: bigger heaps for HD texture packs */
+#endif
 static void botw_output_tick(void);       /* the size static follows the canvas after the start */
 static void botw_aspect_apply(void);
 
@@ -581,6 +584,23 @@ static uint32_t native_word(uint32_t original, int kind, int k) {   /* the same 
     }
     return (original & ~(0xffffu << 5)) | (imm & 0xffffu) << 5;
 }
+/* HD heaps, 1.9.0 (TOTK_BOTW_HD_HEAPS=1, Mac only, default off; the owner, 2026-10-24: "make the pack work in 1.9.0, rise
+   any mem cap if needed"). The HDPacks 4k texture pack (made for 1.6.0, with its own 1.6.0 heap patch) crashed 1.9.0 in
+   two places once its RSTB was right: its 346 MiB TitleBG.pack overflows the 225 MiB StarterPackMgr heap at boot (a null
+   resource handle at main+0x155dda8), and at the first world load a texture never loads (fault 0x1c at main+0xef69f4)
+   because the texture compaction heap "Main" (500 MiB) is full. patch_hd_heaps gives StarterPackMgr and ForResourceL / S
+   the pack's own 1.6.0 sizes (each ForResource mode +409 / +505 MiB) and the compaction heap 2032 MiB. That heap is one
+   NVN memory pool, so nvn_mtl.m's zero-copy limit (POOL_BUFFER_MAX) is 2 GiB with these heaps; at 992 MiB textures were
+   evicted and reloaded and a ruin wall (FldObj_HyliaStoneRuin_A) never appeared (2026-10-24). The game adds 30 MiB to
+   it when w27 is set (main+0x127b774), which would pass 2 GiB and stop at the pool check. It raises the memory heap
+   (nninitStartup) to 7.5 GiB and RootHeap (nnMain) to 7 GiB: one 64-bit orr with a logical immediate, since mov w stops
+   below 4 GiB. Need: 3888 MiB (the 3456x1944 native size) + 409 + 505 + 1532 = 6334 MiB < 7 GiB. services.c raises the heap cap to 8 GiB and the guest
+   region to 9 GiB, and the application pool takes the memory-heap delta (runtime_output_res_extra_bytes). The GPU memory
+   budget (TOTK_GPU_BUDGET_MB, 5000 MB from the launcher on a 16 GB Mac) becomes at least 7000 MB: the 2032 MiB heap took
+   the game to 5017 MB in the first world load (the owner, 2026-10-24: "Raise the GPU budget to 7000 MB"); the kernel
+   panics it guards against came at about 15 GB resident. */
+enum { HD_MEMORY_HEAP_MIB = 7680, HD_ROOT_HEAP_MIB = 7168, SHIPPED_MEMORY_HEAP_MIB = 3120, HD_GPU_BUDGET_MB = 7000 };
+int runtime_botw_hd_heaps(void) { const char *e = getenv("TOTK_BOTW_HD_HEAPS"); return e && !strcmp(e, "1") && !ios_code(); }
 #endif
 /* The phone's render size (user 2026-10-23: "内部960×540，输出 用默认 放大机制"): the iPhone / iPad runs the handheld
    mode, whose branch of the 1.6.0 display-mode routine (jump table at main+0x26164f8: mode 1 -> main+0x18216c8) stores
@@ -627,6 +647,8 @@ static const PchtxtSite g_pchtxt_reserved[] = {
 #else
     {0xc617e8, 0x4}, {0xeb0f78, 0x14}, {0x125f114, 0x20}, {0x12660bc, 0x14}, {0x1280ec8, 0x24}, {0x1281064, 0x10},
     {0x1266114, 0xc}, {0x1281080, 0x8}, {0x151d484, 0x10}, {0x15a01a0, 0x4}, {0x1d78198, 0x8},
+    /* the HD heaps (patch_hd_heaps): StarterPackMgr, texture compaction, ForResourceL / S of the three modes */
+    {0x1209a8c, 0x8}, {0x127b6e0, 0x4}, {0x127b72c, 0x8}, {0x127b738, 0x8}, {0x127b744, 0x8},
 #endif
 };
 static void patch_pchtxt(Module *m) { pchtxt_apply(m, "botw", g_pchtxt_reserved, sizeof g_pchtxt_reserved / sizeof *g_pchtxt_reserved); }
@@ -636,6 +658,9 @@ void runtime_game_patches(Module *m) {
     patch_pchtxt(m);   /* first: on a Mac the patches below check the original words they replace (the phone's code is patched at build, CODE_PATCHED_AT_BUILD) */
     if (!patch_output_res(m)) patch_render_1080(m);
     patch_phone_render(m);
+#ifdef GAME_BOTW190
+    patch_hd_heaps(m);
+#endif
     botw_aspect_install(m);
     if (realtime_enabled()) patch_realtime(m);
     else fprintf(stderr, "[botw] real-time frame step off (TOTK_REALTIME=0): the game advances by its present interval\n");
@@ -848,6 +873,7 @@ uint64_t runtime_output_size_current(void) { uint64_t c = atomic_load(&g_out_cur
 uint64_t runtime_output_res_extra_bytes(void) { return runtime_output_res(NULL, NULL) ? OUTPUT_EXTRA : 0; }
 #else
 uint64_t runtime_output_res_extra_bytes(void) {   /* services.c adds it to the application pool */
+    if (runtime_botw_hd_heaps()) return (uint64_t)(HD_MEMORY_HEAP_MIB - SHIPPED_MEMORY_HEAP_MIB) << 20;
     if (!runtime_output_res(NULL, NULL)) return 0;
     unsigned display, gpu, extra; native_heaps((int)(g_out_w / 16), &display, &gpu, &extra);
     return (uint64_t)extra << 20;   /* the memory and root heaps are this much bigger */
@@ -1001,6 +1027,53 @@ static int patch_output_res(Module *m) {   /* 1.9.0: the swapchain and heaps at 
     fprintf(stderr, "[botw] output: a %ux%u swapchain, starting at %ux%u; display heap %u MiB, GPU heap %u MiB, memory and root heaps +%u MiB (30 instructions verified)%s\n",
             w, h, cw, ch, display, gpu, extra, g_out_mode == OUT_AUTO ? (w > 2560 ? "; key 3: off -> MetalFX 2K -> native 2K -> native screen size" : "; key 3: off -> MetalFX 2K -> native size") : "");
     return 1;
+}
+static void patch_hd_heaps(Module *m) {   /* TOTK_BOTW_HD_HEAPS=1: the comment at runtime_botw_hd_heaps */
+    if (!runtime_botw_hd_heaps()) {
+        const char *e = getenv("TOTK_BOTW_HD_HEAPS");
+        if (e && !strcmp(e, "1")) fprintf(stderr, "[botw] HD heaps: Mac only, ignored on the phone (TOTK_BOTW_HD_HEAPS=1)\n");
+        return;
+    }
+    static const struct { uint32_t off, original, word; } site[] = {
+        {0x1209a8cu, 0x52a1c208u, 0x52a37a08u},   /* StarterPackMgr: mov w8, #0xe100000 (225 MiB) -> 445 MiB */
+        {0x1209a90u, 0x52a02809u, 0x52a0c009u},   /* the same, other mode: mov w9, #0x1400000 (20 MiB) -> 96 MiB */
+        {0x127b6e0u, 0x52a3e809u, 0x52afe009u},   /* texture compaction "Main": mov w9, #0x1f400000 (500 MiB) -> 2032 MiB */
+        {0x127b744u, 0x52a56e17u, 0x52a8a017u},   /* ForResourceL, default mode: 695 -> 1104 MiB */
+        {0x127b748u, 0x52a2ee19u, 0x52a6e019u},   /* ForResourceS, default mode: 375 -> 880 MiB */
+        {0x127b72cu, 0x52a49217u, 0x52a7c417u},   /* ForResourceL, mode 1: 585 -> 994 MiB */
+        {0x127b730u, 0x52a21219u, 0x52a60419u},   /* ForResourceS, mode 1: 265 -> 770 MiB */
+        {0x127b738u, 0x52a3b617u, 0x52a6e817u},   /* ForResourceL, mode 2: 475 -> 884 MiB */
+        {0x127b73cu, 0x52a17c19u, 0x52a56e19u},   /* ForResourceS, mode 2: 190 -> 695 MiB */
+    };
+    unsigned w, h; int native = runtime_output_res(&w, &h);
+    const struct { uint32_t off, original; int kind; uint32_t word; } big[] = {   /* patch_output_res may have written them */
+        {0x71cu, 0x52b86000u, NK_MEMORY_HEAP, 0xb2630fe0u},   /* orr x0, xzr, #0x1e0000000: memory heap 7.5 GiB */
+        {0xc617c0u, 0x52b82008u, NK_ROOT_HEAP, 0xb2620be8u},  /* orr x8, xzr, #0x1c0000000: RootHeap 7 GiB */
+    };
+    uint32_t word;
+    for (size_t i = 0; i < sizeof site / sizeof *site; i++) {
+        memcpy(&word, m->base + site[i].off, 4);
+        if (word != site[i].original) {
+            fprintf(stderr, "[botw] HD heaps main+%#x: found %08x expected %08x\n", site[i].off, word, site[i].original);
+            runtime_fail("the HD heaps require the " TOTK_GAME_VERSION " heap instructions");
+        }
+    }
+    for (size_t i = 0; i < sizeof big / sizeof *big; i++) {
+        uint32_t want = native ? native_word(big[i].original, big[i].kind, (int)(w / 16)) : big[i].original;
+        memcpy(&word, m->base + big[i].off, 4);
+        if (word != want) {
+            fprintf(stderr, "[botw] HD heaps main+%#x: found %08x expected %08x\n", big[i].off, word, want);
+            runtime_fail("the HD heaps require the " TOTK_GAME_VERSION " memory and root heap instructions");
+        }
+    }
+    const char *b = getenv("TOTK_GPU_BUDGET_MB"); unsigned long long mb = b ? strtoull(b, NULL, 10) : 0;   /* 0 = off */
+    if (!b || (mb && mb < HD_GPU_BUDGET_MB)) { char v[16]; snprintf(v, sizeof v, "%d", HD_GPU_BUDGET_MB); setenv("TOTK_GPU_BUDGET_MB", v, 1);
+        fprintf(stderr, "[botw] HD heaps: GPU memory budget %s -> %d MB\n", b ? b : "default", HD_GPU_BUDGET_MB); }
+    for (size_t i = 0; i < sizeof site / sizeof *site; i++) put_word(m, site[i].off, site[i].word, "HD heaps");
+    for (size_t i = 0; i < sizeof big / sizeof *big; i++) put_word(m, big[i].off, big[i].word, "HD heaps");
+    fprintf(stderr, "[botw] HD heaps (TOTK_BOTW_HD_HEAPS=1): memory heap %u MiB, RootHeap %u MiB, StarterPackMgr 445 / 96 MiB, "
+            "texture compaction 2032 MiB, ForResourceL / S 1104 / 880 MiB (default mode) (11 instructions verified)\n",
+            HD_MEMORY_HEAP_MIB, HD_ROOT_HEAP_MIB);
 }
 #endif
 /* Pre-rendered movies (the memories, the intro): the movie player advances one movie frame per game frame, so above
