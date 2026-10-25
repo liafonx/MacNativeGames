@@ -59,6 +59,7 @@ CLOTH = re.compile(r'cloth_inline\[3\][ \t]*=[ \t]*\{(.*?)\};', re.S)
 CLOTH_ENTRY = re.compile(r'\{([^{}]*)\}')
 BOTW_ROW = re.compile(r'\{[ \t]*(0x[0-9a-fA-F]+)u?[ \t]*,')       # a row of game_patches_botw.c's tables: {main offset, word, ...}
 BOTW_AT = re.compile(r'\bconst uint32_t at = (0x[0-9a-fA-F]+);.*?\bput_words\(m, at, \w+, (\d+)', re.S)   # 1.6.0's aspect writer: `at`, N words
+BOTW_UW_WRITER = re.compile(r'\bUW_WRITER_AT[ \t]+(0x[0-9a-fA-F]+)u?\s*\n\s*static const uint32_t uw_writer_original\[\] = \{([^}]*)\}')   # the aspect writer's original words (UW_WRITER_N of them)
 BOTW_PHONE = re.compile(r'\bPHONE_RENDER[ \t]*=[ \t]*(0x[0-9a-fA-F]+)')   # enum { PHONE_RENDER = 0x.. }: the phone's mov, movk, str
 BOTW_SIZE_INIT = re.compile(r'\bsize_init\[\][ \t]*=[ \t]*\{([^}]*)\}')   # 1.6.0's output size: movz at each, movk 12 bytes on
 BOTW_MOVK = re.compile(r'\bRENDER_MOVK[ \t]*=[ \t]*(0x[0-9a-fA-F]+)')
@@ -264,6 +265,8 @@ def botw_sites(text, source, defined):
               for match in BOTW_WORDS.finditer(active)]
     found += [(int(match.group(1), 16), _line_of(active, match.start()), 12) for match in BOTW_PHONE.finditer(active)]
     found += [(int(match.group(1), 16), _line_of(active, match.start()), 4 * int(match.group(2))) for match in BOTW_AT.finditer(active)]
+    found += [(int(match.group(1), 16), _line_of(active, match.start()), 4 * len(re.findall(r'0x[0-9a-fA-F]+', match.group(2))))
+              for match in BOTW_UW_WRITER.finditer(active)]
     found += [(int(number, 16), _line_of(active, match.start()), 16) for match in BOTW_SIZE_INIT.finditer(active)
               for number in re.findall(r'0x[0-9a-fA-F]+', match.group(1))]
     return [Site(f'{source}:{line}', offset, size) for offset, line, size in found]

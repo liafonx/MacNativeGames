@@ -32,6 +32,7 @@
 #include <mach/mach.h>
 #include <pthread/qos.h>
 #include <dlfcn.h>
+#include <TargetConditionals.h>
 
 #define R_TIMEOUT     0xEA01u   // 内核模块 1，描述 117 | Kernel module 1, description 117
 #define R_CANCELLED   0xEC01u   // 118
@@ -407,13 +408,22 @@ extern pthread_key_t runtime_keys[8];   // loader.c: [2] holds the game's thread
 static void totk_preempt_signal(int sig, siginfo_t *si, void *context);
 static int totk_ap_on(void) {   // holding G
     if (g_totk_ap < 0) {
-        const char *e = getenv("TOTK_ASYNC_PREEMPT"); g_totk_ap = e && !strcmp(e, "1");   // off by default until measured on 1.4.3 (after PR #488)
+        /* On by default on the Mac since 2026-10-25 (user's choice; two short 1.4.3 runs at Lookout Landing: dropped
+           refreshes 1.42% -> 0.84%, frame-time p95 15.2 -> 14.3 ms, too short to be conclusive; the author measured
+           2.61% -> 0.93%). TOTK_ASYNC_PREEMPT=0 turns it off: the first thing to try when a hang, crash or new stutter
+           shows up. Off on iPhone / iPad until it has run there (=1 turns it on). */
+        const char *e = getenv("TOTK_ASYNC_PREEMPT");
+#if TARGET_OS_IPHONE
+        g_totk_ap = e && !strcmp(e, "1");
+#else
+        g_totk_ap = !(e && !strcmp(e, "0"));
+#endif
         if (g_totk_ap) {
             struct sigaction a = {0}; a.sa_sigaction = totk_preempt_signal; a.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
             sigemptyset(&a.sa_mask);
             if (sigaction(SIGUSR2, &a, NULL)) g_totk_ap = 0;
         }
-        fprintf(stderr, "[threads] asynchronous preemption of virtual cores (Horizon's rule): %s\n", g_totk_ap ? "on (TOTK_ASYNC_PREEMPT=1)" : "off");
+        fprintf(stderr, "[threads] asynchronous preemption of virtual cores (Horizon's rule): %s\n", g_totk_ap ? "on (TOTK_ASYNC_PREEMPT=0 turns it off)" : "off (TOTK_ASYNC_PREEMPT=1 turns it on)");
     }
     return g_totk_ap;
 }

@@ -10,6 +10,19 @@ Not an emulator: the game's own ARM64 code runs directly on Apple chips, and its
 **Breath of the Wild 1.6.0 and 1.9.0 are now officially supported on Mac!** 1.6.0 also runs on the iPhone (first played on an iPhone 14, October 23).
 **Tears of the Kingdom 1.0.0, 1.2.1 and 1.4.3 are now officially supported on Mac, iPhone and iPad!**
 
+| Game | Version | Platform | Status | Folder |
+|---|---|---|---|---|
+| The Legend of Zelda: Tears of the Kingdom | 1.0.0, 1.2.1, 1.4.3 (1.1.2 builds too) | Mac, iPhone, iPad | Supported | [`games/totk`](docs/install.md) |
+| The Legend of Zelda: Breath of the Wild | 1.6.0, 1.9.0 | Mac; 1.6.0 also on the iPhone | Supported | [`games/totk`](docs/install.md#breath-of-the-wild-160-and-190-early) (shared runtime), list in `games/botw` |
+| Super Smash Bros. Ultimate | 13.0.2 | Mac | Community port | [`games/ssbu`](games/ssbu/README.md) |
+| Super Mario Odyssey | 1.3.0 | Mac | Community port, early | [`games/odyssey`](games/odyssey/README.md) |
+| Bayonetta 3 | 1.2.0 | Mac | Community port, work in progress | [`games/by3`](games/by3/README.md) |
+| Super Mario Bros. Wonder | 1.0.0, 1.2.1 | Mac | Community port, early | [`games/wonder`](games/wonder/README.md) |
+| Ori and the Blind Forest: Definitive Edition | 1.0.1 | Mac | Community port | [`games/ori`](games/ori/README.md) |
+| Super Mario Party Jamboree | 2.3.0 | Mac | Community port, experimental | [`games/jamboree`](games/jamboree/README.md) |
+
+Community ports keep their own runtime, graphics layer and scripts in their folder and are built with the steps there.
+
 > **Use your AI assistant to help you build the Mac app. We recommend Claude Code, Codex, or any other AI assistant you prefer.**
 
 [English](#english) | [中文](#chinese)
@@ -27,7 +40,7 @@ Play your own copy of **The Legend of Zelda: Tears of the Kingdom** natively on 
 > [!TIP]
 > **Every shader in the shared list is ready before you play.** On a Mac the game does not stop to compile it, and on an iPhone or iPad nothing is missing from the picture. The more places players cover, the smoother the game gets for everyone.
 
-The [shared shader list](docs/shader-list.md) now holds **34,933 shader variants** (28,464 shaders) from the Mac, iPhone and iPad: only states a build does not make by itself, since every build makes each shader's default variant. Every build makes them from the player's own game files, so the list holds identifiers only, never game data. Helping takes no setup:
+The [shared shader list](docs/shader-list.md) now holds **34,937 shader variants** (28,464 shaders) from the Mac, iPhone and iPad: only states a build does not make by itself, since every build makes each shader's default variant. Every build makes them from the player's own game files, so the list holds identifiers only, never game data. Helping takes no setup:
 
 1. **Play.** Every build carries each shader of the game for its default bind state. When your game meets a shader in a state that variant does not serve, or builds a render pipeline the app's list lacks, it notes it in `shader-list-contribution.txt`; default variants are never noted.
 2. **On a Mac, every 100 new rows (shaders and pipelines together) it asks you once, before the game starts.** Click "Send": the GitHub form opens and the file is shown, ready to drag in. If the GitHub CLI (`gh`) is installed and signed in, the dialog offers "Submit automatically" instead, which sends this batch for you (a private gist and an issue) without opening the browser. An iPhone or iPad never asks during play: while it is connected to the Mac that built its app (cable or the same Wi-Fi), the Mac asks instead. "Don't remind me again" stops the reminders.
@@ -39,6 +52,8 @@ Update history:
 
 | Date | Platform | Update |
 |---|---|---|
+| Oct 25 | Mac | **Super Mario Party Jamboree 2.3.0** (community port, experimental): independent [`games/jamboree`](games/jamboree/README.md) build, vertex-storage writes during rasterizer discard fix character deformation; tested scope and limitations documented |
+| Oct 24 | Mac | **Super Smash Bros. Ultimate 13.0.2** (community port): fights, World of Light with the Spirit Board, saves, movies with sound; 1080p or 2K; own runtime in [`games/ssbu`](games/ssbu/README.md), with its one-command build there |
 | Oct 23 | iPhone | **Breath of the Wild 1.6.0** on the iPhone: full screen, add-on content, saves copied from the Mac; both games render at 960x540 on the phone and use their own upscale to 1280x720 (no MetalFX) |
 | Oct 23 | Mac | **Super Mario Odyssey 1.3.0** (community port, early): Cap Kingdom and Bonneton playable at 60 fps on an M3, own runtime in [`games/odyssey`](games/odyssey/README.md), which has the build steps |
 | Oct 23 | iPhone, iPad | **Tears of the Kingdom** fills the screen, 60 fps by default, MetalFX upscaling |
@@ -47,6 +62,7 @@ Update history:
 | Oct 23 | Mac | **Breath of the Wild 1.9.0**: key 3 switches its own canvas and 3D scene to native 2K and back during play (off → MetalFX 2K → native 2K → off), as on 1.6.0; `TOTK_OUTPUT_RES=screen` adds the largest 16:9 size of the Mac's screen (3456x1944 on a 16-inch MacBook Pro) to the cycle and starts there. Not an upscale. On such a screen, native 2K + MetalFX follows native 2K: MetalFX enlarges the 2560x1440 picture to the window, so edges stay clean at about 51 FPS (native 2K 50, the screen size 42–44, bog, M1 Pro) |
 | Oct 21 | Mac | **Breath of the Wild 1.9.0**: shaders and render pipelines optimised |
 | Oct 21 | Mac, iPhone, iPad | **Tears of the Kingdom**: steadier at 90 fps, and steadier frame rates when no shaders are cached at all |
+| Oct 20 | Mac | **Bayonetta 3 1.2.0** (community port, work in progress): title, menus and the story run with picture, sound, keyboard input and saves; own runtime in [`games/by3`](games/by3/README.md), which has the build steps |
 | Oct 20 | Mac | **Breath of the Wild 1.9.0** (early): a base NSP and the 1.9.0 update NSP build the same app, each DLC pack optional (`--dlc`) |
 | Oct 20 | Mac | **Breath of the Wild 1.6.0** (early): a card image holding the base game, the update and the add-on content builds its own app with the same command; title, saves, the Great Plateau and DLC packs work |
 | Oct 19 | Mac | Key 4 switches to a true 21:9 ultrawide view and back (1.2.1, 1.4.3); the HUD keeps its shape in the middle 16:9 |
@@ -96,6 +112,19 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 **正式支持旷野之息 1.6.0 和 1.9.0 mac了！** 1.6.0 也能在 iPhone 上玩了（10 月 23 日在 iPhone 14 上首次实玩）。
 **正式支持王国之泪 1.0.0,1.2.1，1.4.3 Mac iPhone iPad了！**
 
+| 游戏 | 版本 | 平台 | 状态 | 目录 |
+|---|---|---|---|---|
+| 塞尔达传说 王国之泪 | 1.0.0、1.2.1、1.4.3（1.1.2 也能打包） | Mac、iPhone、iPad | 正式支持 | [`games/totk`](docs/install.zh-CN.md) |
+| 塞尔达传说 旷野之息 | 1.6.0、1.9.0 | Mac；1.6.0 也能在 iPhone 上玩 | 正式支持 | [`games/totk`](docs/install.zh-CN.md#旷野之息-160-和-190早期)（共用运行时），清单在 `games/botw` |
+| 任天堂明星大乱斗 特别版 | 13.0.2 | Mac | 社区移植 | [`games/ssbu`](games/ssbu/README.md) |
+| 超级马力欧 奥德赛 | 1.3.0 | Mac | 社区移植，早期 | [`games/odyssey`](games/odyssey/README.md) |
+| 猎天使魔女 3 | 1.2.0 | Mac | 社区移植，开发中 | [`games/by3`](games/by3/README.md) |
+| 超级马力欧兄弟 惊奇 | 1.0.0、1.2.1 | Mac | 社区移植，早期 | [`games/wonder`](games/wonder/README.md) |
+| 奥日与黑暗森林 终极版 | 1.0.1 | Mac | 社区移植 | [`games/ori`](games/ori/README.md) |
+| 超级马力欧派对 空前盛会 | 2.3.0 | Mac | 社区移植，实验 | [`games/jamboree`](games/jamboree/README.md) |
+
+社区移植的游戏各自在自己的目录里带一份运行时、图形层和脚本，按那里的步骤构建。
+
 > **请使用你的 AI 助理帮你完成 Mac App 的构建。推荐 Claude Code、Codex，或其他你喜欢的 AI 助理。**
 
 [英文说明](#english) | [中文说明](#chinese)
@@ -113,7 +142,7 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 > [!TIP]
 > **公共清单里的每个着色器，开玩之前就已经准备好。** Mac 上不用停下来现场编译，iPhone 和 iPad 上画面也不会缺东西。大家玩过的地方越多，所有人玩得越流畅。
 
-[公共着色器清单](docs/shader-list.md)现在有 **34,933 个着色器变体**（28,464 个着色器），来自 Mac、iPhone 和 iPad：只收打包自己做不出的状态，因为每次打包都会给每个着色器做好默认变体。每次打包都用玩家自己的游戏文件生成，所以清单里只有标识，不含任何游戏数据。参与不需要任何设置：
+[公共着色器清单](docs/shader-list.md)现在有 **34,937 个着色器变体**（28,464 个着色器），来自 Mac、iPhone 和 iPad：只收打包自己做不出的状态，因为每次打包都会给每个着色器做好默认变体。每次打包都用玩家自己的游戏文件生成，所以清单里只有标识，不含任何游戏数据。参与不需要任何设置：
 
 1. **照常玩。** 每次打包都会把游戏里每个着色器按默认绑定状态各备一份。游戏遇到默认那份用不了的状态，或者建了 App 清单里没有的渲染管线，才会记进 `shader-list-contribution.txt`；默认变体不记。
 2. **在 Mac 上，着色器和管线合计每攒够 100 条，它会在游戏启动前问你一次。** 点“发送”，GitHub 提交页面会打开，文件也会显示出来，拖进去就行。装了 GitHub 命令行工具（`gh`）并已登录时，对话框里会多一个“自动提交”，点了就直接替你把这一批发出去（私密 gist 加一个 issue），不用打开浏览器。iPhone 和 iPad 玩的时候从不提醒：设备连着打包它的那台 Mac（线连或同一 Wi‑Fi）时，由 Mac 来问。点“不要提醒了”以后就不再问。
@@ -125,6 +154,8 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 
 | 日期 | 平台 | 更新 |
 |---|---|---|
+| 10 月 25 日 | Mac | **超级马力欧派对 空前盛会 2.3.0**（社区移植，实验）：独立构建，放在 [`games/jamboree`](games/jamboree/README.md)；光栅化丢弃时照样执行顶点存储写入，修好了角色变形；测过的范围和已知限制写在那里 |
+| 10 月 24 日 | Mac | **任天堂明星大乱斗 特别版 13.0.2**（社区移植）：对战、灯火之星和命魂板、存档、带声音的过场动画；1080p 或 2K；运行时独立放在 [`games/ssbu`](games/ssbu/README.md)，一条命令构建，步骤见那里 |
 | 10 月 23 日 | iPhone | **旷野之息 1.6.0** 上 iPhone：铺满屏幕、带 DLC、可拷入 Mac 的存档；两款游戏在手机上都是内部 960×540，用游戏自己的放大到 1280×720（不用 MetalFX） |
 | 10 月 23 日 | Mac | **超级马力欧 奥德赛 1.3.0**（社区移植，早期）：帽子王国和 Bonneton 在 M3 上 60 帧可玩，运行时独立放在 [`games/odyssey`](games/odyssey/README.md)，构建步骤见那里 |
 | 10 月 23 日 | iPhone、iPad | **王国之泪** 铺满屏幕 默认锁 60、MetalFX放大|
@@ -133,6 +164,7 @@ MIT (see [LICENSE](LICENSE)). Third-party code keeps its own license: [THIRD_PAR
 | 10 月 23 日 | Mac | **旷野之息 1.9.0**：和 1.6.0 一样，玩的时候用 3 键把游戏自己的画布和 3D 场景切到原生 2K 再切回来（关 → MetalFX 2K → 原生 2K → 关）；`TOTK_OUTPUT_RES=screen` 把 Mac 屏幕最大的 16:9 尺寸（16 英寸 MacBook Pro 上是 3456x1944）加进循环，并从这个尺寸启动。不是放大。在这样的屏幕上，原生 2K 之后多一档「原生 2K + MetalFX」：MetalFX 把 2560x1440 的画面放大到窗口，边缘干净，约 51 帧（原生 2K 50 帧，屏幕尺寸 42–44 帧，沼泽，M1 Pro）|
 | 10 月 21 日 | Mac | **旷野之息 1.9.0** 优化了着色器和渲染管线 |
 | 10 月 21 日 | Mac、iPhone、iPad | **王国之泪** 提高90帧稳定性，提高完全没有着色器时帧数稳定 |
+| 10 月 20 日 | Mac | **猎天使魔女 3 1.2.0**（社区移植，开发中）：标题、菜单和剧情能跑，有画面、声音、键盘输入和存档；运行时独立放在 [`games/by3`](games/by3/README.md)，构建步骤见那里 |
 | 10 月 20 日 | Mac | **旷野之息 1.9.0**（早期）：本体 NSP + 1.9.0 更新 NSP 打成同一个 App，每个 DLC 内容包都可选（`--dlc`） |
 | 10 月 20 日 | Mac | **旷野之息 1.6.0**（早期）：本体 + 更新 + 追加内容合在一起的卡带镜像用同一条命令打成单独的 App；标题、存档、初始台地和 DLC 内容包都能用 |
 | 10 月 19 日 | Mac | 按 4 切换真正的 21:9 超宽画面（1.2.1、1.4.3），HUD 保持原比例、在中间 16:9 区域 |

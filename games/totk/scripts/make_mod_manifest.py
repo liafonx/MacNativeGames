@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Write the manifest.tsv of a player's RomFS mod (runtime/romfs.c loads it from TOTK_ROMFS_MODS, which the launcher sets to
-~/Library/Application Support/MacNativeGames/TOTK/mods/<version>, or .../BotW/mods/botw160 for Breath of the Wild).
+~/Library/Application Support/MacNativeGames/TOTK/mods/<version>, or .../BotW/mods/botw160 or botw190 for Breath of the Wild).
 
 The mod folder holds the replacement files under their RomFS paths (for example Sound/Resource/Stream/Dm_OP_0001.bwav).
 A path the app replaces itself (its romfs-patches and the 2K romfs-patches-out overlays) is left out with a line
@@ -29,7 +29,7 @@ add-on content volume N, under paths relative to that folder. It gets its own ao
 volume extracted/<version>/aoc/<N> (next to romfs, the same romfs.bin and runtime-index.bin). Replacement only: a file the
 volume lacks stops the run. For Tears of the Kingdom an aoc1/ folder is just more files of the RomFS, as before.
 
-usage: make_mod_manifest.py <mod folder> (--app <Tears of the Kingdom.app | Breath of the Wild.app> | --romfs <folder>) [--version v143]
+usage: make_mod_manifest.py <mod folder> (--app <Tears of the Kingdom.app | Breath of the Wild.app> | --romfs <folder>) [--version v143 | botw190]
                               [--exclude <RomFS path or glob>]... [--check]
 """
 import argparse
@@ -350,7 +350,7 @@ def main():
     romfs = args.romfs
     if args.app:
         if not version:
-            parser.error('name the game version with --version (or name the mod folder v0, v112, v121, v143 or botw160)')
+            parser.error('name the game version with --version (or name the mod folder v0, v112, v121, v143, botw160 or botw190)')
         romfs = args.app/f'Contents/Resources/totk/extracted/{version}/romfs'
     for need in ('romfs.bin', 'runtime-index.bin'):
         if not (romfs/need).is_file():

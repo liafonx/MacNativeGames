@@ -34,6 +34,14 @@ xcode-select --install
 brew install opus libvpx python@3.14
 ```
 
+也可以使用 [uv](https://docs.astral.sh/uv/) 提供 Python 3.14。先用 `brew install opus libvpx` 安装原生依赖，然后将下面命令中的 `python3.14 build_app.py` 替换为 `uv run --python 3.14 build_app.py`。例如，在仓库目录运行：
+
+```sh
+uv run --python 3.14 build_app.py ~/Games/totk.xci -k ~/keys/prod.keys
+```
+
+构建脚本会在 uv 所选解释器的目录中查找 Python，无需安装 Homebrew Python。构建仍会创建自己的虚拟环境，并在其中安装依赖。
+
 构建 iPhone / iPad App 还需要完整的 **Xcode 26 或更高版本**（包含 iOS 和 Metal 工具链），并安装以下工具：
 
 ```sh
@@ -120,7 +128,7 @@ python3.14 build_app.py ~/Games/totk.xci -k ~/keys/prod.keys --update ~/Games/1.
 
 `--mod` 原样接收模组文件夹，`exefs/` 和 `romfs/` 一起（只有其中一半也可以）。为什么要一个构建参数：App 没有模块加载器——启动时它映射的是构建时的那三个代码模块（main、sdk、subsdk0），已经改写为 Apple 芯片版本并按 SHA-256 绑定，里面没有任何东西会像 Ryujinx 或 Switch 那样去加载模组的 `exefs/`。所以代码这一半只能在更早一步进去：`--mod` 在改写之前把模组的主模块补丁合并进核对过的原版模块。数据这一半也不需要新的加载器，但装不装由你决定，因为版本目录是你的：加 `--install-mod-romfs` 时，构建结束时会把 `~/Library/Application Support/MacNativeGames/TOTK/mods/<版本>` 整个换成模组的 `romfs/` 并对着刚构建好的 App 生成清单（`make_mod_manifest.py`），一条命令就得到可直接带着模组玩的 App。那个目录里原来的东西不会删除，而是挪到旁边的 `<版本>.backup-<日期>-<时间>`（游戏不读它），构建开始时会醒目提示，结束时说出备份在哪。不加这个参数时构建完全不碰该目录，只打印手动复制的两条命令。多个带代码补丁的模组建议先在模组管理器里合并（TKMM 的输出就是一个文件夹，一套 `exefs/`、一套 `romfs/`），再用 `--mod <那个文件夹> --install-mod-romfs` 构建。
 
-补丁只打在当前版本、核对过的原版 main 上：`.pchtxt` 按游戏自带补丁加载器的规则读，`.ips` / `.ips32` 按模拟器的偏移约定（含 0x100 字节 NSO 头）读；打之前会检查没有任何改动落在 App 自己打补丁的位置、没有两个补丁改同一批字节、且每处改动都在 main 自己的段内。合并后的模块再改写为 Apple 芯片版本，App 按它的 SHA-256 绑定。`--work` 里的 `analysis/phase12-validation.json`（1.0.0）或 `analysis/<version>-port/phase12-validation.json` 在 `mod_exefs` 下记录模组目录、每个补丁文件的 SHA-256 和它改动的地址。模组附带的额外代码模块（`subsdk9` 这类 hook 框架的模块）不会被加载，构建会明确提示：这样的模组保留主模块补丁和整个 RomFS，但依赖那个模块的那部分代码改动不会生效。逐步说明见 [docs/mods.md](mods.md)。
+补丁只打在当前版本、核对过的原版 main 上：`.pchtxt` 按游戏自带补丁加载器的规则读，`.ips` / `.ips32` 按模拟器的偏移约定（含 0x100 字节 NSO 头）读；打之前会检查没有任何改动落在 App 自己打补丁的位置、没有两个补丁改同一批字节、且每处改动都在 main 自己的段内。合并后的模块再改写为 Apple 芯片版本，App 按它的 SHA-256 绑定。`--work` 里的 `analysis/phase12-validation.json`（1.0.0）或 `analysis/<version>-port/phase12-validation.json` 在 `mod_exefs` 下记录模组目录、每个补丁文件的 SHA-256 和它改动的地址。模组附带的额外代码模块（`subsdk9` 这类 hook 框架的模块）不会被加载，构建会明确提示：这样的模组保留主模块补丁和整个 RomFS，但依赖那个模块的那部分代码改动不会生效。逐步说明见 [docs/mods.md](mods.md)；管理器合并出来的 `exefs/` + `romfs/` 文件夹怎么装、怎么判断生效，见 [docs/merged-mod-pack.md](merged-mod-pack.md)。
 
 ### 旷野之息 1.6.0 和 1.9.0（早期）
 
@@ -130,7 +138,7 @@ python3.14 build_app.py ~/Games/totk.xci -k ~/keys/prod.keys --update ~/Games/1.
 python3.14 build_app.py ~/Games/botw.xci -k ~/keys/prod.keys --shared-fonts ~/Games/TOTK_build/totk/extracted/firmware/shared-fonts
 ```
 
-也支持单独的本体 NSP 或 XCI，加 **1.6.0 更新 NSP 或 NSZ**。这种方式不需要 DLC，生成的 App 不包含扩展票。需要标题密钥的 NSP 必须带通用票据；其他更新版本会因可执行文件哈希不匹配而被拒绝。
+也支持单独的本体 NSP 或 XCI，加 **1.6.0 更新 NSP 或 NSZ**。这种方式不需要 DLC：和下面的 1.9.0 一样，用 `--dlc` 给每个追加内容 NSP，App 里只有你给的内容包。需要标题密钥的 NSP 必须带通用票据；其他更新版本会因可执行文件哈希不匹配而被拒绝。
 
 ```sh
 python3.14 build_app.py ~/Games/botw-base.nsp -k ~/keys/prod.keys --update ~/Games/botw-1.6.0.nsp --shared-fonts ~/Games/TOTK_build/totk/extracted/firmware/shared-fonts
@@ -150,7 +158,7 @@ python3.14 build_app.py ~/Games/botw-base.nsp -k ~/keys/prod.keys --update ~/Gam
 
 1.6.0 已验证（10 月 20 日，M4 Mac，初始台地的存档）：标题、追加内容一览、读档和存档、台地约 90–120 帧（游戏按真实时间推进，按住按键的重复也按真实时间数）、两个 DLC 内容包挂载并被读取、1 键（提示框）、2 键（MetalFX 补帧：关 → 30+30 → 刷新率一半 → 不限帧，台地上每个游戏帧都插）和 3 键（MetalFX 2K 开 / 关：MetalFX 代替游戏自己把 1600×900 的画面放大进 1080p 画布，窗口大于 1080p 时出图也放大）；台地上 30 分钟约 95 帧、内存平稳（+170 MB）。10 月 23 日起（Mac）：2 键补帧恢复（它认“场景画完”用的着色器键是 10 月 20 日改键之前记的，一帧都认不出来，#177），跟着镜头走的东西（林克）不再套用镜头运动，30+30 下林克不再抖；3 键的 MetalFX 又能代替游戏自己的放大；4 键和 1.9.0 一样切换 21:9（1.6.0 的镜头每帧把比例写回 16:9，所以改的是游戏自己写的那一步）；5 键边缘平滑（#178）。3 键现在和王国之泪 1.4.3 一样循环：关 → MetalFX 2K → 原生 2K → 关（原生 2K 时场景和画布都是 2560x1440；App 启动时就按 2560x1440 建交换链、加大内存堆，`TOTK_OUTPUT_RES=0` 只保留原来的 1080p）。还没有：DLC 的任务本身（只验证了挂载和读取）。这是早期移植，会有毛边。
 
-1.9.0 已验证（10 月 20 日，M1 Pro Mac 的内置 120 Hz 屏幕，两个 DLC 内容包）：标题、读档和自动存档、六个测试地点（从 Shrine of Resurrection 到海拉鲁城出口）站着不动 58.4–77.5 帧，着色器缓存已预热时走动 58.6–81.4 帧、在克洛格森林让林克一直走动的 25 分钟测试、游戏在任何帧率下都按真实时间推进（按住按键的计数也一样）、两个 DLC 内容包（卡卡利科村的路线会触发 DLC 任务 “EX Treasure: Garb of Winds”）、2 键（MetalFX 补帧：关 → 30+30 → 刷新率一半 → 不限帧；在初始台地站着不动时，游戏分别跑 69、30、58 和 61 帧，屏幕每秒显示约 67、60、115 和 115 张画面）和 3 键（MetalFX 代替游戏自己的放大）。从 10 月 21 日起，1.9.0 也有了 1.6.0 在 30 帧以上的修复（菜单和 HUD 速度正常、每帧六次物理步进、过场动画保持 30 帧），底座模式按原生 1080p 渲染，并支持 5 键（MetalFX 时间性抗锯齿：边缘更平滑，1600x900 时台地上约少 9 帧，67.7 降到 58.6）。4 键在 1.9.0 上切换 21:9 宽屏（Mac：镜头两侧看得更多，画面填满更宽的窗口；`TOTK_ASPECT=32:9` 或 `3440x1440` 选别的比例并在启动时就打开；HUD 和菜单在中间 16:9 里保持原来的形状，地图两侧有黑边；跟随世界中物体的标记还没有往外移）。两个版本在 120 Hz 显示器上现在也不限帧，最高 120 帧（在 1.9.0 上测的）；以前游戏的呈现间隔在这种显示器上把帧率压在 60。第一次走进一个地方时，新管线编译会造成卡顿。从 10 月 23 日起，1.9.0 的底座模式可以在 1080p 以上原生渲染，和 1.6.0 一样在玩的时候用 3 键切换：关 → MetalFX 2K → 原生 2K（2560x1440）→ 关。`TOTK_OUTPUT_RES=screen` 在原生 2K 之后再加上 Mac 主屏幕最大的 16:9 尺寸（16 英寸 MacBook Pro 上是 3456x1944，也是最大尺寸），并从这个尺寸启动；`1440p` 从原生 2K 启动；`0` 或 `1080p` 只保留游戏原本的尺寸；16:9 的 `<w>x<h>` 是固定尺寸。游戏自己的画布和 3D 场景都按这个尺寸渲染，不是放大；App 启动时按本次最大的尺寸建交换链和内存堆。FPS 框里会显示尺寸（“screen” 或 “1440p”）。M1 Pro 在卡卡利科村各跑 10 分钟：1920x1080 是 66 帧，2560x1440 是 55 帧，3456x1944 是 49 帧。还没有：iPhone / iPad，以及林克腿陷进石头路的修复（在初始台地的一个地点读档后出现，旧的自动存档和在那里新存的档都一样）。详见 [1.9.0 测试记录](botw-v1.9.0-port.md)。
+1.9.0 已验证（10 月 20 日，M1 Pro Mac 的内置 120 Hz 屏幕，两个 DLC 内容包）：标题、读档和自动存档、六个测试地点（从 Shrine of Resurrection 到海拉鲁城出口）站着不动 58.4–77.5 帧，着色器缓存已预热时走动 58.6–81.4 帧、在克洛格森林让林克一直走动的 25 分钟测试、游戏在任何帧率下都按真实时间推进（按住按键的计数也一样）、两个 DLC 内容包（卡卡利科村的路线会触发 DLC 任务 “EX Treasure: Garb of Winds”）、2 键（MetalFX 补帧：关 → 30+30 → 刷新率一半 → 不限帧；在初始台地站着不动时，游戏分别跑 69、30、58 和 61 帧，屏幕每秒显示约 67、60、115 和 115 张画面）和 3 键（MetalFX 代替游戏自己的放大）。从 10 月 21 日起，1.9.0 也有了 1.6.0 在 30 帧以上的修复（菜单和 HUD 速度正常、每帧六次物理步进、过场动画保持 30 帧），底座模式按原生 1080p 渲染，并支持 5 键（MetalFX 时间性抗锯齿：边缘更平滑，1600x900 时台地上约少 9 帧，67.7 降到 58.6）。4 键在 1.9.0 上切换 21:9 宽屏（Mac：镜头两侧看得更多，画面填满更宽的窗口；`TOTK_ASPECT=32:9` 或 `3440x1440` 选别的比例并在启动时就打开；HUD 和菜单在中间 16:9 里保持原来的形状，地图两侧有黑边；跟随世界中物体的标记还没有往外移）。两个版本在 120 Hz 显示器上现在也不限帧，最高 120 帧（在 1.9.0 上测的）；以前游戏的呈现间隔在这种显示器上把帧率压在 60。第一次走进一个地方时，新管线编译会造成卡顿。从 10 月 23 日起，1.9.0 的底座模式可以在 1080p 以上原生渲染，和 1.6.0 一样在玩的时候用 3 键切换：关 → MetalFX 2K → 原生 2K（2560x1440）→ 关。`TOTK_OUTPUT_RES=screen` 在原生 2K 之后再加上 Mac 主屏幕最大的 16:9 尺寸（16 英寸 MacBook Pro 上是 3456x1944，也是最大尺寸），并从这个尺寸启动；`1440p` 从原生 2K 启动；`0` 或 `1080p` 只保留游戏原本的尺寸；16:9 的 `<w>x<h>` 是固定尺寸。游戏自己的画布和 3D 场景都按这个尺寸渲染，不是放大；App 启动时按本次最大的尺寸建交换链和内存堆。FPS 框里会显示尺寸（“screen” 或 “1440p”）。M1 Pro 在卡卡利科村各跑 10 分钟：1920x1080 是 66 帧，2560x1440 是 55 帧，3456x1944 是 49 帧。还没有：iPhone / iPad，以及 main 上林克腿陷进石头路的修复（在初始台地的一个地点读档后出现，旧的自动存档和在那里新存的档都一样）；原因已查明，待合并的拉取请求 #511 修复了腿；main 上的 #239 治好了清澈的 Bottomless Bog 水面，但没有治好腿。详见 [1.9.0 测试记录](botw-v1.9.0-port.md)。
 
 ### Apple Vision Pro
 
@@ -208,7 +216,7 @@ mouse_middle = zl
 
 原生 2K 将游戏合成画布和 UI 改为 2560×1440，3D 场景仍由游戏独立的渲染比例控制，并非强制所有内部通道以 1440p 渲染。手动 MetalFX 在较小窗口中也可使用，输出放大会跟随实际窗口尺寸，包括 4K。
 
-语言：游戏和启动器自身的文字（启动画面、着色器预热进度、提示叠层、键盘输入提示）跟随 Mac 的系统语言。启动器文字在中文系统上显示中文，其他语言显示英文。1.4.3 版本中，巴西葡萄牙语会选择游戏官方的 pt-BR 文本。简体和繁体中文按文字（zh-Hans / zh-Hant）区分，没有文字标记时按地区区分（台湾、香港、澳门为繁体）。只想让本游戏使用另一种语言时，可在“系统设置 › 通用 › 语言与地区 › 应用程序”中为它选择，或设置它的首选语言，例如 `defaults write org.macnativegames.totk AppleLanguages -array pt-BR`（`defaults delete org.macnativegames.totk AppleLanguages` 可撤销）。如需指定，可用 `TOTK_LANG` 设置游戏语言（例如 `open --env TOTK_LANG=zh-Hans "Tears of the Kingdom.app"`），用 `TOTK_UI_LANG=zh` / `en` 设置启动器文字。
+语言：游戏和启动器自身的文字（启动画面、着色器预热进度、提示叠层、键盘输入提示）跟随 Mac 的系统语言。启动器文字在中文系统上显示中文，其他语言显示英文。地区变体和主机一样：美洲以外的英语（en-GB、en-AU 等）选英式英语，温度显示摄氏度（美式英语显示华氏度）；加拿大的法语选加拿大法语，美洲的西班牙语选拉美西班牙语；1.4.3 版本中，巴西葡萄牙语会选择游戏官方的 pt-BR 文本。简体和繁体中文按文字（zh-Hans / zh-Hant）区分，没有文字标记时按地区区分（台湾、香港、澳门为繁体）。只想让本游戏使用另一种语言时，可在“系统设置 › 通用 › 语言与地区 › 应用程序”中为它选择，或设置它的首选语言，例如 `defaults write org.macnativegames.totk AppleLanguages -array pt-BR`（`defaults delete org.macnativegames.totk AppleLanguages` 可撤销）。如需指定，可用 `TOTK_LANG` 设置游戏语言（例如 `open --env TOTK_LANG=zh-Hans "Tears of the Kingdom.app"`），用 `TOTK_UI_LANG=zh` / `en` 设置启动器文字。
 
 ## 文件位置
 
