@@ -103,6 +103,7 @@ class Extraction(unittest.TestCase):
                      0x12660c8,                         # the docked render size
                      0xc617e8, 0x15a01a0, 0x1d78198):   # GAME_ADDR sites of game_version.h's 1.9.0 block
             self.assertIn(site, found, hex(site))
+        self.assertEqual({s.offset: s.size for s in patch_sites.sites('botw190')}[0x10edae0], 4 * 13)   # the ultrawide aspect writer, 13 instructions
         for word in (0x1266114, 0x1266118, 0x126611c):   # the phone's handheld render size, three instructions
             self.assertTrue(patch_sites.overlaps([(word, 4)], patch_sites.sites('botw190')), hex(word))
         self.assertNotIn(0x1c0120c, found)              # 1.6.0's VFR site: that branch is not compiled for 1.9.0
@@ -131,11 +132,11 @@ class Extraction(unittest.TestCase):
                      0x18216c8):                        # the phone's handheld render size (three instructions)
             self.assertIn(site, found, hex(site))
         sizes = {site.offset: site.size for site in reserved}
+        for site in (0x1c59fa8, 0x1c59fb0, 0x1c5a00c, 0x1c5a010, 0x1c5a014, 0x1c5a018, 0x1c5a01c):   # the sound-link rate update
+            self.assertTrue(patch_sites.overlaps([(site, 4)], reserved), hex(site))
         self.assertEqual(sizes[0x15c2118], 4 * 14)       # the ultrawide aspect writer, 14 instructions rewritten in place
         self.assertTrue(patch_sites.overlaps([(0x15c2118 + 4 * 13, 4)], reserved))   # its last word, the aspect store
         self.assertFalse(patch_sites.overlaps([(0x15c2118 + 4 * 14, 4)], reserved))
-        for site in (0x1c59fa8, 0x1c5a00c, 0x1c5a014, 0x1c5a018, 0x1c5a01c):   # the sound-link timer patch checks all of these
-            self.assertTrue(patch_sites.overlaps([(site, 4)], reserved), hex(site))
         for word in (0x18216cc, 0x18216d0):
             self.assertTrue(patch_sites.overlaps([(word, 4)], reserved), hex(word))
         self.assertEqual(sizes[0x126e490], 4 * 38)      # the pad loop, 38 instructions rewritten in place

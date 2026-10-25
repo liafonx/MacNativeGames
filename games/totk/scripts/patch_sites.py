@@ -58,9 +58,8 @@ BASE_PLUS = re.compile(r'm->base[ \t]*\+[ \t]*(0x[0-9a-fA-F]+)')
 CLOTH = re.compile(r'cloth_inline\[3\][ \t]*=[ \t]*\{(.*?)\};', re.S)
 CLOTH_ENTRY = re.compile(r'\{([^{}]*)\}')
 BOTW_ROW = re.compile(r'\{[ \t]*(0x[0-9a-fA-F]+)u?[ \t]*,')       # a row of game_patches_botw.c's tables: {main offset, word, ...}
-BOTW_AT = re.compile(r'\bconst uint32_t at = (0x[0-9a-fA-F]+);.*?\bput_words\(m, at, \w+, (\d+)', re.S)   # 1.6.0's aspect writer: `at`, N words
-BOTW_UW_WRITER = re.compile(r'\bUW_WRITER_AT[ \t]+(0x[0-9a-fA-F]+)u?\s*\n\s*static const uint32_t uw_writer_original\[\] = \{([^}]*)\}')   # the aspect writer's original words (UW_WRITER_N of them)
-BOTW_SLINK = re.compile(r'\benum[ \t]*\{[ \t]*SITE[ \t]*=[ \t]*(0x[0-9a-fA-F]+),[ \t]*BACK[ \t]*=[ \t]*(0x[0-9a-fA-F]+)')   # patch_slink_rate: the branch site and its return point, one instruction each
+BOTW_SLINK = re.compile(r'enum \{[ \t]*SITE[ \t]*=[ \t]*(0x[0-9a-fA-F]+),[ \t]*BACK[ \t]*=[ \t]*(0x[0-9a-fA-F]+)')   # 1.6.0's sound-link rate: the branch site and where it returns
+BOTW_UW = re.compile(r'#define UW_WRITER_AT[ \t]+(0x[0-9a-fA-F]+)u?\b.*?\buw_writer_original\[\][ \t]*=[ \t]*\{([^}]*)\}', re.S)   # the ultrawide aspect writer: its address, then its original words
 BOTW_PHONE = re.compile(r'\bPHONE_RENDER[ \t]*=[ \t]*(0x[0-9a-fA-F]+)')   # enum { PHONE_RENDER = 0x.. }: the phone's mov, movk, str
 BOTW_SIZE_INIT = re.compile(r'\bsize_init\[\][ \t]*=[ \t]*\{([^}]*)\}')   # 1.6.0's output size: movz at each, movk 12 bytes on
 BOTW_MOVK = re.compile(r'\bRENDER_MOVK[ \t]*=[ \t]*(0x[0-9a-fA-F]+)')
@@ -256,7 +255,7 @@ def botw_sites(text, source, defined):
     """The code sites Breath of the Wild's runtime reads or writes (game_patches_botw.c, the branches `defined` keeps): the
     rows {main offset, original word, ...} of its check, put and (1.6.0 only) job-queue tables, and the render-size site, each one
     instruction, and the sequences it checks and rewrites word by word (1.6.0's pad loop and menu countdown: NAME = offset,
-    NAME_WORDS = count), the phone's handheld render size (PHONE_RENDER: three instructions), 1.6.0's ultrawide aspect writer (`at`, 14 words), and 1.6.0's output-size initialisers (size_init: four instructions from each). A mod patch on one would make the runtime refuse the start (the check) or write over the mod (the put)."""
+    NAME_WORDS = count), the phone's handheld render size (PHONE_RENDER: three instructions), 1.6.0's sound-link rate (SITE and BACK), the ultrawide aspect writer (UW_WRITER_AT and uw_writer_original: 14 words on 1.6.0, 13 on 1.9.0), and 1.6.0's output-size initialisers (size_init: four instructions from each). A mod patch on one would make the runtime refuse the start (the check) or write over the mod (the put)."""
     active = PCHTXT_TABLE.sub(lambda m: re.sub(r'[^\n]', ' ', m.group()), compiled_text(text, defined))
     if 'GAME_BOTW160' not in defined:     # TOTK_JQ_CHECK's table holds 1.6.0 addresses only (on 1.9.0 the words differ and
         active = JQ_TABLE.sub(lambda m: re.sub(r'[^\n]', ' ', m.group()), active)    # the check stays unarmed)
@@ -265,10 +264,9 @@ def botw_sites(text, source, defined):
     found += [(int(match.group(2), 16), _line_of(active, match.start()), 4 * int(match.group(3)))
               for match in BOTW_WORDS.finditer(active)]
     found += [(int(match.group(1), 16), _line_of(active, match.start()), 12) for match in BOTW_PHONE.finditer(active)]
-    found += [(int(match.group(1), 16), _line_of(active, match.start()), 4 * int(match.group(2))) for match in BOTW_AT.finditer(active)]
-    found += [(int(match.group(i), 16), _line_of(active, match.start()), 4) for match in BOTW_SLINK.finditer(active) for i in (1, 2)]
+    found += [(int(number, 16), _line_of(active, match.start()), 4) for match in BOTW_SLINK.finditer(active) for number in match.groups()]
     found += [(int(match.group(1), 16), _line_of(active, match.start()), 4 * len(re.findall(r'0x[0-9a-fA-F]+', match.group(2))))
-              for match in BOTW_UW_WRITER.finditer(active)]
+              for match in BOTW_UW.finditer(active)]
     found += [(int(number, 16), _line_of(active, match.start()), 16) for match in BOTW_SIZE_INIT.finditer(active)
               for number in re.findall(r'0x[0-9a-fA-F]+', match.group(1))]
     return [Site(f'{source}:{line}', offset, size) for offset, line, size in found]
