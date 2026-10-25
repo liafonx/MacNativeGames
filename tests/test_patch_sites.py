@@ -132,7 +132,7 @@ class Extraction(unittest.TestCase):
                      0x18216c8):                        # the phone's handheld render size (three instructions)
             self.assertIn(site, found, hex(site))
         sizes = {site.offset: site.size for site in reserved}
-        for site in (0x1c59fa8, 0x1c59fb0, 0x1c5a00c, 0x1c5a010, 0x1c5a01c):   # the sound-link rate update
+        for site in (0x1c59fa8, 0x1c59fb0, 0x1c5a00c, 0x1c5a010, 0x1c5a014, 0x1c5a018, 0x1c5a01c):   # the sound-link rate update
             self.assertTrue(patch_sites.overlaps([(site, 4)], reserved), hex(site))
         self.assertEqual(sizes[0x15c2118], 4 * 14)       # the ultrawide aspect writer, 14 instructions rewritten in place
         self.assertTrue(patch_sites.overlaps([(0x15c2118 + 4 * 13, 4)], reserved))   # its last word, the aspect store
