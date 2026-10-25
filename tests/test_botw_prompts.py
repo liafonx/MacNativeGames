@@ -1361,6 +1361,163 @@ class CommandLine(unittest.TestCase):
             self.assertEqual(sorted(p.relative_to(mod).as_posix() for p in mod.rglob('*')), ['Font', 'Font/Font_US.sbfarc'])
             self.assertEqual((mod / 'Font' / 'Font_US.sbfarc').read_bytes(), b'another mod')
 
+POPUP_GROUP = {'a': (26.0, 0.0), 'b': (0.0, -26.0), 'x': (0.0, 26.0), 'y': (-26.0, 0.0)}       # the pressed disc of each Switch popup
+POPUP_LETTER = {'a': (26.2, 0.8), 'b': (1.0, -26.0), 'x': (0.8, 26.0), 'y': (-25.5, -0.2)}     # the faint letters
+POPUP_BASE = {'a': ('AL', 0.0, 1.0), 'b': ('BL', 0.0, 1.0), 'x': ('BL', 180.0, -1.0), 'y': ('AL', 180.0, 1.0)}   # texture, turn, x scale
+POPUP_CAPTURE = {'a': (86.0, 4.0), 'b': (60.0, -26.0), 'x': (60.0, 26.0), 'y': (-86.0, 0.0)}
+
+
+def popup_bflyt(slot):
+    """A made-up action popup (PaDoCommand<slot>_00) laid out as the game's: faint letters on the other spots, the pressed disc's
+    group with its label box (opening to the left on the left spot), the backdrop turned to cut at the disc, and a capture pane."""
+    def pane(magic, name, x, y, rz=0.0, sx=1.0, origin=1, extra=b''):
+        body = bytes([0, 255, origin, 0]) + name.encode().ljust(24, b'\0') + bytes(8) + struct.pack('<10f', x, y, 0, 0, 0, rz, sx, 1, 30, 40)
+        return magic + struct.pack('<I', 8 + len(body) + len(extra)) + body + extra
+
+    def text(name, x, y, letters, position=0, origin=1):       # a text pane: its text at 104, room for `letters` and the end
+        room = 2 * len(letters) + 2
+        return pane(b'txt1', name, x, y, origin=origin,
+                    extra=struct.pack('<4H2BH4xI', room, room, 0, 0, position, 0, 0, 104) + letters.encode('utf-16-le') + bytes(2))
+    S, (sub, rz, sx), left = slot.upper(), POPUP_BASE[slot], slot == 'y'
+    textures = ['FBLayout_00^t', f'Nt_KeyBtnSubBase{sub}_00^s', f'Nt_KeyTex{S}_00^d']
+    strings, offsets = b'', []
+    for t in textures:
+        offsets.append(4 * len(textures) + len(strings))
+        strings += t.encode() + b'\0'
+    txl = struct.pack('<H2x', len(textures)) + struct.pack(f'<{len(textures)}I', *offsets) + strings
+    txl += bytes(-len(txl) % 4)
+    opened, closed = b'pas1' + struct.pack('<I', 8), b'pae1' + struct.pack('<I', 8)
+    sections = [b'txl1' + struct.pack('<I', 8 + len(txl)) + txl, pane(b'pan1', 'RootPane', 0, 0), opened,
+                pane(b'pan1', f'N_Capture{S}_00', *POPUP_CAPTURE[slot]), opened, pane(b'pic1', f'Nt_KeyTex{S}_01', 60 if left else -60, 0), closed,
+                pane(b'pan1', 'N_Loop_00', 0, 0), opened, pane(b'pic1', 'P_Base_00' if slot == 'a' else f'P_Base{S}_00', 0, 0, rz, sx)]
+    sections += [text(f'T_{q.upper()}_00', *POPUP_LETTER[q], q.upper()) for q in 'abxy' if q != slot]
+    sections += [pane(b'pan1', 'N_BtnX_00' if left else f'N_Btn{S}_00', *POPUP_GROUP[slot]), opened,      # (the game's Y popup names it so)
+                 pane(b'wnd1', f'W_Base{S}_00', 33 if left else -33, 0, sx=-1 if left else 1),
+                 text(f'T_Guide{S}_01', -23 if left else 21, 0, 'Open', 2 if left else 1, 2 if left else 1),
+                 pane(b'pic1', f'Nt_KeyTex{S}_00', 0, 0), closed, closed]
+    if slot == 'a':
+        sections += [pane(b'pan1', 'N_Attention_00', 0, 0), opened, pane(b'pic1', 'P_CaptureUse_00', 86, 4), closed]
+    sections.append(closed)
+    body = b''.join(sections)
+    return b'FLYT' + b'\xff\xfe' + struct.pack('<HIIHH', 0x14, 0, 0x14 + len(body), len(sections), 0) + body
+
+
+@unittest.skipIf(bf is None, 'needs Python 3.14')
+class ActionPopups(unittest.TestCase):
+    """The action popup by a chest ("A: Open"): the style's letters at the pad's own spots and the pressed disc where it is."""
+    OWNER = 'north = a\nsouth = x\nwest = y\neast = b\n'
+    XBOX = {'x': 'Y', 'y': 'X', 'a': 'B', 'b': 'A'}       # Switch spot -> the Xbox letter there (Y on top, X left, B right, A bottom)
+    LOOK = ('box', 'guide', 'base', 'capture')
+    SIZE = 48       # (for Scale.setUp)
+
+    def setUp(self):
+        self.layout = sarc({'blyt/other.bflyt': sample(3000, 5), **{bp.POPUP.format(s.upper()): popup_bflyt(s) for s in 'abxy'}})
+        self.inner = bf.sarc_members(self.layout)
+
+    def read(self, layout, slot):
+        """The faint letters ({spot: letter}), the spot of the disc's group, the label box's x scale, the guide text's anchor and
+        text position, the backdrop (texture, turn, x scale) and the capture pane's place of the popup of `slot` in `layout`."""
+        lo, hi = bf.sarc_members(layout)[bp.POPUP.format(slot.upper())]
+        blob = bytes(layout[lo:hi])
+        panes, textures, group = bp._popup(blob, slot)
+
+        def near(x, y):
+            return min(POPUP_GROUP, key=lambda s: (POPUP_GROUP[s][0] - x) ** 2 + (POPUP_GROUP[s][1] - y) ** 2)
+
+        def field(name, at):
+            return struct.unpack_from('<f', blob, panes[name][0] + at)[0]
+        letters = {}
+        for name, (offset, _) in panes.items():
+            if bp.LETTER.fullmatch(name):
+                letters[near(*struct.unpack_from('<2f', blob, offset + 44))] = blob[offset + 104:offset + 106].decode('utf-16-le')
+        S, base = slot.upper(), next(n for n in panes if n.startswith('P_Base'))
+        guide = panes[f'T_Guide{S}_01'][0]
+        return {'letters': letters, 'disc': near(field(group, 44), field(group, 48)), 'box': field(f'W_Base{S}_00', 68),
+                'guide': (field(f'T_Guide{S}_01', 44), blob[guide + 10], blob[guide + 92]),
+                'base': (next(t for t in textures if 'SubBase' in t)[16:18], field(base, 64), field(base, 68)),
+                'capture': (field(f'N_Capture{S}_00', 44), field(f'N_Capture{S}_00', 48))}
+
+    def edited(self, controls, style='xbox', switch=False):
+        edits, notes = bp.popup_edits(self.layout, self.inner, controls, style, bp.SWITCH_SPOT if switch else bp.SPOT)
+        return bf.apply_edits(self.layout, edits), notes
+
+    def test_the_default_layout_writes_the_xbox_letters_and_moves_nothing(self):
+        layout, notes = self.edited(pl.prompt_controls('', 'position'))
+        self.assertEqual(notes, [])
+        self.assertEqual(len(layout), len(self.layout))
+        for slot in 'abxy':
+            got, old = self.read(layout, slot), self.read(self.layout, slot)
+            self.assertEqual(got['letters'], {q: self.XBOX[q] for q in 'abxy' if q != slot}, slot)
+            self.assertEqual(got['disc'], slot)
+            for key in self.LOOK:
+                self.assertEqual(got[key], old[key], (slot, key))
+
+    def test_the_owner_s_a_shows_y_on_top_laid_out_as_the_game_s_top_popup(self):
+        layout, _ = self.edited(pl.prompt_controls(self.OWNER, 'position'))      # Switch A <- Xbox Y
+        got, top = self.read(layout, 'a'), self.read(self.layout, 'x')
+        self.assertEqual(got['disc'], 'x')
+        self.assertEqual(got['letters'], {'y': 'X', 'a': 'B', 'b': 'A'})        # the X letter pane moved to the free right spot
+        for key in self.LOOK:
+            self.assertEqual(got[key], top[key], key)
+
+    def test_the_left_spot_opens_the_label_box_to_the_left_and_back(self):
+        layout, _ = self.edited(pl.prompt_controls('', 'label'))       # Switch X <- Xbox X (left), Y <- Y (top)
+        for slot, spot in (('x', 'y'), ('y', 'x')):
+            got, game = self.read(layout, slot), self.read(self.layout, spot)
+            self.assertEqual(got['disc'], spot)
+            for key in self.LOOK:
+                self.assertEqual(got[key], game[key], (slot, key))
+            self.assertEqual(got['letters'], {q: self.XBOX[q] for q in 'abxy' if q != spot})
+        self.assertNotEqual(self.read(self.layout, 'y')['box'], self.read(self.layout, 'x')['box'])     # the two really differ
+
+    def test_the_flash_on_the_label_box_moves_with_it(self):
+        layout, _ = self.edited(pl.prompt_controls(self.OWNER, 'position'))
+        lo, hi = bf.sarc_members(layout)[bp.POPUP.format('A')]
+        panes, _, _ = bp._popup(bytes(layout[lo:hi]), 'a')
+        shift = tuple(b - a for a, b in zip(POPUP_CAPTURE['a'], POPUP_CAPTURE['x']))
+        self.assertEqual(struct.unpack_from('<2f', layout, lo + panes['N_Attention_00'][0] + 44), shift)
+
+    def test_playstation_leaves_the_letters_blank_and_moves_the_disc(self):
+        layout, _ = self.edited(pl.prompt_controls(self.OWNER, 'position'), 'playstation')
+        got = self.read(layout, 'a')
+        self.assertEqual(got['disc'], 'x')
+        self.assertEqual(set(got['letters'].values()), {' '})
+
+    def test_the_switch_style_keeps_the_game_s_popups_and_moves_a_remapped_disc(self):
+        layout, _ = self.edited(pl.prompt_controls('', 'label'), 'switch', True)
+        self.assertEqual(layout, bytes(self.layout))
+        layout, _ = self.edited(pl.prompt_controls(self.OWNER, 'label'), 'switch', True)     # Switch A <- X (top)
+        got = self.read(layout, 'a')
+        self.assertEqual((got['disc'], got['letters']), ('x', {'y': 'Y', 'a': 'A', 'b': 'B'}))
+
+    def test_a_button_no_face_button_drives_keeps_its_popup(self):
+        layout, notes = self.edited({**pl.prompt_controls('', 'position'), 'a': 'l1'})
+        lo, hi = self.inner[bp.POPUP.format('A')]
+        self.assertEqual(layout[lo:hi], self.layout[lo:hi])
+        self.assertTrue(any(n.startswith('A:') and 'popup keeps' in n for n in notes))
+
+    def test_a_missing_popup_edits_nothing(self):      # negative control: another game version
+        layout = sarc({bp.POPUP.format(s.upper()): popup_bflyt(s) for s in 'abx'})
+        edits, notes = bp.popup_edits(layout, bf.sarc_members(layout), pl.prompt_controls(self.OWNER, 'position'), 'xbox')
+        self.assertEqual(edits, [])
+        self.assertTrue(any('action popup' in n for n in notes), notes)
+
+    @unittest.skipIf(mbi is None, 'needs fontTools')
+    def test_make_pack_edits_the_popups_the_same_at_every_scale(self):
+        Scale.setUp(self)
+        layout = sarc({**{n: self.layout[slice(*r)] for n, r in bf.sarc_members(self.layout).items()},
+                       **{bp.POPUP.format(s.upper()): popup_bflyt(s) for s in 'abxy'}})
+        pack = sarc({'Layout/Common.sblarc': yaz0_encode(layout)})
+        controls = pl.prompt_controls(self.OWNER, 'position')
+        want = bf.apply_edits(layout, bp.popup_edits(layout, bf.sarc_members(layout), controls, 'xbox')[0])
+        a = bf.sarc_members(want)
+        for scale in (1, 2, 4):
+            new_pack = bp.make_pack(pack, controls, self.letters, 'xbox', True, scale)[0]
+            new = bf.yaz0_decode(new_pack[slice(*bf.sarc_members(new_pack)['Layout/Common.sblarc'])])
+            b = bf.sarc_members(new)
+            for s in 'ABXY':
+                self.assertEqual(want[slice(*a[bp.POPUP.format(s)])], new[slice(*b[bp.POPUP.format(s)])], (scale, s))
+
 
 if __name__ == '__main__':
     unittest.main()

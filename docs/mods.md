@@ -428,6 +428,24 @@ buttons from the game, so the lines still end on a button of the same kind:
   with a `controls.txt` and label mode both show the button you press. With a real Xbox pad over Bluetooth and the same
   `controls.txt`, each button pressed did what its icon says. A real PlayStation pad was not used.
 
+#### The action popup
+
+The popup by a chest or a door ("A Open", `PaDoCommandA_00` to `PaDoCommandY_00`) is a small diamond: three faint letters
+(text panes of one letter) and the pressed button, a redrawn prompt texture with the label box beside it. The game draws
+the Switch diamond, so the tool edits the four layouts:
+
+- The faint letters are the style's letters at the pad's own places: Y at the top, X on the left, B on the right, A at the
+  bottom. The game's font has no Cross, Circle, Square or Triangle, so with `--style playstation` these three spots stay
+  blank, and only the pressed button carries its symbol.
+- The pressed button sits where it is on the pad. When it is in another place than the Switch button's, the popup takes the
+  game's own popup of that place: the button and its label box, the backdrop (its cut is under the button) and the capture
+  panes. On the left place the label box opens to the left, as in the game's popup of Y. The letter that stood there moves
+  to the free place.
+- `--style switch` keeps the Switch letters. A pressed button moves only when your mapping puts it on another button, as
+  the rings of the hint boxes do. A button that no face button drives keeps the game's popup, and the tool prints a note.
+- Only the letters and the places of panes change, so this works the same at every `--scale`. Checked on the 1.9.0
+  layouts with a drawn preview; not tested in play yet.
+
 These prompts keep the Switch look:
 
 - The sticks: the game's own stick with a small L or R, in both styles (see above). The right stick press texture is a
@@ -978,6 +996,19 @@ python3.14 games/botw/scripts/botw_prompts.py "$MODDIR" --app "/path/to/Breath o
 - 已在 1.9.0 游戏里测试（Mac，键盘输入，美版和日文字体）。两种风格下，操作说明页的每条引线和提示框的每个圆环都指在画出的同类按键上，
   相隔 0.3 秒的几帧里也是如此。按位置模式加 `controls.txt` 和按标签模式都显示你实际要按的按键。
   用蓝牙连接的真实 Xbox 手柄和同一个 `controls.txt` 测试时，按下的每个按键都做了图标上写的动作。没有用真实的 PlayStation 手柄测试。
+
+#### 动作弹窗
+
+宝箱或门旁的弹窗（“A 打开”，`PaDoCommandA_00` 到 `PaDoCommandY_00`）是一个小菱形：三个淡色字母（每个是只有一个字母的文字面板）
+和按下的按键（重绘的提示贴图，旁边是标签框）。游戏画的是 Switch 的菱形，所以工具修改这四个布局：
+
+- 淡色字母是该风格的字母，放在手柄自己的位置：上 Y、左 X、右 B、下 A。游戏字体里没有叉、圆、方、三角，
+  所以 `--style playstation` 时这三个位置留空，只有按下的按键带它的符号。
+- 按下的按键放在它在手柄上的位置。位置和 Switch 按键不同时，弹窗采用游戏自己在那个位置的弹窗：按键和标签框、
+  背景（缺口在按键下面）和截图面板。在左边时标签框向左打开，和游戏的 Y 弹窗一样。原来在那里的字母移到空出的位置。
+- `--style switch` 保留 Switch 字母。只有你的映射把按键放到另一个按键上时，按下的按键才移动，和提示框的圆环一样。
+  没有面键驱动的按键保留游戏的弹窗，工具会打印一行说明。
+- 只改字母和面板的位置，所以每个 `--scale` 下都一样。已用 1.9.0 布局画出的预览检查；还没有在游戏里测试。
 
 下面这些提示仍是 Switch 样式：
 

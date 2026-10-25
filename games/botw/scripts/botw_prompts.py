@@ -25,6 +25,8 @@ The controller pictures of the controller tips page are drawn again too: the han
 of the hint boxes (Nt_GamePadIllustSnn_00 to _03) become an Xbox controller (or with --style playstation a DualSense) drawn by
 botw_controller_art.py, with the buttons in the places of the Switch's, so the game's callout lines still end on a button of the same
 kind. --keep-switch-pictures leaves them alone; --style switch always does (the hint box rings still go to the button pressed).
+The action popup by a chest ("A: Open", PaDoCommand?_00) shows the style's diamond: its faint letters at the pad's own places and
+the pressed button at its own place (popup_edits).
 --scale 2 to 4 draws every picture that many times as large (sharp on a big screen): the textures and the whole glyph sheet of
 every font grow (the unchanged glyphs are enlarged by repeating their pixels), the layout and font archives get bigger, and
 the resource size table (System/Resource/ResourceSizeTable.product.srsizetable) is written into the mod too, with the growth
@@ -48,6 +50,7 @@ import functools
 import hashlib
 import io
 import math
+import re
 import struct
 import sys
 import zlib
@@ -471,6 +474,113 @@ def ring_edits(layout, inner, controls, spots=SPOT):
     return edits, notes
 
 
+POPUP = 'blyt/PaDoCommand{}_00.bflyt'      # the action popup ("A: Open") of each face button: a diamond with the pressed disc
+POPUP_PANE = 84         # a pane section's own fields end here; a text pane's follow (text position byte +8, text offset +16)
+SUB_BASE = 'Nt_KeyBtnSubBase'       # the popup's backdrop: three dark lobes and a cut where the pressed disc sits
+LETTER = re.compile(r'T_[ABXY]_\d\d')        # a faint letter of the popup: a text pane named after its Switch spot
+
+
+def _pane_role(name, slot):
+    """A pane's name without its button letter and number: W_BaseA_00 and W_BaseY_00 are both W_Base."""
+    return re.sub(r'[\d_]+$', '', re.sub(rf'{slot.upper()}(_\d+)$', r'\1', name))
+
+
+def _popup(blob, slot):
+    """The panes of the action popup layout of `slot` that popup_edits moves, by name: (offset, parent) each, the texture names of
+    its txl1 section ({name: offset}), and the group of the pressed disc (the parent of Nt_KeyTex<slot>_00)."""
+    panes = {name: (offset, parent) for offset, name, parent in bf.bflyt_panes(blob)}
+    textures = {}
+    count, position = struct.unpack_from('<H', blob, 0x10)[0], struct.unpack_from('<H', blob, 6)[0]
+    for _ in range(count):
+        if blob[position:position + 4] == b'txl1':
+            n = struct.unpack_from('<H', blob, position + 8)[0]
+            for at in struct.unpack_from(f'<{n}I', blob, position + 12):
+                start = position + 12 + at
+                textures[bytes(blob[start:blob.index(b'\0', start)]).decode()] = start
+        position += struct.unpack_from('<I', blob, position + 4)[0]
+    group = panes[f'Nt_KeyTex{slot.upper()}_00'][1]
+    return panes, textures, group
+
+
+def popup_edits(layout, inner, controls, style, spots=SPOT):
+    """(offset, new bytes) edits of the layout archive `layout` (members `inner`) that draw the action popups (POPUP) as the
+    style's diamond, and notes. The game's popup of Switch A draws faint X, Y and B letters (text panes of one letter) at their
+    Switch spots and the pressed disc (Nt_KeyTexA_00, with the label box beside it) on the right. Each letter pane takes the
+    style's name of the pad button at its spot (art.FACE_LAYOUT: Xbox Y on top; the switch style keeps the Switch letters; the
+    PlayStation shapes are not in the game's font, so those panes are left blank). When the button the player presses for the
+    slot (controls[slot]) sits at another spot (`spots`, as ring_edits), the popup is laid out as the game's own popup of that
+    spot: the disc's group (on the left spot the label box opens to the left), the backdrop's texture and turn, the capture
+    panes and the flash on the label box. The letter pane that stood on that spot moves to the free one. Without all four
+    popups as expected nothing is edited."""
+    names = {'xbox': {spot: XBOX_TEXT[pad] for spot, pad in art.FACE_LAYOUT.items()},
+             'playstation': dict.fromkeys(FACE, ' '), 'switch': {spot: spot.upper() for spot in FACE}}[style]
+    popups, letter_at = {}, {}      # letter_at: spot -> translation of the letter panes on it
+    try:
+        for slot in FACE:
+            lo, hi = inner[POPUP.format(slot.upper())]
+            popups[slot] = (lo, bytes(layout[lo:hi]), *_popup(bytes(layout[lo:hi]), slot))
+            for name, (offset, _) in popups[slot][2].items():
+                if LETTER.fullmatch(name):
+                    letter_at[name[2].lower()] = bytes(layout[lo + offset + 44:lo + offset + 56])
+    except (KeyError, *BAD_DATA) as error:
+        return [], [f'action popup: {error} not found as expected; the action popups keep the game\'s layout']
+    edits, notes = [], []
+    for slot, (lo, blob, panes, textures, group) in popups.items():
+        pad = controls[slot]
+        if pad not in spots:
+            notes.append(f'{slot.upper()}: {pad or "nothing"} has no face button; its action popup keeps the game\'s layout')
+            continue
+        spot = spots[pad]
+        _, theirs, their_panes, their_textures, their_group = popups[spot]
+
+        def at(name, blob=blob, panes=panes):
+            return struct.unpack_from('<2f', blob, panes[name][0] + 44)
+
+        def copy(name, their_name):      # their pane's anchor, place, turn and size (and a text's anchor) into ours
+            mine, other = panes[name][0], their_panes[their_name][0]
+            edits.append((lo + mine + 10, theirs[other + 10:other + 11]))
+            edits.append((lo + mine + 44, theirs[other + 44:other + 76]))
+            if blob[mine:mine + 4] == b'txt1':
+                edits.append((lo + mine + POPUP_PANE + 8, theirs[other + POPUP_PANE + 8:other + POPUP_PANE + 10]))
+        if spot != slot:
+            copy(group, their_group)
+            roles = {_pane_role(n, spot): n for n, (_, parent) in their_panes.items() if parent == their_group}
+            for name, (_, parent) in panes.items():
+                if parent == group and _pane_role(name, slot) in roles:
+                    copy(name, roles[_pane_role(name, slot)])
+            capture, their_capture = f'N_Capture{slot.upper()}_00', f'N_Capture{spot.upper()}_00'
+            if capture in panes and their_capture in their_panes:
+                copy(capture, their_capture)
+                roles = {_pane_role(n, spot): n for n, (_, parent) in their_panes.items() if parent == their_capture}
+                for name, (_, parent) in panes.items():
+                    if parent == capture and _pane_role(name, slot) in roles:
+                        copy(name, roles[_pane_role(name, slot)])
+                if 'N_Attention_00' in panes:        # the flash on the label box moves with the box
+                    shift = [b - a for a, b in zip(at(capture), at(their_capture, theirs, their_panes))]
+                    if panes['N_Attention_00'][1] == group:      # (inside the disc's group, which has moved already)
+                        shift = [s - (b - a) for s, a, b in zip(shift, at(group), at(their_group, theirs, their_panes))]
+                    x, y = at('N_Attention_00')
+                    edits.append((lo + panes['N_Attention_00'][0] + 44, struct.pack('<2f', x + shift[0], y + shift[1])))
+            copy(next(n for n in panes if n.startswith('P_Base')), next(n for n in their_panes if n.startswith('P_Base')))
+            mine, other = (next(n for n in t if n.startswith(SUB_BASE)) for t in (textures, their_textures))
+            if len(mine) == len(other):
+                edits.append((lo + textures[mine], other.encode()))
+            else:
+                notes.append(f'{slot.upper()}: the backdrop {other} does not fit in the popup\'s texture list; it keeps {mine}')
+        for name, (offset, _) in panes.items():
+            if not LETTER.fullmatch(name):
+                continue
+            place = name[2].lower()
+            if place == spot != slot:       # the letter on the spot the disc now takes goes to the free one
+                place = slot
+                edits.append((lo + offset + 44, letter_at[place]))
+            if struct.unpack_from('<H', blob, offset + POPUP_PANE)[0] < 4:      # room for one letter and its end
+                notes.append(f'{slot.upper()}: the letter pane {name} of the action popup has no room for a letter; it stays')
+                continue
+            edits.append((lo + offset + struct.unpack_from('<I', blob, offset + POPUP_PANE + 16)[0], names[place].encode('utf-16-le')))
+    return edits, notes
+
+
 class MissingData(ValueError):
     """A file or archive member the tool cannot work without is not there."""
 
@@ -480,7 +590,7 @@ def make_pack(pack, controls, letters, style='xbox', pictures=True, scale=1):
     pictures of the controller tips page too (never for the switch style). Returns (the new pack, texture name -> new pixel rows, texture name -> (grey rows,
     alpha rows) of the pictures, notes, (Common.sblarc size before, after, decompressed size before, decompressed growth)).
     At scale 1 only the changed textures' bytes (and, with a remap and the redrawn face picture, the hint box ring positions:
-    ring_edits) differ. At a larger scale the changed textures are new, `scale` times as large (botw_formats.bntx_resize), the layout
+    ring_edits) and the letters and places of the action popups (popup_edits) differ. At a larger scale the changed textures are new, `scale` times as large (botw_formats.bntx_resize), the layout
     archive grows by whole GROW_ALIGN steps, and every other member of it stays as it was. Every other member of the pack is the
     original. A texture that is missing or not as expected stays the game's, with a note (see plan, plan_pictures); an archive
     without Layout/Common.sblarc or its BNTX raises MissingData, a damaged one ValueError (and the like)."""
@@ -511,6 +621,8 @@ def make_pack(pack, controls, letters, style='xbox', pictures=True, scale=1):
     if HINT_PIECE in drawn or style == 'switch':      # our diamond or the game's: the rings of the hint boxes go to the buttons pressed
         moved, more_notes = ring_edits(layout, inner, controls, SPOT if HINT_PIECE in drawn else SWITCH_SPOT)   # offsets as the archive was
         edits, more = edits + moved, more + more_notes
+    popped, more_notes = popup_edits(layout, inner, controls, style, SWITCH_SPOT if style == 'switch' else SPOT)
+    edits, more = edits + popped, more + more_notes
     spliced = bf.yaz0_splice(stream, layout, edits)
     new_pack = bf.sarc_replace(pack, LAYOUT, spliced)
     return new_pack, new, drawn, notes + more, (len(stream), len(spliced), len(layout), struct.unpack_from('>I', spliced, 4)[0] - len(layout))
