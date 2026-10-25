@@ -126,11 +126,9 @@ countdown), the docked render size, the output size (`TOTK_OUTPUT_RES`, 1.6.0 on
 `game_version.h` and the runtime files that use those addresses). Three
 things differ from Tears of the Kingdom:
 
-- `--install-mod-romfs` is refused for this game. For 1.6.0, copy the mod's RomFS files into
-  `~/Library/Application Support/MacNativeGames/BotW/mods/botw160` and write the manifest as in
-  [Breath of the Wild](#breath-of-the-wild) below; the build prints this when the mod has a `romfs/`. For 1.9.0,
-  `make_mod_manifest.py` does not take `botw190` yet, so a 1.9.0 mod's RomFS half needs the 1.9.0 RomFS mod support
-  (open pull requests ly05010419/MacNativeGames#460 and #627, which add `botw190`); its code half works without it.
+- `--install-mod-romfs` is refused for this game. Copy the mod's RomFS files into
+  `~/Library/Application Support/MacNativeGames/BotW/mods/botw160` (`botw190` for 1.9.0) and write the manifest as in
+  [Breath of the Wild](#breath-of-the-wild) below; the build prints this when the mod has a `romfs/`.
 - `--platform ios` builds the iPhone / iPad app from the same merged main, but a code mod was not tried on a phone.
 - To try a `.pchtxt` without a build, start the game from the work folder (`<work>/totk`, which holds
   `extracted/botw190/exefs/main` or `extracted/botw160/exefs/main`) with `TOTK_PCHTXT=<file>` (a development switch, Mac
@@ -479,10 +477,8 @@ App 没有模块加载器：启动时它映射的是构建时的那三个代码�
 实时帧步长、手柄重复计数（1.6.0 上是整段 38 条指令的手柄循环和 9 条指令的暂停菜单倒计时）、底座模式渲染分辨率、输出分辨率（`TOTK_OUTPUT_RES`，仅 1.6.0）、`TOTK_JQ_CHECK` 的位置（仅 1.6.0），以及 `runtime/game_version.h` 里该版本一段列出的位置
 （`games/totk/scripts/patch_sites.py` 从 `runtime/game_patches_botw.c` 读出，`game_version.h` 的位置从它和用到这些地址的运行时文件读出）。与王国之泪有三处不同：
 
-- 这个游戏拒绝 `--install-mod-romfs`。1.6.0：把模组的 RomFS 文件复制到
-  `~/Library/Application Support/MacNativeGames/BotW/mods/botw160`，再按下面「旷野之息」一节生成清单；模组带 `romfs/` 时构建会提示这一点。
-  1.9.0：`make_mod_manifest.py` 还不接受 `botw190`，所以 1.9.0 模组的 RomFS 部分需要 1.9.0 的 RomFS 模组支持
-  （待合并的拉取请求 ly05010419/MacNativeGames#460 和 #627，它们加入 `botw190`）；代码部分不需要它。
+- 这个游戏拒绝 `--install-mod-romfs`。把模组的 RomFS 文件复制到
+  `~/Library/Application Support/MacNativeGames/BotW/mods/botw160`（1.9.0 是 `botw190`），再按下面「旷野之息」一节生成清单；模组带 `romfs/` 时构建会提示这一点。
 - `--platform ios` 用同一份合并后的 main 构建 iPhone / iPad 版，但没有在手机上试过代码模组。
 - 想不重新构建就试一个 `.pchtxt`，在工作目录（`<work>/totk`，里面有 `extracted/botw190/exefs/main` 或 `extracted/botw160/exefs/main`）里用 `TOTK_PCHTXT=<文件>` 启动游戏
   （开发用开关，仅 Mac；读法与构建相同，但字节写进游戏实际运行的改写后 main，
