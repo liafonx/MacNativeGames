@@ -51,11 +51,9 @@ void *runtime_symbol(const char *name) {
  return NULL;
 }
 uint8_t *runtime_module_base(const char *name){for(unsigned i=0;i<NM;i++)if(!strcmp(modules[i].name,name))return modules[i].base;return NULL;}
-#ifdef GAME_BOTW
 /* Is pc in a module's original code (not in the patch area, where rewritten windows and gates are)? Called from a signal
-   handler (threads.c, asynchronous preemption): only reads the module table. */
+   handler (threads.c, asynchronous preemption, both games): only reads the module table. */
 int runtime_guest_code_pc(uint64_t pc){for(unsigned i=0;i<NM;i++){uint64_t b=(uintptr_t)modules[i].base;if(b&&pc>=b&&pc-b<modules[i].text_end)return 1;}return 0;}
-#endif
 /* RELRO in newer SDKs protects relocated data after linking. Keep permissions at
  * the guest's 4 KiB granularity. A Darwin 16 KiB page receives the union of its
  * four guest permissions, so protecting an edge never removes access from an
@@ -308,8 +306,13 @@ static void thread_cleanup(void) {
 }
 uint64_t runtime_now_ns(void) {mach_timebase_info_data_t tb;mach_timebase_info(&tb);return (uint64_t)((__uint128_t)mach_absolute_time()*tb.numer/tb.denom);}
 void runtime_dispatch(uint64_t ret,uint64_t *regs) {
- for(unsigned i=0;i<NM;i++)for(unsigned j=0;j<modules[i].ngate;j++) {
-  const Gate *g=&modules[i].gates[j];if((uintptr_t)modules[i].base+g->ret!=ret)continue;
+ for(unsigned i=0;i<NM;i++) {
+  uintptr_t b=(uintptr_t)modules[i].base;if(!b||ret<b)continue;
+  unsigned lo=0,hi=modules[i].ngate;   // gates sorted by return address (prepare_runtime.py)
+  while(lo<hi){unsigned m=(lo+hi)/2;if(b+modules[i].gates[m].ret<ret)lo=m+1;else hi=m;}
+  if(lo==modules[i].ngate||b+modules[i].gates[lo].ret!=ret)continue;
+  const Gate *g=&modules[i].gates[lo];
+  if(g->timer==2){runtime_spin_wait(i,g->original);return;}   // spin wait (patch_nso.py "Spin waits"): no register changes
   if(g->timer){mach_timebase_info_data_t tb;mach_timebase_info(&tb);__uint128_t ns=(__uint128_t)mach_absolute_time()*tb.numer/tb.denom;
    need(g->arg<31&&g->arg!=18,"timer target register");regs[g->arg]=(uint64_t)(ns*12/625);__atomic_fetch_add(&timer_calls,1,__ATOMIC_RELAXED);return;}
   __atomic_fetch_add(&svc_calls,1,__ATOMIC_RELAXED);runtime_svc(g->arg,regs,modules[i].name,g->original);return;

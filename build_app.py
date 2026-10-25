@@ -331,9 +331,15 @@ def prepare_work(work, py, logs):
     # Match both directories AND symlinks to directories. A trailing slash
     # allows rsync -a to copy a tooling symlink from a development checkout.
     excludes = [f'--exclude=/{name}' for name in ('extracted', 'rewritten', 'build', 'analysis', '.venv', 'tooling', 'user-data')]
-    run(['rsync', '-a', *excludes, f'{GAME}/', f'{tree}/'], logs / 'sources.log')
+    # Files are compared by content and a changed file gets the time of this copy, not its own: make decides by times, and
+    # a checkout older than the objects of the last build (another branch built in this folder after it was checked out)
+    # would otherwise keep the stale objects. 2026-10-25: nvn_mtl.m.o of one branch linked with nvn_refl.m.o of another
+    # (different nvn_rbind layouts) aborted every start in the shader warm-up ("参数块布局异常"). Unchanged files keep
+    # their times, so nothing is rebuilt needlessly.
+    sync = ['rsync', '-rlpD', '--checksum', *excludes]
+    run([*sync, f'{GAME}/', f'{tree}/'], logs / 'sources.log')
     # games/botw: its scripts find the shared ones at ../totk/scripts (work/botw next to work/totk)
-    run(['rsync', '-a', *excludes, f'{BOTW}/', f'{work / "botw"}/'], logs / 'sources-botw.log')
+    run([*sync, f'{BOTW}/', f'{work / "botw"}/'], logs / 'sources-botw.log')
     tooling = tree / 'tooling'
     # Migrate a work folder made by the old copier before writing child links:
     # link(tooling/spirv-cross, ...) must not traverse into a shared checkout.

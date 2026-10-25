@@ -705,6 +705,7 @@ void mtl_pool_add(const void *mem, uint64_t size) {
 }
 
 static void stor_drop_range(uintptr_t lo, uintptr_t hi);
+static void wb_drop_range(uintptr_t lo, uintptr_t hi);
 static void stor_sweep(uint64_t fence);
 void mtl_pool_del(const void *mem) {
     g_reg_gen++;
@@ -719,7 +720,7 @@ void mtl_pool_del(const void *mem) {
         [g_keep removeObjectIdenticalTo:buf];
     }
     pthread_mutex_unlock(&g_mu);
-    if (hi > lo) stor_drop_range(lo, hi);   // TOTK: storage-shared textures of this pool
+    if (hi > lo) { stor_drop_range(lo, hi); wb_drop_range(lo, hi); }   // TOTK: storage-shared textures and pending write-backs of this pool
 }
 
 static pidx_ent *pool_query(uintptr_t addr, uint64_t len) { // caller holds g_mu
@@ -2375,6 +2376,10 @@ static void pkg_owned_locked(uint64_t k) {
 typedef struct { tex_t t; uint64_t stamp; void *obj; uint8_t *snap; uint32_t snap_n; BOTW_WB_ENT_FIELDS } wb_ent;   // snap: the texture's own bytes when the rendering was noted (small targets only)
 static nvn_hmap g_wb = {.klen = 8};   // serial -> wb_ent * (g_smu): rendered since the last write-back
 static _Atomic int g_wb_on = 1;
+static _Atomic int g_wb_fence_small = -1;   // -1: from TOTK_WB_FENCE_SMALL; "flag wb_fence_small 0|1" switches it while the game runs
+static int wb_fence_small_on(void);
+static void wb_drop_all(void);
+static void wb_write_list(wb_ent **list, int nl, int force);
 /* TOTK: fill the driver segment c0 for vertex and compute shaders (thread-group counts, uniform / storage address tables,
    point size limit; see drv_scan). TOTK_DRV_FILL=0 or "flag drvfill 0" gives them the old all-zero segment (A/B only). */
 static _Atomic int g_drvfill_on = -1;
@@ -2463,7 +2468,8 @@ void dm_gfx_set_flag(const char *name, int v) {
     }
     if (!strcmp(name, "drv_cache")) { driver_cache_set(v); return; }
     if (!strcmp(name, "drv_cache_check")) { driver_cache_check_set(v); return; }
-    if (!strcmp(name, "writeback")) { atomic_store(&g_wb_on, v); MLOG("[flag] writeback = %d", v); return; }
+    if (!strcmp(name, "writeback")) { if (!v) wb_drop_all(); atomic_store(&g_wb_on, v); MLOG("[flag] writeback = %d", v); return; }
+    if (!strcmp(name, "wb_fence_small")) { (void)wb_fence_small_on(); atomic_store(&g_wb_fence_small, v != 0); MLOG("[flag] wb_fence_small = %d", v != 0); return; }
     if (!strcmp(name, "deferred")) { extern void nvn_set_deferred_binds(int on); nvn_set_deferred_binds(v); return; }
     if (!strcmp(name, "framewait")) { extern void nvn_set_framewait(int on); nvn_set_framewait(v); return; }
     if (!strcmp(name, "uncapped_interval")) { extern void nvn_set_uncapped_interval(int on); nvn_set_uncapped_interval(v); return; }
@@ -2493,6 +2499,7 @@ static void wb_ent_free(wb_ent *e) { if (!e) return; if (e->obj) { defer_obj_rel
 enum { WB_SNAP_MAX = 256 * 1024 };
 static int wb_exact_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("TOTK_WB_EXACT"); v = !(e && !strcmp(e, "0")); } return v; }
 static uint64_t g_wb_exact_rescued;
+int totk_wb_fence_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("TOTK_WB_FENCE"); v = !(e && !strcmp(e, "0")); if (!v) MLOG("TOTK_WB_FENCE=0: write-backs wait for all submitted GPU work"); } return v; }
 static void wb_snap(wb_ent *e) {
     if (!wb_exact_on() || !e->t.mem || e->t.L.size > WB_SNAP_MAX) { free(e->snap); e->snap = NULL; e->snap_n = 0; return; }
     uint32_t n = (uint32_t)e->t.L.size; if (e->snap_n != n) { free(e->snap); e->snap = malloc(n); e->snap_n = e->snap ? n : 0; }
@@ -2565,9 +2572,68 @@ void mtl_pool_invalidate(const pool_t *p, uint64_t off, uint64_t n) {
     pthread_mutex_unlock(&g_smu);
     wb_write_list(list, nl, 0);
 }
+/* A memory pool is finalized: pending renderings into its bytes are dropped. The game has given the range back to its
+   allocator, which hands it to something else (a sead heap object, another pool); a later invalidate over that address
+   would write GPU pixels into the new owner (2026-10-24: warping to a shrine with write-back on crashed in the sead heap
+   block factory with a pixel pattern 0x7a7a7a7b7b7a7774 where a free-list pointer belongs). On hardware the rendering
+   already reached memory; here there is nobody left to write it for. */
+static void wb_drop_range(uintptr_t lo, uintptr_t hi) {
+    pthread_mutex_lock(&g_smu);
+    for (uint32_t i = 0; i < g_wb.cap; i++) {
+        wb_ent *e = g_wb.vals ? g_wb.vals[i] : NULL;
+        if (!e || (uintptr_t)e->t.mem >= hi || (uintptr_t)e->t.mem + e->t.L.size <= lo) continue;
+        uint64_t k = e->t.serial; nvn_hm_del(&g_wb, &k); wb_ent_free(e); i = (uint32_t)-1;   // deletion shifts entries: rescan
+    }
+    pthread_mutex_unlock(&g_smu);
+}
+/* Write-back turned off: renderings noted so far are forgotten (turned on again, an old one must not land in memory the
+   game has rewritten in the meantime). */
+static void wb_drop_all(void) {
+    pthread_mutex_lock(&g_smu);
+    for (uint32_t i = 0; i < g_wb.cap; i++) {
+        wb_ent *e = g_wb.vals ? g_wb.vals[i] : NULL;
+        if (!e) continue;
+        uint64_t k = e->t.serial; nvn_hm_del(&g_wb, &k); wb_ent_free(e); i = (uint32_t)-1;
+    }
+    pthread_mutex_unlock(&g_smu);
+}
+/* TOTK: the cut reaction of grass is decided from a 128x128 RGBA8 target that the grass pass renders every frame into a
+   pool the CPU reads without an invalidate, flush or copy. On hardware the bytes are in the pool once the frame's fence
+   has passed; here they stayed in the Metal texture, and every swing was decided from the zeros the pool held (no blades,
+   no insects, grass not cut -- upstream issue #49). Render targets up to 64 KiB whose rendering has completed are written
+   back after the game's fence waits (nvnSyncWait / nvnQueueFinish); wb_write_list still keeps newer CPU writes.
+   TOTK_WB_FENCE_SMALL=0 restores the invalidate-only behaviour. Breath of the Wild: off unless TOTK_WB_FENCE_SMALL=1. */
+enum { WB_FENCE_SMALL_MAX = 64 * 1024 };
+static int wb_fence_small_on(void) {
+    int v = atomic_load(&g_wb_fence_small);
+#ifdef GAME_BOTW   /* not measured on Breath of the Wild, whose small targets go through the staged write-back: opt-in there (after PR #562) */
+    if (v < 0) { const char *e = getenv("TOTK_WB_FENCE_SMALL"); v = e && !strcmp(e, "1"); atomic_store(&g_wb_fence_small, v); }
+#else
+    if (v < 0) { const char *e = getenv("TOTK_WB_FENCE_SMALL"); v = !(e && !strcmp(e, "0")); atomic_store(&g_wb_fence_small, v); }
+#endif
+    return v;
+}
+void mtl_wb_fence_done(void) {
+    if (!atomic_load(&g_wb_on) || !wb_fence_small_on()) return;
+    uint64_t done = __atomic_load_n(&g_done, __ATOMIC_ACQUIRE);   // every fence at or below this has completed
+    pthread_mutex_lock(&g_smu);
+    wb_ent *list[512]; int nl = 0;
+    for (uint32_t i = 0; i < g_wb.cap && nl < 512; i++) {
+        wb_ent *e = g_wb.vals ? g_wb.vals[i] : NULL;
+        if (!e || e->t.L.size > WB_FENCE_SMALL_MAX || e->fence > done) continue;
+        uint64_t k = e->t.serial; nvn_hm_del(&g_wb, &k); list[nl++] = e; i = (uint32_t)-1;   // deletion shifts entries: rescan
+    }
+    pthread_mutex_unlock(&g_smu);
+    wb_write_list(list, nl, 0);
+}
 /* Writes the listed renderings back to memory (the entries are freed); force: even over CPU writes since the render. */
-static void wb_write_list(wb_ent **list, int nl, int force) {
-    if (!nl) return;
+static void wb_write_list_body(wb_ent **list, int nl, int force);
+/* TOTK (2026-10-20, BotW): its own autorelease pool. nvnMemoryPoolInvalidateMappedRange calls this on a game thread,
+   outside the submission's pool, and game threads never drain their implicit one: every write-back's command buffer
+   and staging buffer stayed alive (about 1,700 IOAccelerator regions a minute in the world) until the GPU budget
+   stopped the game after 20-40 minutes. */
+static void wb_write_list(wb_ent **list, int nl, int force) { if (nl) @autoreleasepool { wb_write_list_body(list, nl, force); } }
+static void wb_write_list_body(wb_ent **list, int nl, int force) {
     { extern void nvn_x_drain(void) __attribute__((weak)); if (nvn_x_drain) nvn_x_drain(); }   // translation thread: nothing queued overtakes this read-back (as for ReadTexels)
     WB_WAIT_GPU(list, nl)
     /* Freshness is decided for every entry before anything is written back (a write-back marks its pages written), and
@@ -8133,7 +8199,7 @@ static uint64_t dummy_buf_gpu(void) { static uint64_t gpu; if (!gpu) gpu = dummy
 // useResource 在同一编码器内对同一（资源, 用法, 阶段）是幂等的：记下本渲染编码器已声明过的，重复的跳过（计算编码器每次派发新建，不去重）
 // useResource is idempotent for the same (resource, usage, stage) within one encoder: remember what this render encoder has already declared and skip repeats (a compute encoder is created anew for each dispatch, no dedup)
 static uint8_t g_args_dirty[6] = {1, 1, 1, 1, 1, 1};
-static uint64_t g_args_reg_seen, g_args_dirty_seen;
+static uint64_t g_args_reg_seen, g_args_dirty_seen, g_args_serial_seen, g_args_snapshot_seen;
 static uint64_t g_args_epoch[6] = {1, 1, 1, 1, 1, 1};
 static inline void args_dirty_stage(int stage) {
     g_args_dirty[stage] = 1;
@@ -8147,9 +8213,14 @@ static inline void args_program_changed(void) {
     memset(g_args_dirty, 1, sizeof g_args_dirty);
 }
 static inline void args_sync_dirty(void) {
-    uint64_t reg = g_reg_gen, dirty = nvn_dirty_now();
-    if (reg != g_args_reg_seen || dirty != g_args_dirty_seen) {
-        g_args_reg_seen = reg; g_args_dirty_seen = dirty; args_dirty_all();
+    uint64_t reg = g_reg_gen, dirty = nvn_dirty_now(), serial = g_ser_gen, snapshot = g_usnap_drops;
+    // Replaced textures and retired uniform snapshots change argument addresses without a new binding.
+    // 纹理替换和统一缓冲快照退休会改变参数地址，即使绑定本身未变。
+    if (reg != g_args_reg_seen || dirty != g_args_dirty_seen ||
+        serial != g_args_serial_seen || snapshot != g_args_snapshot_seen) {
+        g_args_reg_seen = reg; g_args_dirty_seen = dirty;
+        g_args_serial_seen = serial; g_args_snapshot_seen = snapshot;
+        args_dirty_all();
     }
 }
 static void bind_args(id<MTLCommandEncoder> en, int nvn_stage, int metal_vertex, id<MTLBuffer> ab, uint64_t gpu, size_t off, NSUInteger ai) {
@@ -15459,12 +15530,14 @@ int mtl_probe_vertex_streams(void) {
     g_vertex_streams_negative=0;atomic_store(&g_vertex_streams_on,saved);atomic_store(&g_arg_bind_cache_on,saved_arg);memset(&S.vbuf,0,sizeof S.vbuf);mtl_pool_del(mem);res_remove(texture);res_remove(rb);res_remove(arg_data);free(mem);return checked;
 }
 
+#include "nvn_args_invalidation_probe.h"
+
 /* Exercise production state_op + encode_args on real GPU draws. Distinct shader
    objects alternate with unchanged bindings, then UBO/storage/registry/serial
    changes invalidate them. Separate submissions/passes and snapshot retirement
    must also invalidate. Negative 18 ignores binding generations, 19 snapshots. */
 int mtl_probe_arg_epoch(void) {
-    mtl_init(); int checked = 0;
+    mtl_init(); int checked = probe_args_invalidation();
     const char *ne = getenv("TOTK_PROBE_NEGATIVE"); int negative = ne ? atoi(ne) : 0;
     const size_t size = 16384; void *mem = NULL;
     if (posix_memalign(&mem, size, size) || !mem) MDIE("argument epoch probe memory");
