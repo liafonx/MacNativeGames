@@ -226,8 +226,8 @@ void botw_wb_stage_encode(void);
 #define BOTW_WB_STAGE() botw_wb_stage_encode();
 #define WB_WAIT_GPU(list, nl) { uint64_t need_ = 0; for (int i_ = 0; i_ < (nl); i_++) { if ((list)[i_]->fence > need_) need_ = (list)[i_]->fence; \
         if ((list)[i_]->stage_fence > need_) need_ = (list)[i_]->stage_fence; } if (need_) mtl_wait(need_, UINT64_MAX); while (atomic_load(&g_up_pending)) usleep(1000); }
-int botw_wb_from_stage(void *e);   /* 1 written back from the stage, 0 failed, -1 not staged */
-#define BOTW_WB_FROM_STAGE(e, ok, layers) { int s_ = botw_wb_from_stage(e); if (s_ >= 0) { (ok) = s_; (layers) = 0; } }
+int botw_wb_from_stage(void *e);   /* 1 written back from the stage, 0 failed, WB_POOL_GONE, -1 not staged */
+#define BOTW_WB_FROM_STAGE(e, ok, layers) { int s_ = botw_wb_from_stage(e); if (s_ != -1) { (ok) = s_; (layers) = 0; } }
 /* BOTW (nvn_mtl.m, after a re-upload): the range that tracked the texture can be gone by now (a neighbour pool destroyed,
    nvn_dirty.c); its protect then did nothing, and a kept "tracked" would let the replay's shortcut call it clean next time */
 #define BOTW_REUP_TRACKED(pk, t) (pk)->tracked = nvn_dirty_tracked((t)->mem, (t)->L.size);
@@ -291,11 +291,17 @@ extern _Thread_local int botw_bra_attach;   /* tex_mtl for a render target: its 
 #define BOTW_DEAD_KEEP(k)
 #define BOTW_TEX_RELEASE_KEEP(k)
 #define BOTW_DEAD_FORGET(s, n)
-#define BOTW_WB_ENT_FIELDS
-#define BOTW_WB_NOTED(e, k)
+/* TOTK: targets the CPU polls without an invalidate (the grass cut map) are written back after the fence wait that
+   follows their rendering (mtl_wb_fence_done, nvn_mtl.m; upstream issue #49). */
+#define BOTW_WB_ENT_FIELDS uint64_t fence;
+#define BOTW_WB_NOTED(e, k) (e)->fence = g_fence + 1;
 #define BOTW_WB_STAGE_FREE(e)
 #define BOTW_WB_STAGE()
-#define WB_WAIT_GPU(list, nl) mtl_finish_gpu();
+int totk_wb_fence_on(void);
+/* TOTK_WB_FENCE=0 waits for all submitted GPU work, as before. Otherwise a write-back waits only for the submissions that
+   rendered the listed textures (the game waits for its own sync before invalidating), then for uploads to finish. */
+#define WB_WAIT_GPU(list, nl) { uint64_t need_ = 0; for (int i_ = 0; i_ < (nl); i_++) if ((list)[i_]->fence > need_) need_ = (list)[i_]->fence; \
+    if (totk_wb_fence_on()) { if (need_) mtl_wait(need_, UINT64_MAX); while (atomic_load(&g_up_pending)) usleep(1000); } else mtl_finish_gpu(); }
 #define BOTW_WB_FROM_STAGE(e, ok, layers)
 #define BOTW_TINY_NOTE(t, o)
 #define BOTW_TINY_COMMIT()

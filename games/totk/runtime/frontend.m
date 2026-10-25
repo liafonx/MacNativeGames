@@ -83,8 +83,8 @@ void runtime_warm_progress(uint64_t done,uint64_t total,uint64_t shaders,uint64_
   if(!bootOverlay||bootOverlay.hidden)return;
   double percent=total ? fmin(100.0,(double)done/(double)total*100.0) : 100.0;
   bootStage.stringValue=[NSString stringWithFormat:@(TOTK_UI("预热着色器与管线 %.0f%%","Warming shaders and pipelines %.0f%%")),floor(percent)];
-  bootDetail.stringValue=[NSString stringWithFormat:@(TOTK_UI("已处理 %llu/%llu 项 · 着色器 %llu/%llu · 管线 %llu/%llu","%llu/%llu items · shaders %llu/%llu · pipelines %llu/%llu")),
-      (unsigned long long)done,(unsigned long long)total,(unsigned long long)shaders,(unsigned long long)shader_total,
+  bootDetail.stringValue=[NSString stringWithFormat:@(TOTK_UI("着色器 %llu/%llu · 管线 %llu/%llu","shaders %llu/%llu · pipelines %llu/%llu")),
+      (unsigned long long)shaders,(unsigned long long)shader_total,
       (unsigned long long)pipelines,(unsigned long long)pipeline_total];
   bootProgress.indeterminate=NO;
   bootProgress.doubleValue=percent;
@@ -283,6 +283,29 @@ static void front_sync_drawable(void){
  CGFloat s=window.backingScaleFactor>0?window.backingScaleFactor:1,ts=drawable_scale();CGSize px=CGSizeMake(round(v.bounds.size.width*s*ts),round(v.bounds.size.height*s*ts));
  if(px.width<1||px.height<1||CGSizeEqualToSize(metalLayer.drawableSize,px))return;
  metalLayer.contentsScale=s;metalLayer.drawableSize=px;fprintf(stderr,"[totk] window drawable %.0fx%.0f (scale %.0f)\n",px.width,px.height,s);runtime_aspect_view(px.width,px.height);
+}
+/* BotW key 4: the window takes the selected camera ratio. Keep the chosen height across toggles, even when a wide
+   window has to shrink to fit the display; a manual resize establishes a new height. AppKit stays on the main queue. */
+void runtime_front_resize_aspect(double ratio){
+ if(!isfinite(ratio)||ratio<0.5||ratio>8)return;
+ dispatch_async(dispatch_get_main_queue(), ^{
+  if(!window||(window.styleMask&NSWindowStyleMaskFullScreen))return;
+  NSScreen *screen=window.screen?:NSScreen.mainScreen;if(!screen)return;
+  static NSSize lastSize;static CGFloat preferredHeight;
+  NSRect oldFrame=window.frame;NSSize current=window.contentView.bounds.size;
+  if(preferredHeight<=0||fabs(current.width-lastSize.width)>1||fabs(current.height-lastSize.height)>1)preferredHeight=current.height;
+  NSRect visible=screen.visibleFrame;
+  NSRect content=[window contentRectForFrameRect:visible];
+  CGFloat h=fmin(preferredHeight,fmin(content.size.height,content.size.width/ratio));
+  if(h<=0)return;
+  NSRect frame=[window frameRectForContentRect:NSMakeRect(0,0,round(h*ratio),round(h))];
+  frame.origin=NSMakePoint(NSMidX(oldFrame)-frame.size.width/2,NSMidY(oldFrame)-frame.size.height/2);
+  frame.origin.x=fmax(NSMinX(visible),fmin(frame.origin.x,NSMaxX(visible)-frame.size.width));
+  frame.origin.y=fmax(NSMinY(visible),fmin(frame.origin.y,NSMaxY(visible)-frame.size.height));
+  [window setFrame:frame display:YES];
+  lastSize=window.contentView.bounds.size;
+  front_sync_drawable();
+ });
 }
 @interface TOTKWindowDelegate:NSObject<NSWindowDelegate>
 @end

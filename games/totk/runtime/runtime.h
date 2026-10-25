@@ -45,6 +45,7 @@ int runtime_front_text_input(const RuntimeTextRequest *req, char *out, size_t ou
 void runtime_front_text_test(const char *op, const char *text);   /* diagnostics: "type" text, "enter", "esc" into the open bar */
 int runtime_core_away(void);          /* runtime/threads.c: a guest thread gives its virtual core up around a long host wait */
 void runtime_core_back(int *away);
+void runtime_spin_wait(unsigned module, uint64_t head);   // threads.c: a pass of a gated spin wait (loader.c runtime_dispatch)
 void runtime_save_probe(void);
 int runtime_fs_save_busy(void);   /* runtime/fs_host.c: the game is writing save data (window close waits) */
 uint8_t *runtime_module_base(const char *name);   /* runtime/loader.c: "main", "subsdk0", "sdk" (probes) */
@@ -108,6 +109,7 @@ int runtime_aspect_toggle(void);   /* runtime/aspect_patch.h: key 4, 16:9 -> fit
 int runtime_aspect_step(void);     /* key 4's step: 0 16:9, 1 fit to the window, 2 21:9 / TOTK_ASPECT; -1 where unavailable */
 void runtime_aspect_view(double w, double h);   /* frontend.m: the window's drawable size, which key 4 follows */
 float runtime_aspect_now(void);     /* the ratio in force, 0 = the game's own 16:9 */
+void runtime_front_resize_aspect(double ratio);   /* Mac: resize the window to a selected picture ratio */
 int hud_compact(void);   /* gfx/nvn/fps_overlay.c: the overlay lines go to the window's corner panel (TOTK_HUD=corners: in the picture) */
 int hud_snapshot(int line, char *out, size_t n, int *highlight);   /* line 0..3: FPS, shaders, render pipelines, load; 0 = not published */
 
