@@ -380,22 +380,26 @@ moving try on the field route is void, because Link died before 245 s and the ru
 
 Docked play on 1.9.0 can render at a 16:9 size above 1920x1080. The game's own canvas and its 3D scene take that size,
 so it is not an upscale. In a 2560x1440 Kakariko frame, the 25 full-size render passes (G-buffer and lighting, about
-1,070 draws) are 2560x1440 and the 31 half-size passes are 1280x720. Key 3 switches the size in play, with upstream's
-design for 1.6.0 (`e60b0a2`): the game makes its swapchain and heaps once at start, for the largest size of the
+1,070 draws) are 2560x1440 and the 31 half-size passes are 1280x720. The settings panel's Resolution row (key 1) switches the size in play, with upstream's
+design for 1.6.0 (`e60b0a2`, then `4fe0f8c` for the panel): the game makes its swapchain and heaps once at start, for the largest size of the
 session, and the docked branch of its display-mode routine takes the current size from the data page after `main`.
-The shortcut reminder names the size ("native 2K", "native 3456×1944").
+The panel's Resolution row names the native size (2560x1440, or the screen size under `screen`).
 
-| `TOTK_OUTPUT_RES` | Swapchain and heaps | Start | Key 3 |
+| `TOTK_OUTPUT_RES` | Swapchain and heaps | Start | Resolution row choices |
 |---|---|---|---|
-| unset or `auto` | 2560x1440 | 1920x1080 | off → MetalFX 2K → native 2K → off, as on 1.6.0 |
-| `1440p` | 2560x1440 | 2560x1440 | the same cycle |
-| `screen` | the largest 16:9 size of the main display's native mode, at most 3456x1944 | that size | off → MetalFX 2K → native 2K → native screen size → off |
-| `0` or `1080p` | the game's own 1920x1080 | 1920x1080 | MetalFX 2K on / off |
-| another 16:9 size above 1920x1080, up to 3456x1944, with a width that is a multiple of 128 | that size, fixed, for tests (`2944x1656`) | that size | MetalFX 2K on / off |
+| unset or `auto` | 2560x1440 | 1920x1080 | 1080p, 1080p + MetalFX, native (2560x1440), 2K + MetalFX |
+| `1440p` | 2560x1440 | 2560x1440 | the same |
+| `screen` | the largest 16:9 size of the main display's native mode, at most 3456x1944 | that size | 1080p, 1080p + MetalFX, native (the screen size), 2K + MetalFX |
+| `0` or `1080p` | the game's own 1920x1080 | 1920x1080 | 1080p, 1080p + MetalFX |
+| another 16:9 size above 1920x1080, up to 3456x1944, with a width that is a multiple of 128 | that size, fixed, for tests (`2944x1656`) | that size | 1080p, 1080p + MetalFX |
 
-Any other value stops the game with a message. A `screen` size at or below 2560x1440 has no separate native 2K step.
-A start above 1080p turns off MetalFX 2K (`TOTK_MFX_OUTPUT` / `TOTK_MFX_UPSCALE`), so the first key 3 goes to off. There is no 720p choice: the game has no resolution setting of its own, 720p is its
-handheld size, and this mode only makes the docked canvas and heaps bigger.
+"2K + MetalFX" is the 2560x1440 canvas that MetalFX scales to the window (on a screen bigger than 2K: clean edges at 51
+FPS in the bog, against 50 for native 2K and 42-44 for the screen size, 2026-10-24). With `screen`, plain native 2K is not
+a choice. 1.9.0 offers no 720p choice (1.6.0 does; it is not tested on 1.9.0). A start above 1080p turns off MetalFX 2K
+(`TOTK_MFX_OUTPUT` / `TOTK_MFX_UPSCALE`), so the panel starts at native.
+
+Any other value stops the game with a message. The game has no resolution setting of its own: handheld is 1280x720, and
+this mode only makes the docked canvas and heaps bigger.
 
 - `screen`: 3456x2234 (this Mac) gives 3456x1944, 3024x1964 gives 2944x1656, 2560x1664 gives 2560x1440, and
   5120x2880 gives 3456x1944. The rule reads the native mode, not the largest mode: this Mac's scaled modes go up to
@@ -417,7 +421,7 @@ heap word is the original instruction with a new 16-bit immediate, for the large
 load from the data page instead: `adrp x8` / `ldr x8, [x8, #16]` for the {screen, render} floats at 0x12660bc / 0x12660c8,
 `adrp x8` / `ldr x8, [x8, #24]` for {width, height} at 0x12660d0 / 0x12660d4 (stored at `[sp]` for the system task's TV
 size, `main+0x106dc70`, which only reads it), and `ldr w4, [sp, #4]` / `ldr w3, [sp]` for the viewport at 0x12660f0 /
-0x1266104. Key 3 writes the page and the canvas static, then asks the game to apply the current mode again: the request
+0x1266104. The panel's Resolution row writes the page and the canvas static, then asks the game to apply the current mode again: the request
 byte +0x11bd of the graphics object (`*(main+0x1e43df0)`) takes the current mode +0x11be, as the game does itself at
 `main+0x1265b6c` (1.6.0: +0x123d / +0x123e). Only the docked modes 0 and 2 take it. Two readers use the canvas static
 in play (`main+0xdf199c`, `main+0xe20ce4`), so the static follows the size after the start, as on 1.6.0.
@@ -444,7 +448,7 @@ size: for example "FPS 49  3456x1944  screen" or "… 2560x1440  1440p". Another
 - A one-off word test (UBSan, not committed) gives the words of the tested runs at all 16 sites for 2560x1440 and 3456x1944. The size rule
   and the parser give the expected results (11 rejects). The 2944x1656 words disassemble to the intended values.
 
-Live switch test record (2026-10-23): the same Mac and display, this change on upstream `ad2b6f0`, a cloned app,
+Live switch test record (2026-10-23, key 3; upstream's settings panel `4fe0f8c` of 2026-10-25 calls the same `output_switch`; its Resolution row on 1.9.0 is in the panel record below): the same Mac and display, this change on upstream `ad2b6f0`, a cloned app,
 the game slot, a copied Bottomless Bog profile, a 3456x1944 window. Every run exited with code 0, and no log line shows a
 heap or runtime failure.
 
