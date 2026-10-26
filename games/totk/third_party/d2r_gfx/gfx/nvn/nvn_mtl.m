@@ -2563,13 +2563,13 @@ static int pkg_final_cache_on(void) {
    set again every time any other serial joins it (a locked lookup per CPU-pool texture per new render target). */
 static void pkg_owned_locked(uint64_t k) {
     id o = hm_get_id(&g_by_serial, &k); if (![o isKindOfClass:[NvPkg class]]) return;
-    NvPkg *pk = (NvPkg *)o; pk->owned = 1;
+    NvPkg *pk = (NvPkg *)o; pk->owned = 1; BOTW_TP_OWNED(pk)
     // a purgeable copy (pkg_purge_idle) the GPU now renders into must keep its memory; tex_mtl uploads it again if the system took it
     if (pk->vol && pk->tex) { pk->vol = 0; if ([pk->tex setPurgeableState:MTLPurgeableStateNonVolatile] == MTLPurgeableStateEmpty) pk->lost = 1; }
 }
 @implementation NvPkg
 - (void)dealloc {
-    free(edge);   // TOTK (#90): the shared first / last page bytes (pkg_edge_snap)
+    free(edge); BOTW_TP_FREE()   // TOTK (#90): the shared first / last page bytes (pkg_edge_snap)
     // The wrapper is released after its GPU readers finish. Recycle its allocation
     // with the same descriptor key as a re-upload, retaining residency. The next
     // owner overwrites every mip/layer; cached views are retired by the normal path.
@@ -3939,7 +3939,7 @@ static void *tex_mtl_p(const tex_t *ct) {
             }
             TILELOG(t, "re-upload from the pool bytes");
             uint64_t st; BOTW_PKG_WB_TAKE() reup_key nk; g_mip_nodrop = pk->owned; id<MTLTexture> nt = pkg_upload(t, &st, &nk, pk); g_mip_nodrop = 0;   // 池内容变了（流式素材写进同一存储）：换新贴图，在途绘制仍读旧的 | Pool content changed (streamed assets written into the same storage): switch to a new texture; in-flight draws still read the old one
-            if (nt) { id<MTLTexture> old = pk->tex; pk->tex = nt; reup_retire(old, &pk->key); pk->key = nk; if (pk->hashed) pk->chash = h; ser_bump(t->serial); pk->stamp = st; pk->seen = st; BOTW_PKG_WB_SET(pk) g_pkg_reuploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->L.size); BOTW_REUP_TRACKED(pk, t) }
+            if (nt) { id<MTLTexture> old = pk->tex; pk->tex = nt; reup_retire(old, &pk->key); pk->key = nk; if (pk->hashed) pk->chash = h; ser_bump(t->serial); pk->stamp = st; pk->seen = st; BOTW_PKG_WB_SET(pk) g_pkg_reuploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->L.size); BOTW_REUP_TRACKED(pk, t) BOTW_TP_UPLOADED(pk, t) }
             else { free(pk->edge); pk->edge = NULL; }   // TOTK (#90): the bytes kept belong to the upload that failed
             return (__bridge void *)pk->tex;
         }
@@ -3950,7 +3950,7 @@ static void *tex_mtl_p(const tex_t *ct) {
         if (!pk->tex) return NULL;
         /* TOTK (#90): seen = the upload's stamp, not "now": a write that faulted during the copy moved "now" on, and the
            now == seen shortcut above then called the texture clean without looking at its pages. */
-        pk->seen = pk->stamp; g_pkg_uploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->L.size);
+        pk->seen = pk->stamp; g_pkg_uploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->L.size); BOTW_TP_UPLOADED(pk, t)
         serial_put(t->serial, pk);
         pk->owned = gpu_owned(t->serial);   // after it is in the table: a later mark finds it there (pkg_owned_locked)
         if ((pk->hashed = pkg_hashed(t))) { pk->chash = pkg_hash(t->mem, t->L.size); pk->csub = g_sub_serial; }
@@ -6200,7 +6200,7 @@ static void *tex_by_id_p(int tid) {   // 调用方持 g_rmu | Caller holds g_rmu
     /* TOTK: the stored view is compared by pointer (cur, view_parent: no retain, no parentTexture message); a strong local
        was a retain + release each time a guest write or serial step sent a bound texture through here. */
     if (rp->view) {   // 序号表或客体内存有过变动：核基贴图是否被重传换新，换了则视图作废 | The serial table or guest memory has changed: check whether the base texture was re-uploaded and replaced; if so the view is invalidated
-        __unsafe_unretained id<MTLTexture> cur = tex_mtl(&rp->t);   // held by the serial table / its NvPkg
+        __unsafe_unretained id<MTLTexture> cur = tex_mtl(&rp->t); BOTW_TP_BASE(rp, cur)   // held by the serial table / its NvPkg
         if (g_tex_prepare_split) return NULL;
         if ((__bridge void *)cur == rp->view || (__bridge void *)cur == rp->view_parent) { rp->view_ser = sg; rp->view_pkg = treg_kind(&rp->t); rp->view_dirty = rp->view_pkg == 2 || (rp->view_pkg == 1 && tex_check_once()) ? g_sub_serial : dg; return rp->view; }
         treg_clear_view_locked(tid);
@@ -6208,7 +6208,7 @@ static void *tex_by_id_p(int tid) {   // 调用方持 g_rmu | Caller holds g_rmu
     id<MTLTexture> v = nil;
     treg_t r = *rp;
     if (!r.has_v) memset(&r.v, 0, sizeof r.v);   // only a registered view may change format, levels, layers or target
-    id<MTLTexture> base = tex_mtl(&rp->t);
+    id<MTLTexture> base = tex_mtl(&rp->t); BOTW_TP_VIEW(rp, r, base)
     if (!base) return NULL;
     v = base;
     MTLTextureSwizzleChannels vsw = MTLTextureSwizzleChannelsDefault;
@@ -9132,7 +9132,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
             if (nvn_stage == 1 && reg == 0 && !strncmp(sh->key, "0ac9a54938974396", 16) && getenv("DM_NVN_FLASHHDR")) g_flash_hdr_source = t;
             if (t && tid < g_ntreg) use_rec("tex", (uint64_t)g_treg[tid].t.mem, g_treg[tid].t.L.size, tid, &g_treg[tid].t);
             if (t && passdump() && tid < g_ntreg) PD("R %llu st%d ser=%llu mem=%p sz=%llu", g_stat_pass, nvn_stage, g_treg[tid].t.serial, (void *)g_treg[tid].t.mem, (unsigned long long)g_treg[tid].t.L.size);
-            if (t && tid < g_ntreg) tp_note_fs(sh->key, g_treg[tid].t.serial, &g_treg[tid].t);   // TOTK: DM_NVN_TEXPNG_FS
+            if (t && tid < g_ntreg) tp_note_fs(sh->key, g_treg[tid].t.serial, &g_treg[tid].t); BOTW_TP_HARVEST(t && tid < g_ntreg, sh->key, &g_treg[tid].t)   // TOTK: DM_NVN_TEXPNG_FS
             if (bl) PD("B %llu st%d tex reg%d tid=%d %s ser=%llu nvnfmt=%#x vfmt=%#x fmt=%lu %lux%lux%lu view_lv=%lu+%lu view_sl=%lu array=%lu target=%lu", g_stat_pass, nvn_stage, reg, tid, t ? "实" : "哑", t && tid < g_ntreg ? g_treg[tid].t.serial : 0,
                        tid < g_ntreg ? g_treg[tid].t.d.format : 0, tid < g_ntreg && g_treg[tid].has_v && g_treg[tid].v.set_format ? g_treg[tid].v.format : 0ull,
                        (unsigned long)t.pixelFormat, (unsigned long)t.width, (unsigned long)t.height, (unsigned long)t.depth,
@@ -16944,6 +16944,7 @@ static void late_land(late_job **jobs, int m, NSArray<id<MTLBuffer>> *bufs) { @a
             if (landed && en && (post = malloc(en))) { memcpy(post, t->mem, c->hn); memcpy(post + c->hn, t->mem + c->t0, c->tn); }
             nvn_dirty_gpu_write_end(tok);
             pthread_mutex_unlock(&g_mu);
+            if (landed) { BOTW_WB_LANDED(t) }   // sinking legs: copies sampled from this memory upload again, as after a write-back
         }
         pthread_mutex_lock(&g_late_mu);
         c->busy = 0;
@@ -17278,3 +17279,6 @@ int mtl_probe_pipeline_archive(void) {
     [NSFileManager.defaultManager removeItemAtPath:dir error:nil];
     return atomic_load(&built) + from_archive;
 }
+#ifdef GAME_BOTW
+#include "../../../../../botw/gfx/botw_texpack.h"   // sharp UI art (BOTW_TP_* in nvn_obj.h)
+#endif
