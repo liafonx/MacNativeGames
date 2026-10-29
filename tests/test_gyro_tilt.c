@@ -1,4 +1,4 @@
-/* Test tilt mode (games/totk/runtime/gyro_tilt.h): the virtual controller's tilt, turn and reported rates, the LT + RT
+/* Test tilt mode (games/totk/runtime/gyro_tilt.h): the virtual controller's tilt, turn and reported rates, the d-pad left + right
    chord and when tilt mode is allowed. */
 #define _DEFAULT_SOURCE   /* M_PI */
 #include "../games/totk/runtime/gyro_tilt.h"
@@ -112,24 +112,25 @@ int main(void) {
     double det = q[0][0] * (q[1][1] * q[2][2] - q[1][2] * q[2][1]) - q[0][1] * (q[1][0] * q[2][2] - q[1][2] * q[2][0]) + q[0][2] * (q[1][0] * q[2][1] - q[1][1] * q[2][0]);
     expect(near(det, 1, 1e-12) && near(a[0] * a[0] + a[1] * a[1] + a[2] * a[2], 1, 1e-12), "the pose stays a rotation, gravity 1 G");
 
-    /* LT + RT (physical 8, 9): together within 150 ms, in either order; once per press. */
-    enum { LT = 1 << 8, RT = 1 << 9 }; const uint64_t ms = 1000000;
+    /* D-pad left + right (physical 12, 14): together within 150 ms, in either order; once per press. */
+    enum { DL = 1 << 12, DR = 1 << 14 }; const uint64_t ms = 1000000;
     GyroTiltChord c = {0};
-    expect(!gyro_tilt_chord(&c, LT, LT, 1000 * ms) && gyro_tilt_chord(&c, LT | RT, RT, 1100 * ms), "LT then RT 100 ms later toggles");
-    expect(!gyro_tilt_chord(&c, LT | RT, 0, 1200 * ms) && !gyro_tilt_chord(&c, LT | RT, 0, 3000 * ms), "a held pair toggles once");
-    expect(!gyro_tilt_chord(&c, LT, 0, 3100 * ms) && !gyro_tilt_chord(&c, LT | RT, RT, 3200 * ms), "LT still held from the pair, RT let go and pressed again: no toggle");
+    expect(!gyro_tilt_chord(&c, DL, DL, 1000 * ms) && gyro_tilt_chord(&c, DL | DR, DR, 1100 * ms), "DL then DR 100 ms later toggles");
+    expect(!gyro_tilt_chord(&c, DL | DR, 0, 1200 * ms) && !gyro_tilt_chord(&c, DL | DR, 0, 3000 * ms), "a held pair toggles once");
+    expect(!gyro_tilt_chord(&c, DL, 0, 3100 * ms) && !gyro_tilt_chord(&c, DL | DR, DR, 3200 * ms), "DL still held from the pair, DR let go and pressed again: no toggle");
     c = (GyroTiltChord){0};
-    expect(!gyro_tilt_chord(&c, RT, RT, 5000 * ms) && gyro_tilt_chord(&c, LT | RT, LT, 5150 * ms), "RT then LT at exactly 150 ms toggles");
+    expect(!gyro_tilt_chord(&c, DR, DR, 5000 * ms) && gyro_tilt_chord(&c, DL | DR, DL, 5150 * ms), "DR then DL at exactly 150 ms toggles");
     c = (GyroTiltChord){0};
-    expect(!gyro_tilt_chord(&c, LT, LT, 7000 * ms) && !gyro_tilt_chord(&c, LT | RT, RT, 7151 * ms), "151 ms apart: no toggle");
+    expect(!gyro_tilt_chord(&c, DL, DL, 7000 * ms) && !gyro_tilt_chord(&c, DL | DR, DR, 7151 * ms), "151 ms apart: no toggle");
     c = (GyroTiltChord){0};
-    expect(!gyro_tilt_chord(&c, LT, LT, 9000 * ms) && !gyro_tilt_chord(&c, LT | RT, RT, 11000 * ms), "LT held to lock on, RT 2 s later to shoot: no toggle");
-    expect(!gyro_tilt_chord(&c, 0, 0, 12000 * ms) && !gyro_tilt_chord(&c, LT, LT, 13000 * ms) && gyro_tilt_chord(&c, LT | RT, RT, 13050 * ms),
+    expect(!gyro_tilt_chord(&c, DL, DL, 9000 * ms) && !gyro_tilt_chord(&c, DL | DR, DR, 11000 * ms), "left held, right 2 s later: no toggle");
+    expect(!gyro_tilt_chord(&c, 0, 0, 12000 * ms) && !gyro_tilt_chord(&c, DL, DL, 13000 * ms) && gyro_tilt_chord(&c, DL | DR, DR, 13050 * ms),
            "after both are let go, a new pair toggles");
     c = (GyroTiltChord){0};
-    expect(gyro_tilt_chord(&c, LT | RT, LT | RT, 15000 * ms), "both in one report toggle");
+    expect(gyro_tilt_chord(&c, DL | DR, DL | DR, 15000 * ms), "both in one report toggle");
+    { GyroTiltChord t = {0}; expect(!gyro_tilt_chord(&t, 1 << 8 | 1 << 9, 1 << 8 | 1 << 9, 16000 * ms), "LT + RT no longer toggles (owner, 2026-10-30)"); }
 
-    /* When LT + RT may turn it on. */
+    /* When the pair may turn it on. */
     expect(gyro_tilt_allowed(NULL, 1, 0) && !gyro_tilt_allowed(NULL, 1, 1), "unset: only without a controller gyro");
     expect(gyro_tilt_allowed("1", 1, 1) && !gyro_tilt_allowed("0", 1, 0), "TOTK_GYRO_EMU=1 always, =0 never");
     expect(!gyro_tilt_allowed("1", 0, 0) && !gyro_tilt_allowed(NULL, 0, 0), "never without the game's six-axis device");
@@ -165,19 +166,25 @@ int main(void) {
         expect(!t.set && near(a[2], -1, 1e-6), "B: ends exactly flat, z = -1 G");
     }
 
-    /* tilt.txt: speed and inverted axes; a bad line keeps the default and is counted. */
+    /* tilt.txt: one of three speeds, one axis or all reversed; a bad line keeps the default and is counted. */
     {
         GyroTiltConfig c;
-        expect(gyro_tilt_config("", &c) == 0 && c.speed == TILT_SPEED_DEG && !c.invert_lx && !c.invert_ly && !c.invert_rx, "tilt.txt: empty: the defaults");
-        expect(gyro_tilt_config("# slower, left stick x reversed\nspeed = 20\ninvert = lx, rx\n", &c) == 0 && c.speed == 20 && c.invert_lx && !c.invert_ly && c.invert_rx, "tilt.txt: speed and two inverted axes");
-        expect(gyro_tilt_config("speed=360\r\ninvert=ly\r\n", &c) == 0 && c.speed == 360 && c.invert_ly, "tilt.txt: no spaces, CRLF");
-        expect(gyro_tilt_config("speed = 1000\ninvert = up\ncolour = red\n", &c) == 3 && c.speed == TILT_SPEED_DEG && !c.invert_lx, "tilt.txt: out of range, unknown axis, unknown key: three bad lines, defaults kept");
+        expect(gyro_tilt_config("", &c) == 0 && c.speed == 45 && !c.invert, "tilt.txt: empty: the defaults");
+        expect(gyro_tilt_config("# faster, all reversed\nspeed = 90\ninvert = all\n", &c) == 0 && c.speed == 90 && c.invert == TILT_INVERT_ALL, "tilt.txt: speed 90, all reversed");
+        expect(gyro_tilt_config("invert = ly\n", &c) == 0 && c.invert == TILT_INVERT_LY && gyro_tilt_config("invert = rx\n", &c) == 0 && c.invert == TILT_INVERT_RX, "tilt.txt: one axis reversed");
+        expect(gyro_tilt_config("speed=60\r\ninvert=off\r\n", &c) == 0 && c.speed == 60 && !c.invert, "tilt.txt: no spaces, CRLF");
+        expect(gyro_tilt_config("speed = 30\nspeed = 360\nspeed = 045\ninvert = on\ninvert = lx ly\ncolour = red\n", &c) == 6 && c.speed == 45 && !c.invert,
+               "tilt.txt: other speeds, on, two axes, an unknown key: six bad lines, defaults kept");
+        char text[64]; GyroTiltConfig w = {60, TILT_INVERT_LX}, r;
+        gyro_tilt_config_text(&w, text, sizeof text);
+        expect(gyro_tilt_config(text, &r) == 0 && r.speed == 60 && r.invert == TILT_INVERT_LX, "tilt.txt: what the panel saves reads back the same");
         GyroTilt a1 = {0}, a2 = {0}; double g2[3], acc2[3];
-        for (int i = 0; i < 100; i++) { gyro_tilt_tick_at(&a1, 32767, 0, 0, 20, 0.01, NULL, g, a); gyro_tilt_tick(&a2, 32767, 0, 0, 0.01, NULL, g2, acc2); }
+        for (int i = 0; i < 100; i++) { gyro_tilt_tick_at(&a1, 32767, 0, 0, 90, 0.01, NULL, g, a); gyro_tilt_tick(&a2, 32767, 0, 0, 0.01, NULL, g2, acc2); }
         GyroTilt flat = {0};
-        expect(near(height_of(&flat, &a1, right), -sin(20 * deg), 1e-9) && near(height_of(&flat, &a2, right), -sin(TILT_SPEED_DEG * deg), 1e-9), "tilt.txt speed 20: a second of full stick turns 20 degrees");
+        expect(near(height_of(&flat, &a1, right), -sin(90 * deg), 1e-9) && near(height_of(&flat, &a2, right), -sin(TILT_SPEED_DEG * deg), 1e-9), "tilt speed 90: a second of full stick turns 90 degrees");
     }
 
+    if (failures) { fprintf(stderr, "gyro tilt: %d failure(s)\n", failures); return 1; }
     puts("gyro tilt: ok");
     return 0;
 }

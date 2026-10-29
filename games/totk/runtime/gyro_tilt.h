@@ -1,6 +1,6 @@
 /* Tilt mode: a controller without motion sensors (an Xbox pad) tilts and turns a virtual controller lying face up, for the
-   motion-control puzzles (Breath of the Wild: Myahm Agana's maze board, Toto Sah's stairs). LT + RT pressed together turn
-   it on and off (gyro_tilt_chord); runtime/gamepad.m ticks it and feeds the six-axis sensor.
+   motion-control puzzles (Breath of the Wild: Myahm Agana's maze board, Toto Sah's stairs). d-pad left + right pressed
+   together turn it on and off (gyro_tilt_chord); runtime/gamepad.m ticks it and feeds the six-axis sensor.
    Every stick axis turns it at a speed, about an axis fixed to the player, never to the controller: left stick up tips the
    far edge down (about x), right tips the right edge down (about y), right stick right turns it clockwise seen from above
    (about the vertical, mouse mode's sign, runtime/mouse_look.h). Let go and it stays where it is; push again and it moves on
@@ -79,35 +79,43 @@ static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t r
     gyro_tilt_tick_at(t, lx, ly, rx, TILT_SPEED_DEG, dt, from, gyro, acc);
 }
 
-/* tilt.txt next to controls.txt, read each time tilt mode turns on (runtime/gamepad.m), so a change needs no rebuild or
-   restart. One setting a line, '#' starts a comment:
-     speed = 45          top speed in degrees a second, 5 to 360 (default TILT_SPEED_DEG)
-     invert = lx ly rx   the stick axes whose direction is reversed (left stick x, left stick y, right stick x; any of them)
+/* tilt.txt next to controls.txt: the settings panel's tilt rows (runtime/settings_panel.h) write it, and runtime/gamepad.m
+   reads it once at the first use. One setting a line, '#' starts a comment:
+     speed = 45     top speed in degrees a second: 45 (default, TILT_SPEED_DEG), 60 or 90
+     invert = off   the stick axis reversed: off (default), all (all three), or one of lx, ly, rx (left stick x, left
+                    stick y, right stick x)
    Returns the number of lines it could not read; those keep the default. */
-typedef struct { double speed; int invert_lx, invert_ly, invert_rx; } GyroTiltConfig;
+enum { TILT_INVERT_LX = 1, TILT_INVERT_LY = 2, TILT_INVERT_RX = 4, TILT_INVERT_ALL = 7 };   /* GyroTiltConfig.invert */
+typedef struct { int speed, invert; } GyroTiltConfig;
+static inline int gyro_tilt_speed_ok(int speed) { return speed == 45 || speed == 60 || speed == 90; }
+static inline const char *gyro_tilt_invert_name(int invert) {   /* NULL: not a choice */
+    switch (invert) { case 0: return "off"; case TILT_INVERT_LX: return "lx"; case TILT_INVERT_LY: return "ly"; case TILT_INVERT_RX: return "rx"; case TILT_INVERT_ALL: return "all"; }
+    return NULL;
+}
+static inline int gyro_tilt_invert_ok(int invert) { return gyro_tilt_invert_name(invert) != NULL; }
 static inline int gyro_tilt_config(const char *text, GyroTiltConfig *c) {
-    *c = (GyroTiltConfig){TILT_SPEED_DEG, 0, 0, 0};
+    *c = (GyroTiltConfig){(int)TILT_SPEED_DEG, 0};
     int bad = 0;
     for (const char *p = text; p && *p;) {
         char line[200]; size_t n = strcspn(p, "\n"); if (n >= sizeof line) n = sizeof line - 1;
         memcpy(line, p, n); line[n] = 0; p += strcspn(p, "\n"); if (*p) p++;
         char *hash = strchr(line, '#'); if (hash) *hash = 0;
-        char key[32], rest[160] = "";
-        if (sscanf(line, " %31[a-z] = %159[^\n]", key, rest) < 1) { for (char *q = line; *q; q++) if (*q != ' ' && *q != '\t' && *q != '\r') { bad++; break; } continue; }
-        if (!strcmp(key, "speed")) {
-            char *end; double v = strtod(rest, &end);
-            while (*end == ' ' || *end == '\t' || *end == '\r') end++;
-            if (end != rest && !*end && v >= 5 && v <= 360) c->speed = v; else bad++;
-        } else if (!strcmp(key, "invert")) {
-            for (char *w = rest; *w;) {   /* words split by spaces or commas */
-                w += strspn(w, " ,\t\r"); size_t m = strcspn(w, " ,\t\r"); if (!m) break;
-                if (m == 2 && !strncmp(w, "lx", 2)) c->invert_lx = 1; else if (m == 2 && !strncmp(w, "ly", 2)) c->invert_ly = 1;
-                else if (m == 2 && !strncmp(w, "rx", 2)) c->invert_rx = 1; else if (!(m == 4 && !strncmp(w, "none", 4))) bad++;
-                w += m;
-            }
+        char key[32], value[32] = "", extra[2] = "";
+        int got = sscanf(line, " %31[a-z] = %31[a-z0-9] %1s", key, value, extra);
+        if (got < 1) { for (char *q = line; *q; q++) if (*q != ' ' && *q != '\t' && *q != '\r') { bad++; break; } continue; }
+        if (got != 2) bad++;
+        else if (!strcmp(key, "speed") && gyro_tilt_speed_ok(atoi(value)) && strlen(value) == 2) c->speed = atoi(value);
+        else if (!strcmp(key, "invert")) {
+            int found = -1;
+            for (int i = 0; i < 8; i++) if (gyro_tilt_invert_name(i) && !strcmp(value, gyro_tilt_invert_name(i))) found = i;
+            if (found >= 0) c->invert = found; else bad++;
         } else bad++;
     }
     return bad;
+}
+/* The same two lines, as the settings panel saves them. */
+static inline void gyro_tilt_config_text(const GyroTiltConfig *c, char *text, size_t size) {
+    snprintf(text, size, "speed = %d\ninvert = %s\n", c->speed, gyro_tilt_invert_ok(c->invert) ? gyro_tilt_invert_name(c->invert) : "off");
 }
 
 /* One tick of the way back to flat after B: turn *t toward level, yaw 0, at up to TILT_HOME_DEG per second, about the
@@ -132,21 +140,22 @@ static inline int gyro_tilt_home(GyroTilt *t, double dt, const double (*from)[3]
     return 1;
 }
 
-/* TOTK_GYRO_EMU: whether LT + RT may turn tilt mode on. Never without the game's six-axis device (TOTK_GYRO / gyro.txt);
+/* TOTK_GYRO_EMU: whether d-pad left + right may turn tilt mode on. Never without the game's six-axis device (TOTK_GYRO / gyro.txt);
    "0" never, "1" always, else (unset) only while no controller feeds real motion (a DualSense or Switch Pro keeps its gyro). */
 static inline int gyro_tilt_allowed(const char *env, int six_axis, int motion_live) {
     if (!six_axis || (env && !strcmp(env, "0"))) return 0;
     return (env && !strcmp(env, "1")) || !motion_live;
 }
 
-/* LT + RT pressed together (physical buttons 8 and 9, controller_map.h): 1 on the press that completes the pair when the
-   two presses came within TILT_CHORD_NS of each other, so ZL held to lock on and ZR pressed later to shoot does not count.
+/* D-pad left + right pressed together (physical buttons 12 and 14, controller_map.h; owner, 2026-10-30: LT + RT came together
+   in play): 1 on the press that completes the pair when the two presses came within TILT_CHORD_NS of each other.
    A held pair fires once; both must be let go (one is enough) and pressed again. */
 typedef struct { uint64_t at[2]; int down; } GyroTiltChord;
 static inline int gyro_tilt_chord(GyroTiltChord *c, uint64_t physical, uint64_t edges, uint64_t now) {
-    for (int i = 0; i < 2; i++) if (edges >> (8 + i) & 1) c->at[i] = now;
-    int both = (physical >> 8 & 3) == 3, fire = 0;
-    if (both && !c->down && (edges >> 8 & 3)) fire = (c->at[0] > c->at[1] ? c->at[0] - c->at[1] : c->at[1] - c->at[0]) <= TILT_CHORD_NS;
+    const uint64_t pair = 1ull << 12 | 1ull << 14;
+    for (int i = 0; i < 2; i++) if (edges >> (12 + 2 * i) & 1) c->at[i] = now;
+    int both = (physical & pair) == pair, fire = 0;
+    if (both && !c->down && (edges & pair)) fire = (c->at[0] > c->at[1] ? c->at[0] - c->at[1] : c->at[1] - c->at[0]) <= TILT_CHORD_NS;
     c->down = both;
     return fire;
 }

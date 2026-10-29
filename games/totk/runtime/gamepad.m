@@ -598,7 +598,7 @@ void runtime_mouse_release(void) {   /* main thread: the window let the pointer 
 }
 
 /* ---- Tilt mode (runtime/gyro_tilt.h) ----
-   For the motion-control puzzles on a controller without motion sensors. LT + RT pressed together turn it on and off,
+   For the motion-control puzzles on a controller without motion sensors. D-pad left + right pressed together turn it on and off,
    when gyro_tilt_allowed says so (TOTK_GYRO_EMU; by default only while no controller feeds real motion). While on, a
    10 ms timer turns a virtual controller lying face up by the sticks (left: tilt, right x: turn, each about the player's
    axes at a speed; let go and it stays, gyro_tilt.h) and feeds the pose to the sensor in the mouse's place
@@ -612,8 +612,37 @@ static dispatch_queue_t tiltQueue;
 static GyroTiltChord tiltChord;                /* main queue (refresh_gamepads) */
 static _Atomic uint64_t tiltReset;             /* B pressed: turn it back to flat from this time (0: none) */
 static int tiltHoming;                         /* tilt queue: on the way back to flat */
-static GyroTiltConfig tiltConfig;              /* tilt queue: tilt.txt, read when tilt mode turns on */
 int runtime_tilt_active(void) { return atomic_load(&tiltMode); }
+/* The settings panel's tilt rows (runtime/settings_panel.h): tilt.txt (gyro_tilt_config) read once at the first use, a pick
+   saved and in force at the next tick, also while tilt mode is on. */
+static _Atomic int tiltSpeed, tiltInvert;      /* 0: tilt.txt not read yet */
+static void tilt_settings_load(void) {
+    if (atomic_load(&tiltSpeed)) return;
+    char text[1024] = "", path[4096] = "";
+    GyroTiltConfig c;
+    int found = setting_read("tilt.txt", text, sizeof text, path, sizeof path), bad = gyro_tilt_config(found ? text : "", &c);
+    if (bad) fprintf(stderr, "[totk-input] %s: %d line(s) not understood (speed = 45, 60 or 90; invert = off, all, lx, ly or rx): kept the default for them\n", path, bad);
+    int none = 0;
+    if (atomic_compare_exchange_strong(&tiltSpeed, &none, c.speed)) atomic_store(&tiltInvert, c.invert);
+}
+static void tilt_settings_save(void) {
+    GyroTiltConfig c = {atomic_load(&tiltSpeed), atomic_load(&tiltInvert)};
+    char text[64];
+    gyro_tilt_config_text(&c, text, sizeof text);
+    setting_write("tilt.txt", text, "tilt settings");
+}
+int runtime_tilt_speed(void) { tilt_settings_load(); return atomic_load(&tiltSpeed); }
+void runtime_tilt_speed_set(int speed) {
+    if (!gyro_tilt_speed_ok(speed)) return;
+    tilt_settings_load(); atomic_store(&tiltSpeed, speed); tilt_settings_save();
+    fprintf(stderr, "[totk-input] tilt speed %d (settings)\n", speed);
+}
+int runtime_tilt_invert(void) { tilt_settings_load(); return atomic_load(&tiltInvert); }
+void runtime_tilt_invert_set(int invert) {
+    if (!gyro_tilt_invert_ok(invert)) return;
+    tilt_settings_load(); atomic_store(&tiltInvert, invert); tilt_settings_save();
+    fprintf(stderr, "[totk-input] tilt reversed: %s (settings)\n", gyro_tilt_invert_name(invert));
+}
 static void tilt_tick(void) {
     int32_t lx = 0, ly = 0, rx = 0;
     /* B leaves a motion-control device, and the game puts the platform back where it started; the virtual controller goes
@@ -631,8 +660,10 @@ static void tilt_tick(void) {
     int have = runtime_motion_read(&shown, 1) == 1;
     if (have) for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) from[j][i] = shown.dir[i * 3 + j];
     if (tiltHoming) tiltHoming = !gyro_tilt_home(&tilt, dt, have ? (const double (*)[3])from : NULL, gyro, acc);
-    else gyro_tilt_tick_at(&tilt, tiltConfig.invert_lx ? -lx : lx, tiltConfig.invert_ly ? -ly : ly, tiltConfig.invert_rx ? -rx : rx, tiltConfig.speed, dt,
-                           have ? (const double (*)[3])from : NULL, gyro, acc);
+    else {
+        int invert = atomic_load(&tiltInvert);   /* reverse tilt: one axis or all three */
+        gyro_tilt_tick_at(&tilt, invert & TILT_INVERT_LX ? -lx : lx, invert & TILT_INVERT_LY ? -ly : ly, invert & TILT_INVERT_RX ? -rx : rx, atomic_load(&tiltSpeed), dt, have ? (const double (*)[3])from : NULL, gyro, acc);
+    }
     if (atomic_load(&tiltMode)) runtime_motion_feed_mouse(acc, gyro, now);
 }
 static void tilt_toggle(const char *why) {   /* main queue */
@@ -643,14 +674,10 @@ static void tilt_toggle(const char *why) {   /* main queue */
         return;
     }
     if (!tiltQueue) tiltQueue = dispatch_queue_create("totk.tilt", DISPATCH_QUEUE_SERIAL);
+    if (on) tilt_settings_load();   /* before the first tick */
     dispatch_sync(tiltQueue, ^{
         if (on) {
             tilt = (GyroTilt){0}; tiltLast = 0; tiltHoming = 0; atomic_store(&tiltReset, 0);   /* on: flat again */
-            char text[1024] = "", path[1024] = "";
-            int found = setting_read("tilt.txt", text, sizeof text, path, sizeof path), bad = gyro_tilt_config(text, &tiltConfig);
-            if (found) fprintf(stderr, "[totk-input] tilt mode: %s: up to %.0f degrees a second%s%s%s%s\n", path, tiltConfig.speed,
-                               tiltConfig.invert_lx ? ", left stick x reversed" : "", tiltConfig.invert_ly ? ", left stick y reversed" : "",
-                               tiltConfig.invert_rx ? ", right stick x reversed" : "", bad ? " (some lines not understood: kept the default for them)" : "");
             runtime_motion_mouse(1);
             atomic_store(&tiltMode, 1);
             tiltTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, tiltQueue);
@@ -664,7 +691,8 @@ static void tilt_toggle(const char *why) {   /* main queue */
             runtime_motion_mouse(mouse);
         }
     });
-    if (on) fprintf(stderr, "[totk-input] tilt mode on (%s): the left stick tilts the controller, the right stick turns it; let go and it stays\n", why);
+    if (on) fprintf(stderr, "[totk-input] tilt mode on (%s): the left stick tilts the controller, the right stick turns it; let go and it stays (up to %d degrees a second, reversed: %s)\n",
+                    why, runtime_tilt_speed(), gyro_tilt_invert_name(runtime_tilt_invert()));
     else fprintf(stderr, "[totk-input] tilt mode off (%s)\n", why);
 }
 
@@ -762,8 +790,10 @@ static void refresh_gamepads(void) {
     gamepadNativeLx = nativeLx; gamepadNativeLy = nativeLy; gamepadNativeRx = nativeRx; gamepadNativeRy = nativeRy;
     pthread_mutex_unlock(&gamepadLock);
     /* After the unlock: the tilt timer takes gamepadLock. The last controller gone: tilt mode ends, so the keyboard drives again. */
-    if (tiltPressed) tilt_toggle("LT + RT");
+    if (tiltPressed) tilt_toggle("d-pad left + right");
     else if (!next.connected && atomic_load(&tiltMode)) tilt_toggle("controller disconnected");
+    else if (atomic_load(&tiltMode) && !gyro_tilt_allowed(getenv("TOTK_GYRO_EMU"), runtime_gyro_enabled(), runtime_motion_controller_live()))
+        tilt_toggle("a controller with a gyro of its own is in use");   /* d-pad left + right is off for those too (gyro_tilt_allowed) */
     else if (tiltCancel && atomic_load(&tiltMode)) { atomic_store(&tiltReset, runtime_now_ns() + TILT_RESET_NS); fprintf(stderr, "[totk-input] tilt mode: B pressed, the controller turns back to flat in %.1f s\n", TILT_RESET_NS / 1e9); }
 }
 
