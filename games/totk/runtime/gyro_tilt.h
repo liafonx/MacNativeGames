@@ -4,7 +4,8 @@
    The left stick sets the tilt, not its rate, on a squared curve (half way: a quarter of the tilt): pushed fully up, the top edge goes down by the full tilt; right, the right
    edge goes down; let go, the controller lies flat again. The right stick's x turns it about the vertical (yaw,
    for puzzles that also turn the platform, Toto Sah): held right it turns clockwise seen from above at up to TILT_YAW_DEG
-   per second, let go it stops and keeps the angle; it turns about the vertical even while tilted, and the tilt turns with it. The pose moves toward the stick at up to TILT_RATE_DEG per second,
+   per second, let go it stops and keeps the angle; it turns about the vertical even while tilted, and a tilt started from
+   level is always about the player's axes (gyro_tilt_matrix). The pose moves toward the stick at up to TILT_RATE_DEG per second,
    so the game's sensor fusion (runtime/motion_fusion.c) sees a smooth rotation, and each 10 ms tick hands it the rotation
    rate to the next pose in the controller frame plus the gravity of that pose (the fusion's frame: x right, y top edge,
    z out of the face; flat it reads z = -1 G). The turn uses mouse mode's frame (runtime/mouse_look.h: right is clockwise
@@ -20,7 +21,7 @@ enum { TILT_TICK_NS = 10000000, TILT_FIX_NS = 50000000, TILT_CHORD_NS = 15000000
 #define TILT_RATE_DEG 150.0
 #define TILT_YAW_DEG 90.0
 
-typedef struct { double pitch, roll, yaw; } GyroTilt;   /* radians: pitch about x (top edge down < 0), roll about y (right edge down > 0), yaw about z (clockwise from above < 0) */
+typedef struct { double pitch, roll, yaw, base; } GyroTilt;   /* radians: pitch about x (top edge down < 0), roll about y (right edge down > 0), yaw about z (clockwise from above < 0); base: the yaw when it last lay level */
 
 /* TOTK_GYRO_EMU_TILT: the full tilt in degrees, 5-180, default 180: full stick turns it face down (Toto Sah's chest and
    stairs need the platform upside down), and the squared curve keeps small tilts fine (half stick: 45 degrees). */
@@ -34,13 +35,20 @@ static inline void gyro_tilt_mul(const double a[3][3], const double b[3][3], dou
     for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) { q[i][j] = 0; for (int k = 0; k < 3; k++) q[i][j] += a[i][k] * b[k][j]; }
 }
 
-/* Controller -> reference (rows = reference axes in controller coordinates, as runtime/motion_fusion.c): Rz(yaw) Rx(pitch) Ry(roll),
-   so the turn is always about the vertical, a turntable even while tilted, and the tilt is about the turned controller's own
-   axes (after a quarter turn, stick up tips the edge that was its top edge). */
+static inline void gyro_tilt_rz(double a, double z[3][3]) {
+    double c = cos(a), s = sin(a), r[3][3] = {{c, -s, 0}, {s, c, 0}, {0, 0, 1}};
+    for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) z[i][j] = r[i][j];
+}
+
+/* Controller -> reference (rows = reference axes in controller coordinates, as runtime/motion_fusion.c):
+   Rz(yaw - base) Rx(pitch) Ry(roll) Rz(base). A tilt that starts from level is about the player's axes (stick up tips the
+   far edge down, whatever the turn), and a turn while tilted is about the vertical, a turntable that takes the tilt with
+   it. base follows yaw while the controller lies level, so the pose never jumps. */
 static inline void gyro_tilt_matrix(const GyroTilt *t, double q[3][3]) {
-    double cp = cos(t->pitch), sp = sin(t->pitch), cr = cos(t->roll), sr = sin(t->roll), cy = cos(t->yaw), sy = sin(t->yaw), xy[3][3];
-    double x[3][3] = {{1, 0, 0}, {0, cp, -sp}, {0, sp, cp}}, y[3][3] = {{cr, 0, sr}, {0, 1, 0}, {-sr, 0, cr}}, z[3][3] = {{cy, -sy, 0}, {sy, cy, 0}, {0, 0, 1}};
-    gyro_tilt_mul(x, y, xy); gyro_tilt_mul(z, xy, q);
+    double cp = cos(t->pitch), sp = sin(t->pitch), cr = cos(t->roll), sr = sin(t->roll), xy[3][3], a[3][3], b[3][3], m[3][3];
+    double x[3][3] = {{1, 0, 0}, {0, cp, -sp}, {0, sp, cp}}, y[3][3] = {{cr, 0, sr}, {0, 1, 0}, {-sr, 0, cr}};
+    gyro_tilt_mul(x, y, xy); gyro_tilt_rz(t->yaw - t->base, a); gyro_tilt_rz(t->base, b);
+    gyro_tilt_mul(a, xy, m); gyro_tilt_mul(m, b, q);
 }
 
 /* The body-frame rate (rad/s) that turns pose `from` into pose `to` over dt. */
@@ -65,6 +73,7 @@ static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t r
     t->pitch += dp > step ? step : dp < -step ? -step : dp;
     t->roll += dr > step ? step : dr < -step ? -step : dr;
     t->yaw = remainder(t->yaw - TILT_YAW_DEG * M_PI / 180 * dt * rx / 32767.0, 2 * M_PI);
+    if (fabs(t->pitch) < 1e-9 && fabs(t->roll) < 1e-9) t->base = t->yaw;   /* level: the next tilt is about the player's axes */
     gyro_tilt_matrix(t, now);
     gyro_tilt_rate(old, now, dt, gyro);   /* the move itself, over the last tick's length (the best guess of the next hold) */
     if (from) {   /* plus what the sensor is off by, spread over the fusion's longest hold, so a run of late ticks cannot overshoot */

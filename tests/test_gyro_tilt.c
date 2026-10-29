@@ -76,12 +76,20 @@ int main(void) {
     expect(near(t.yaw, 135 * deg, 1e-9) && near(g[2], -TILT_YAW_DEG * deg, 1e-6), "the angle wraps at 180 degrees");
     expect(run(&t, 100, 0, 0, -16384, g, a) < 1e-9 && near(g[2], TILT_YAW_DEG * deg * 16384 / 32767, 1e-6), "half left stick: half the rate, counter-clockwise");
 
-    /* Turned 90 degrees, the tilt turns with the controller: stick up tips its own top edge (+y) down. */
-    t = (GyroTilt){.yaw = 90 * deg};
-    expect(run(&t, 100, 0, 32767, 0, g, a) < 1e-9, "tilt on a turned controller: the rate matches the pose");
-    double q[3][3]; gyro_tilt_matrix(&t, q);
-    expect(near(t.pitch, -30 * deg, 1e-9) && near(q[2][1], -0.5, 1e-9), "stick up: the turned controller's top edge goes down");
+    /* Turned while level, a tilt is still about the player's axes: stick up tips the far edge down, after a quarter or a
+       half turn alike. */
+    for (int k = 1; k <= 2; k++) {
+        t = (GyroTilt){0};
+        run(&t, 100 * k, 0, 0, 32767, g, a);   /* turned 90 / 180 degrees clockwise, level */
+        double flat[3][3], q[3][3], v[3]; gyro_tilt_matrix(&t, flat);
+        for (int i = 0; i < 3; i++) v[i] = flat[1][i];   /* the controller axis that points away from the player */
+        expect(run(&t, 100, 0, 32767, 0, g, a) < 1e-9, "tilt on a turned controller: the rate matches the pose");
+        gyro_tilt_matrix(&t, q);
+        double far_z = q[2][0] * v[0] + q[2][1] * v[1] + q[2][2] * v[2];
+        expect(near(t.pitch, -30 * deg, 1e-9) && near(far_z, -0.5, 1e-9), k == 1 ? "a quarter turn, then stick up: the far edge goes down" : "a half turn, then stick up: the far edge goes down");
+    }
     expect(near(a[0] * a[0] + a[1] * a[1] + a[2] * a[2], 1, 1e-12), "gravity stays 1 G");
+    double q[3][3];
 
     /* Tilted far and turning: a turntable, the turn is about the vertical, so gravity in the controller does not change
        and the rate is about the reference's z (the controller's tilted normal would roll it over). */
