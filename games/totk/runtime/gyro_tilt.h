@@ -1,7 +1,7 @@
 /* Tilt mode: a controller without motion sensors (an Xbox pad) tilts and turns a virtual controller
    lying face up, for the motion-control puzzles (Breath of the Wild: Myahm Agana's maze board, Toto Sah's stairs). LT + RT pressed together
    turn it on and off (gyro_tilt_chord); runtime/gamepad.m ticks it and feeds the six-axis sensor.
-   The left stick sets the tilt, not its rate: pushed fully up, the top edge goes down by the full tilt; right, the right
+   The left stick sets the tilt, not its rate, on a squared curve (half way: a quarter of the tilt): pushed fully up, the top edge goes down by the full tilt; right, the right
    edge goes down; let go, the controller lies flat again. The right stick's x turns it about the axis out of its face (yaw,
    for puzzles that also turn the platform, Toto Sah): held right it turns clockwise seen from above at up to TILT_YAW_DEG
    per second, let go it stops and keeps the angle; the tilt stays about the player's axes whatever the yaw. The pose moves toward the stick at up to TILT_RATE_DEG per second,
@@ -56,7 +56,8 @@ static inline void gyro_tilt_rate(const double from[3][3], const double to[3][3]
    misses, so steering from what it shows keeps a late tick from leaving it off level); NULL: the old pose. */
 static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t rx, double max_deg, double dt, const double (*from)[3], double gyro[3], double acc[3]) {
     const double full = max_deg * M_PI / 180, step = TILT_RATE_DEG * M_PI / 180 * dt;
-    double want_pitch = -full * ly / 32767.0, want_roll = full * lx / 32767.0, old[3][3], now[3][3];
+    double y = ly / 32767.0, x = lx / 32767.0, old[3][3], now[3][3];   /* squared, sign kept: fine tilts near the centre, full tilt at the rim */
+    double want_pitch = -full * y * fabs(y), want_roll = full * x * fabs(x);
     gyro_tilt_matrix(t, old);
     double dp = want_pitch - t->pitch, dr = want_roll - t->roll;
     t->pitch += dp > step ? step : dp < -step ? -step : dp;

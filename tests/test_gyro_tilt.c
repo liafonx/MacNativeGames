@@ -85,6 +85,12 @@ int main(void) {
     expect(near(t.pitch, -30 * deg, 1e-9) && z_of_far_edge < -0.49, "stick up: the edge facing away goes down, whatever the yaw");
     expect(near(a[0] * a[0] + a[1] * a[1] + a[2] * a[2], 1, 1e-12), "gravity stays 1 G");
 
+    /* The squared curve: half stick a quarter of the tilt, a tenth of the stick a hundredth, the sign kept. */
+    t = (GyroTilt){0}; run(&t, 100, 16384, -16384, 0, g, a);
+    expect(near(t.roll, 30 * deg * 0.25, 1e-3) && near(t.pitch, 30 * deg * 0.25, 1e-3), "half stick: a quarter of the full tilt");
+    t = (GyroTilt){0}; run(&t, 100, -3277, 0, 0, g, a);
+    expect(near(t.roll, -30 * deg * 0.01, 1e-4), "a tenth of the stick: a hundredth of the tilt, to the left");
+
     /* Full tilt at 90 degrees: on its edge, the rate still right. */
     t = (GyroTilt){0};
     for (int i = 0; i < 100; i++) { GyroTilt before = t; gyro_tilt_tick(&t, 32767, 0, 0, 90, 0.01, NULL, g, a); expect(rate_error(&before, &t, g, 0.01) < 1e-9, "90 degrees: the rate matches the pose"); }
