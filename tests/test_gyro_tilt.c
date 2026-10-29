@@ -149,6 +149,22 @@ int main(void) {
     expect(fusion_error(1, hold, 200, 32767, 50) < 1e-4 && fusion_error(0, hold, 200, 32767, 50) < 1e-4, "even ticks: both end on the pose");
 
     if (failures) return 1;
+    /* B: back to flat with a real rate, the shortest way, at up to TILT_HOME_DEG a second; then exactly flat. Tilted,
+       turned and tilted, and upside down (the axis-angle edge at 180 degrees). */
+    for (int c = 0; c < 3; c++) {
+        t = (GyroTilt){0};
+        if (c == 0) run(&t, 100, 0, 32767, 0, g, a);   /* tilted 45 degrees */
+        if (c == 1) { run(&t, 100, 0, 32767, 0, g, a); run(&t, 150, 0, 0, 32767, g, a); run(&t, 80, -20000, 0, 0, g, a); }
+        if (c == 2) run(&t, 400, 0, 32767, 0, g, a);   /* 180 degrees: face down */
+        double q0[3][3]; gyro_tilt_matrix(&t, q0);
+        double cc = (q0[0][0] + q0[1][1] + q0[2][2] - 1) / 2, angle = acos(cc > 1 ? 1 : cc < -1 ? -1 : cc) * 180 / M_PI, worst = 0;
+        int ticks = 0, done = 0;
+        while (!done && ticks < 1000) { GyroTilt before = t; done = gyro_tilt_home(&t, 0.01, NULL, g, a); worst = fmax(worst, rate_error(&before, &t, g, 0.01)); ticks++; }
+        expect(done && ticks <= (int)ceil(angle / (TILT_HOME_DEG * 0.01)) + 1, "B: back to flat in time at TILT_HOME_DEG");
+        expect(worst < 1e-6, "B: every step's rate matches the move (the game's own pose follows)");
+        expect(!t.set && near(a[2], -1, 1e-6), "B: ends exactly flat, z = -1 G");
+    }
+
     puts("gyro tilt: ok");
     return 0;
 }

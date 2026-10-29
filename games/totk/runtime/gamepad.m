@@ -610,25 +610,27 @@ static uint64_t tiltLast;
 static dispatch_source_t tiltTimer;
 static dispatch_queue_t tiltQueue;
 static GyroTiltChord tiltChord;                /* main queue (refresh_gamepads) */
-static _Atomic uint64_t tiltReset;             /* B pressed: lay it flat at this time (0: none) */
+static _Atomic uint64_t tiltReset;             /* B pressed: turn it back to flat from this time (0: none) */
+static int tiltHoming;                         /* tilt queue: on the way back to flat */
 int runtime_tilt_active(void) { return atomic_load(&tiltMode); }
 static void tilt_tick(void) {
     int32_t lx = 0, ly = 0, rx = 0;
-    /* B leaves a motion-control device, and the game puts the platform back where it started; lay the virtual controller
-       flat too and restart the sensor level (runtime_motion_mouse restarts the fusion), so both start over together. Not at
-       once: the game is still on the device for a few frames after the press and turned the platform toward the jump
-       (owner, 2026-10-29), so the pose holds still for TILT_RESET_NS first. */
+    /* B leaves a motion-control device, and the game puts the platform back where it started; the virtual controller goes
+       back to flat too, so the next entry starts level. Not at once: the game is still on the device for a few frames after
+       the press and turned the platform toward a jump (owner, 2026-10-29), so the pose holds still for TILT_RESET_NS, then
+       turns back with a real rate (gyro_tilt_home), never a jump the game's own pose would miss. The sticks wait meanwhile. */
     uint64_t now = runtime_now_ns(), reset = atomic_load(&tiltReset);
-    if (reset && now >= reset) { atomic_store(&tiltReset, 0); reset = 0; tilt = (GyroTilt){0}; tiltLast = 0; runtime_motion_mouse(1); }
+    if (reset && now >= reset) { atomic_store(&tiltReset, 0); reset = 0; tiltHoming = 1; }
     pthread_mutex_lock(&gamepadLock);
-    if (!textCapture && !reset) { lx = gamepadState.lx; ly = gamepadState.ly; rx = gamepadState.rx; }
+    if (!textCapture && !reset && !tiltHoming) { lx = gamepadState.lx; ly = gamepadState.ly; rx = gamepadState.rx; }
     pthread_mutex_unlock(&gamepadLock);
     double dt = tiltLast && now > tiltLast && now - tiltLast < 100000000ull ? (now - tiltLast) / 1e9 : TILT_TICK_NS / 1e9, gyro[3], acc[3];
     tiltLast = now;
     RuntimeMotionState shown; double from[3][3];   /* the pose the sensor shows now (gyro_tilt_tick) */
     int have = runtime_motion_read(&shown, 1) == 1;
     if (have) for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) from[j][i] = shown.dir[i * 3 + j];
-    gyro_tilt_tick(&tilt, lx, ly, rx, dt, have ? (const double (*)[3])from : NULL, gyro, acc);
+    if (tiltHoming) tiltHoming = !gyro_tilt_home(&tilt, dt, have ? (const double (*)[3])from : NULL, gyro, acc);
+    else gyro_tilt_tick(&tilt, lx, ly, rx, dt, have ? (const double (*)[3])from : NULL, gyro, acc);
     if (atomic_load(&tiltMode)) runtime_motion_feed_mouse(acc, gyro, now);
 }
 static void tilt_toggle(const char *why) {   /* main queue */
@@ -641,7 +643,7 @@ static void tilt_toggle(const char *why) {   /* main queue */
     if (!tiltQueue) tiltQueue = dispatch_queue_create("totk.tilt", DISPATCH_QUEUE_SERIAL);
     dispatch_sync(tiltQueue, ^{
         if (on) {
-            tilt = (GyroTilt){0}; tiltLast = 0; atomic_store(&tiltReset, 0);   /* on: flat again */
+            tilt = (GyroTilt){0}; tiltLast = 0; tiltHoming = 0; atomic_store(&tiltReset, 0);   /* on: flat again */
             runtime_motion_mouse(1);
             atomic_store(&tiltMode, 1);
             tiltTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, tiltQueue);
@@ -755,7 +757,7 @@ static void refresh_gamepads(void) {
     /* After the unlock: the tilt timer takes gamepadLock. The last controller gone: tilt mode ends, so the keyboard drives again. */
     if (tiltPressed) tilt_toggle("LT + RT");
     else if (!next.connected && atomic_load(&tiltMode)) tilt_toggle("controller disconnected");
-    else if (tiltCancel && atomic_load(&tiltMode)) { atomic_store(&tiltReset, runtime_now_ns() + TILT_RESET_NS); fprintf(stderr, "[totk-input] tilt mode: B pressed, the controller lies flat again in %.1f s\n", TILT_RESET_NS / 1e9); }
+    else if (tiltCancel && atomic_load(&tiltMode)) { atomic_store(&tiltReset, runtime_now_ns() + TILT_RESET_NS); fprintf(stderr, "[totk-input] tilt mode: B pressed, the controller turns back to flat in %.1f s\n", TILT_RESET_NS / 1e9); }
 }
 
 static void attach_gamepad(GCController *controller) {

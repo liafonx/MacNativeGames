@@ -16,7 +16,8 @@
 #include <string.h>
 
 enum { TILT_TICK_NS = 10000000, TILT_FIX_NS = 50000000, TILT_CHORD_NS = 150000000 };
-#define TILT_RESET_NS 500000000ull   /* B: the pose holds this long, then lies flat (runtime/gamepad.m) */
+#define TILT_RESET_NS 500000000ull   /* B: the pose holds this long, then turns back to flat (runtime/gamepad.m) */
+#define TILT_HOME_DEG 180.0           /* ... at this speed (gyro_tilt_home) */
 #define TILT_SPEED_DEG 45.0   /* owner, 2026-10-29: 90 moved too far per push; half that, for fine moves */
 
 /* The pose, controller -> reference (rows = reference axes in controller coordinates, as runtime/motion_fusion.c);
@@ -40,14 +41,9 @@ static inline void gyro_tilt_rate(const double from[3][3], const double to[3][3]
     for (int i = 0; i < 3; i++) gyro[i] = angle < 1e-9 ? 0 : axis[i] / (2 * s) * angle / dt;
 }
 
-/* One tick: turn *t by the sticks (-32767..32767 per axis, y up) over dt about the player's axes, and give the new pose's
-   gravity in G and the body-frame rate: the move over dt plus the turn from `from` to the old pose over TILT_FIX_NS.
-   `from` is the pose the sensor shows now (runtime/motion_fusion.c holds each rate until the next sample and drops what a
-   late tick misses, so steering from what it shows keeps late ticks from leaving it off); NULL: the old pose. */
-static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t rx, double dt, const double (*from)[3], double gyro[3], double acc[3]) {
-    const double speed = TILT_SPEED_DEG * M_PI / 180;
-    double x = lx / 32767.0, y = ly / 32767.0, z = rx / 32767.0, old[3][3], now[3][3];
-    double w[3] = {-speed * y * fabs(y), speed * x * fabs(x), -speed * z * fabs(z)};   /* reference frame, rad/s; squared, sign kept */
+/* Turn *t at w (rad/s, the reference frame) over dt; the rate and gravity as gyro_tilt_tick says. */
+static inline void gyro_tilt_turn(GyroTilt *t, const double w[3], double dt, const double (*from)[3], double gyro[3], double acc[3]) {
+    double old[3][3], now[3][3];
     gyro_tilt_matrix(t, old);
     double a = sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]) * dt, k[3] = {0, 0, 0}, kk[3][3], r[3][3];
     if (a > 0) for (int i = 0; i < 3; i++) k[i] = w[i] * dt / a;
@@ -66,6 +62,39 @@ static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t r
         for (int i = 0; i < 3; i++) gyro[i] += fix[i];
     }
     for (int j = 0; j < 3; j++) acc[j] = -now[2][j];
+}
+
+/* One tick: turn *t by the sticks (-32767..32767 per axis, y up) over dt about the player's axes, and give the new pose's
+   gravity in G and the body-frame rate: the move over dt plus the turn from `from` to the old pose over TILT_FIX_NS.
+   `from` is the pose the sensor shows now (runtime/motion_fusion.c holds each rate until the next sample and drops what a
+   late tick misses, so steering from what it shows keeps late ticks from leaving it off); NULL: the old pose. */
+static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t rx, double dt, const double (*from)[3], double gyro[3], double acc[3]) {
+    const double speed = TILT_SPEED_DEG * M_PI / 180;
+    double x = lx / 32767.0, y = ly / 32767.0, z = rx / 32767.0;
+    double w[3] = {-speed * y * fabs(y), speed * x * fabs(x), -speed * z * fabs(z)};   /* reference frame, rad/s; squared, sign kept */
+    gyro_tilt_turn(t, w, dt, from, gyro, acc);
+}
+
+/* One tick of the way back to flat after B: turn *t toward level, yaw 0, at up to TILT_HOME_DEG per second, about the
+   axis that gets there the shortest way, with a real rate like any move. The game sums the rate into a pose of its own
+   (an owner run, 2026-10-29: a jump to flat with no rate left its pose tilted, and the next entry turned about sloped
+   axes), so it comes back level with ours. 1 once flat. */
+static inline int gyro_tilt_home(GyroTilt *t, double dt, const double (*from)[3], double gyro[3], double acc[3]) {
+    double q[3][3]; gyro_tilt_matrix(t, q);
+    double c = (q[0][0] + q[1][1] + q[2][2] - 1) / 2, a = acos(c > 1 ? 1 : c < -1 ? -1 : c), k[3] = {q[2][1] - q[1][2], q[0][2] - q[2][0], q[1][0] - q[0][1]};
+    double n = sqrt(k[0] * k[0] + k[1] * k[1] + k[2] * k[2]);
+    if (a > M_PI - 1e-3 || n < 1e-9) {   /* upside down (or flat): the axis is the longest column of (q + I) / 2 */
+        int best = 0; double bn = -1;
+        for (int j = 0; j < 3; j++) { double m = 0; for (int i = 0; i < 3; i++) m += (q[i][j] + (i == j)) * (q[i][j] + (i == j)); if (m > bn) { bn = m; best = j; } }
+        for (int i = 0; i < 3; i++) k[i] = q[i][best] + (i == best);
+        n = sqrt(bn);
+    }
+    double step = TILT_HOME_DEG * M_PI / 180 * dt, w[3] = {0, 0, 0};
+    if (a > 1e-9 && n > 1e-12) for (int i = 0; i < 3; i++) w[i] = -k[i] / n * (a < step ? a : step) / dt;
+    gyro_tilt_turn(t, w, dt, from, gyro, acc);
+    if (a > step) return 0;
+    *t = (GyroTilt){0};   /* exactly flat, as a fresh start */
+    return 1;
 }
 
 /* TOTK_GYRO_EMU: whether LT + RT may turn tilt mode on. Never without the game's six-axis device (TOTK_GYRO / gyro.txt);
