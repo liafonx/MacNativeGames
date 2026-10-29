@@ -18,6 +18,7 @@
 #include "controller_map.h"   // the player's button layout (controls.txt)
 #include "switch_left_fallback.h"
 #include "mouse_look.h"       // mouse mode: movement as the right stick and the gyro
+#include "gyro_tilt.h"        // tilt mode: the sticks as a tilted and turned controller
 
 static pthread_mutex_t gamepadLock = PTHREAD_MUTEX_INITIALIZER;
 static RuntimeGamepadState gamepadState;
@@ -441,6 +442,7 @@ static int mouseGyro;                          /* the mouse feeds the gyro in th
 static dispatch_source_t mouseTimer;
 static int mouseTicksByHand;                   /* tests/mouse/probe.m drives mouse_tick itself */
 static void (*mouseHook)(void);                /* the window: mouse mode changed */
+static _Atomic int tiltMode;                   /* tilt mode owns the sensor while on (below) */
 
 static void mouse_tick(void) {
     double gyro[3], acc[3]; int32_t rx, ry;
@@ -453,7 +455,7 @@ static void mouse_tick(void) {
     mouseRX = rx; mouseRY = ry;
     int feed = mouseGyro;
     pthread_mutex_unlock(&gamepadLock);
-    if (feed) runtime_motion_feed_mouse(acc, gyro, runtime_now_ns());
+    if (feed && !atomic_load(&tiltMode)) runtime_motion_feed_mouse(acc, gyro, runtime_now_ns());
 }
 
 /* The settings panel's sensitivity row (key 1, runtime/settings_panel.h): TOTK_MOUSE_SENSITIVITY decides when set (the
@@ -498,7 +500,7 @@ static void mouse_apply(int on) {   /* start or stop the ticks and the gyro take
         pthread_mutex_lock(&gamepadLock);
         mouseSettings = settings; mouse_look_reset(&mouseLook); mouseRX = mouseRY = 0; mouseGyro = gyro;
         pthread_mutex_unlock(&gamepadLock);
-        runtime_motion_mouse(gyro);
+        if (!atomic_load(&tiltMode)) runtime_motion_mouse(gyro);   /* tilt mode keeps the sensor until it ends */
         fprintf(stderr, "[totk-input] mouse mode on: sensitivity %d%s, counterweight %d, decay %d, minimum decay %d, gyro %s\n",
                 settings.sensitivity, settings.invert_y ? " (Y inverted)" : "", settings.counterweight, settings.decay, settings.min_decay,
                 gyro ? "from the mouse" : "not from the mouse");
@@ -513,7 +515,7 @@ static void mouse_apply(int on) {   /* start or stop the ticks and the gyro take
         pthread_mutex_lock(&gamepadLock);
         mouse_look_reset(&mouseLook); mouseRX = mouseRY = 0; mouseGyro = 0;
         pthread_mutex_unlock(&gamepadLock);
-        runtime_motion_mouse(0);
+        if (!atomic_load(&tiltMode)) runtime_motion_mouse(0);
         fprintf(stderr, "[totk-input] mouse mode off\n");
     }
     if (mouseHook) dispatch_async(dispatch_get_main_queue(), ^{ mouseHook(); });
@@ -595,6 +597,59 @@ void runtime_mouse_release(void) {   /* main thread: the window let the pointer 
     }
 }
 
+/* ---- Tilt mode (runtime/gyro_tilt.h) ----
+   For the motion-control puzzles on a controller without motion sensors. LT + RT pressed together turn it on and off,
+   when gyro_tilt_allowed says so (TOTK_GYRO_EMU; by default only while no controller feeds real motion). While on, a
+   10 ms timer turns the controller's left stick into the pose of a controller lying face up, tilted up to
+   TOTK_GYRO_EMU_TILT degrees (90), turns it about the axis out of its face while the right stick is held left or right,
+   and feeds the pose to the sensor in the mouse's place (runtime_motion_mouse); the game gets neither stick meanwhile
+   (runtime/input.c). While the settings panel or a text field has the controller, the pose holds still. Off: the sensor
+   goes back to the mouse mode's gyro or to the controller. */
+static GyroTilt tilt;                          /* tilt queue */
+static double tiltMax;
+static uint64_t tiltLast;
+static dispatch_source_t tiltTimer;
+static dispatch_queue_t tiltQueue;
+static GyroTiltChord tiltChord;                /* main queue (refresh_gamepads) */
+int runtime_tilt_active(void) { return atomic_load(&tiltMode); }
+static void tilt_tick(void) {
+    int32_t lx = 0, ly = 0, rx = 0;
+    pthread_mutex_lock(&gamepadLock);
+    if (!textCapture) { lx = gamepadState.lx; ly = gamepadState.ly; rx = gamepadState.rx; }
+    pthread_mutex_unlock(&gamepadLock);
+    uint64_t now = runtime_now_ns();
+    double dt = tiltLast && now > tiltLast && now - tiltLast < 100000000ull ? (now - tiltLast) / 1e9 : TILT_TICK_NS / 1e9, gyro[3], acc[3];
+    tiltLast = now;
+    gyro_tilt_tick(&tilt, lx, ly, rx, tiltMax, dt, gyro, acc);
+    if (atomic_load(&tiltMode)) runtime_motion_feed_mouse(acc, gyro, now);
+}
+static void tilt_toggle(void) {   /* main queue */
+    int on = !atomic_load(&tiltMode);
+    if (on && !gyro_tilt_allowed(getenv("TOTK_GYRO_EMU"), runtime_gyro_enabled(), runtime_motion_controller_live())) {
+        fprintf(stderr, "[totk-input] tilt mode (LT + RT): not available: %s\n", !runtime_gyro_enabled() ? "the game has no six-axis device in this run (TOTK_GYRO / gyro.txt)"
+                : "a controller with a gyro is in use or TOTK_GYRO_EMU=0 (TOTK_GYRO_EMU=1 allows it anyway)");
+        return;
+    }
+    if (!tiltQueue) tiltQueue = dispatch_queue_create("totk.tilt", DISPATCH_QUEUE_SERIAL);
+    dispatch_sync(tiltQueue, ^{
+        if (on) {
+            tilt = (GyroTilt){0}; tiltLast = 0; tiltMax = gyro_tilt_max(getenv("TOTK_GYRO_EMU_TILT"));
+            runtime_motion_mouse(1);
+            atomic_store(&tiltMode, 1);
+            tiltTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, tiltQueue);
+            dispatch_source_set_timer(tiltTimer, dispatch_time(DISPATCH_TIME_NOW, 0), TILT_TICK_NS, 1000000);
+            dispatch_source_set_event_handler(tiltTimer, ^{ tilt_tick(); });
+            dispatch_resume(tiltTimer);
+        } else {
+            atomic_store(&tiltMode, 0);
+            if (tiltTimer) { dispatch_source_cancel(tiltTimer); tiltTimer = nil; }
+            pthread_mutex_lock(&gamepadLock); int mouse = mouseGyro; pthread_mutex_unlock(&gamepadLock);
+            runtime_motion_mouse(mouse);
+        }
+    });
+    fprintf(stderr, "[totk-input] tilt mode %s (LT + RT): the left stick tilts the controller up to %.0f degrees, the right stick turns it\n", on ? "on" : "off", tiltMax);
+}
+
 static void refresh_gamepads(void) {
     RuntimeGamepadState next = {0};
     uint64_t physical = (uint64_t)mouseButtons << CONTROLLER_MOUSE_FIRST;
@@ -643,6 +698,7 @@ static void refresh_gamepads(void) {
     uint64_t now = runtime_now_ns(), edges = physical & ~physicalPrev, synthetic = 0, suppressed = 0, trigger = settings_trigger();
     if (atomic_load(&settingsButton) >= 0) suppressed |= trigger;   /* a picked button is the panel's only */
     int moving = next.lx || next.ly;
+    int tiltPressed = gyro_tilt_chord(&tiltChord, physical, edges, now) && !textCapture;
     physicalPrev = physical;
     for (int i = 0; i < CONTROLLER_BUTTONS; i++) {
         uint64_t bit = 1ULL << i;
@@ -686,6 +742,7 @@ static void refresh_gamepads(void) {
     gamepadRawLeftAt = rawAt; gamepadRawRightAt = rawRightAt;
     gamepadNativeLx = nativeLx; gamepadNativeLy = nativeLy; gamepadNativeRx = nativeRx; gamepadNativeRy = nativeRy;
     pthread_mutex_unlock(&gamepadLock);
+    if (tiltPressed) tilt_toggle();   /* after the unlock: the tilt timer takes gamepadLock */
 }
 
 static void attach_gamepad(GCController *controller) {
