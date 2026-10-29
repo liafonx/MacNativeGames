@@ -69,30 +69,30 @@ int main(void) {
     run(&t, 10, 0, 0, 0, g, a);
     expect(g[0] == 0 && g[1] == 0 && g[2] == 0 && near(a[2], -1, 1e-12) && near(a[0], 0, 1e-12), "at rest: flat, no rate, z = -1 G");
 
-    /* Left stick up for half a second: the far edge goes down at TILT_SPEED_DEG; let go: it stays; up again: on from there. */
+    /* Left stick up for a second: the far edge goes down at TILT_SPEED_DEG; let go: it stays; up again: on from there. */
     start = t;
-    expect(run(&t, 50, 0, 32767, 0, g, a) < 1e-9, "tilt: the rate turns the old pose into the new one");
-    expect(near(height_of(&start, &t, far), -sin(45 * deg), 1e-9), "half a second of stick up: the far edge 45 degrees down");
+    expect(run(&t, 100, 0, 32767, 0, g, a) < 1e-9, "tilt: the rate turns the old pose into the new one");
+    expect(near(height_of(&start, &t, far), -sin(45 * deg), 1e-9), "a second of stick up: the far edge 45 degrees down");
     GyroTilt held = t;
     run(&t, 50, 0, 0, 0, g, a);
     expect(g[0] == 0 && g[1] == 0 && g[2] == 0 && !memcmp(&held, &t, sizeof t), "let go: it stays where it is, no rate");
-    run(&t, 150, 0, 32767, 0, g, a);
-    expect(near(a[2], 1, 1e-9), "up again for 1.5 s: on past its edge to face down (180 degrees)");
+    run(&t, 300, 0, 32767, 0, g, a);
+    expect(near(a[2], 1, 1e-9), "up again for 3 s: on past its edge to face down (180 degrees)");
 
     /* Every axis is fixed to the player: turned a quarter, a half, or tilted, stick up still tips the far edge down and
        stick right the right edge, and the right stick turns about the vertical. */
     for (int k = 1; k <= 2; k++) {
         t = (GyroTilt){0};
-        run(&t, 100 * k, 0, 0, 32767, g, a);   /* turned 90 / 180 degrees clockwise */
+        run(&t, 200 * k, 0, 0, 32767, g, a);   /* turned 90 / 180 degrees clockwise */
         start = t;
-        run(&t, 33, 0, 32767, 0, g, a);   /* 30 degrees (0.33 s at 90 deg/s, rounded) */
+        run(&t, 67, 0, 32767, 0, g, a);   /* 30 degrees (0.67 s at 45 deg/s, rounded) */
         expect(height_of(&start, &t, far) < -0.49, k == 1 ? "a quarter turn, then stick up: the far edge goes down" : "a half turn, then stick up: the far edge goes down");
         start = t;
-        run(&t, 33, 32767, 0, 0, g, a);
+        run(&t, 67, 32767, 0, 0, g, a);
         expect(height_of(&start, &t, right) < -0.49, "tilted and turned, then stick right: the right edge goes down");
     }
     t = (GyroTilt){0};
-    run(&t, 50, 0, 32767, 0, g, a);   /* tilted 45 degrees */
+    run(&t, 100, 0, 32767, 0, g, a);   /* tilted 45 degrees */
     double before_acc[3] = {a[0], a[1], a[2]}, q[3][3], world_rate[3] = {0, 0, 0};
     expect(run(&t, 100, 0, 0, 32767, g, a) < 1e-9, "turning while tilted: the rate matches the pose");
     expect(near(a[0], before_acc[0], 1e-9) && near(a[1], before_acc[1], 1e-9) && near(a[2], before_acc[2], 1e-9), "turning while tilted: gravity in the controller stays (a turntable)");
@@ -103,7 +103,7 @@ int main(void) {
     /* The squared curve: half stick, a quarter of the speed; the sign kept. */
     t = (GyroTilt){0}; start = t;
     run(&t, 100, -16384, 0, 0, g, a);
-    expect(near(height_of(&start, &t, right), sin(TILT_SPEED_DEG * deg * (16384 / 32767.0) * (16384 / 32767.0)), 1e-9), "half stick left for 1 s: the right edge 22.5 degrees up");
+    expect(near(height_of(&start, &t, right), sin(TILT_SPEED_DEG * deg * (16384 / 32767.0) * (16384 / 32767.0)), 1e-9), "half stick left for 1 s: the right edge 11.25 degrees up");
 
     /* All three at once, for a while: the rate always matches the pose, and the pose stays a rotation. */
     t = (GyroTilt){0};
