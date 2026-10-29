@@ -16,7 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { TILT_TICK_NS = 10000000, TILT_CHORD_NS = 150000000 };
+enum { TILT_TICK_NS = 10000000, TILT_FIX_NS = 50000000, TILT_CHORD_NS = 150000000 };
 #define TILT_RATE_DEG 150.0
 #define TILT_YAW_DEG 90.0
 
@@ -51,7 +51,7 @@ static inline void gyro_tilt_rate(const double from[3][3], const double to[3][3]
 }
 
 /* One tick: move *t toward the left stick (-32767..32767 per axis, y up) over dt, turn it by the right stick's x, and give
-   the new pose's gravity in G and the body-frame rate that turns `from` into the new pose over TILT_TICK_NS. `from` is the
+   the new pose's gravity in G and the body-frame rate: the move over dt plus the turn from `from` to the old pose over TILT_FIX_NS. `from` is the
    pose the sensor shows now (runtime/motion_fusion.c holds each rate until the next sample and drops what a late tick
    misses, so steering from what it shows keeps a late tick from leaving it off level); NULL: the old pose. */
 static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t rx, double max_deg, double dt, const double (*from)[3], double gyro[3], double acc[3]) {
@@ -63,7 +63,11 @@ static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t r
     t->roll += dr > step ? step : dr < -step ? -step : dr;
     t->yaw = remainder(t->yaw - TILT_YAW_DEG * M_PI / 180 * dt * rx / 32767.0, 2 * M_PI);
     gyro_tilt_matrix(t, now);
-    gyro_tilt_rate(from ? from : (const double (*)[3])old, now, TILT_TICK_NS / 1e9, gyro);
+    gyro_tilt_rate(old, now, dt, gyro);   /* the move itself, over the last tick's length (the best guess of the next hold) */
+    if (from) {   /* plus what the sensor is off by, spread over the fusion's longest hold, so a run of late ticks cannot overshoot */
+        double fix[3]; gyro_tilt_rate(from, old, TILT_FIX_NS / 1e9, fix);
+        for (int i = 0; i < 3; i++) gyro[i] += fix[i];
+    }
     for (int j = 0; j < 3; j++) acc[j] = -now[2][j];
 }
 

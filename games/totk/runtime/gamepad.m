@@ -603,7 +603,7 @@ void runtime_mouse_release(void) {   /* main thread: the window let the pointer 
    10 ms timer turns the controller's left stick into the pose of a controller lying face up, tilted up to
    TOTK_GYRO_EMU_TILT degrees (90), turns it about the axis out of its face while the right stick is held left or right,
    and feeds the pose to the sensor in the mouse's place (runtime_motion_mouse); the game gets neither stick meanwhile
-   (runtime/input.c). While the settings panel or a text field has the controller, the pose holds still. Off: the sensor
+   (runtime/input.c). While the settings panel or a text field has the controller, the sticks count as centred. Off: the sensor
    goes back to the mouse mode's gyro or to the controller. */
 static GyroTilt tilt;                          /* tilt queue */
 static double tiltMax;
@@ -650,7 +650,8 @@ static void tilt_toggle(const char *why) {   /* main queue */
             runtime_motion_mouse(mouse);
         }
     });
-    fprintf(stderr, "[totk-input] tilt mode %s (%s): the left stick tilts the controller up to %.0f degrees, the right stick turns it\n", on ? "on" : "off", why, tiltMax);
+    if (on) fprintf(stderr, "[totk-input] tilt mode on (%s): the left stick tilts the controller up to %.0f degrees, the right stick turns it\n", why, tiltMax);
+    else fprintf(stderr, "[totk-input] tilt mode off (%s)\n", why);
 }
 
 static void refresh_gamepads(void) {

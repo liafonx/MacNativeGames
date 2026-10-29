@@ -125,6 +125,10 @@ int main(void) {
     hold[20] = 90; hold[35] = 3; hold[36] = 17;
     expect(fusion_error(1, hold, 200, 32767, 50) < 0.1, "a late tick: the sensor ends on the controller's pose");
     expect(fusion_error(0, hold, 200, 32767, 50) > 1, "negative control: the open-loop rate stays off after a late tick");
+    /* A long run of late ticks (30 ms each, 20 ms on the first): the correction settles, it does not swing wider. */
+    for (int i = 0; i < 200; i++) hold[i] = i < 100 ? 10 : 30;
+    hold[100] = 20; hold[60] = 90;
+    expect(fusion_error(1, hold, 200, 32767, 150) < 0.1, "late ticks in a row while turning: the sensor still ends on the pose");
     for (int i = 0; i < 200; i++) hold[i] = 10;
     expect(fusion_error(1, hold, 200, 32767, 50) < 1e-6 && fusion_error(0, hold, 200, 32767, 50) < 1e-6, "even ticks: both end on the pose");
 
