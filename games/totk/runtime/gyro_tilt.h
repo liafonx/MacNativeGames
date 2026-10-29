@@ -16,8 +16,8 @@
 #include <string.h>
 
 enum { TILT_TICK_NS = 10000000, TILT_FIX_NS = 50000000, TILT_CHORD_NS = 150000000 };
-#define TILT_RESET_NS 500000000ull   /* B: the pose holds this long, then turns back to flat (runtime/gamepad.m) */
-#define TILT_HOME_DEG 180.0           /* ... at this speed (gyro_tilt_home) */
+#define TILT_RESET_NS 200000000ull   /* B: the pose holds this long, then turns back to flat (runtime/gamepad.m) */
+#define TILT_HOME_DEG 720.0           /* ... at this speed (gyro_tilt_home): back within 0.45 s, before a quick re-entry */
 #define TILT_SPEED_DEG 45.0   /* owner, 2026-10-29: 90 moved too far per push; half that, for fine moves */
 
 /* The pose, controller -> reference (rows = reference axes in controller coordinates, as runtime/motion_fusion.c);
