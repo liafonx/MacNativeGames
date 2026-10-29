@@ -96,11 +96,17 @@ int main(void) {
     for (int i = 0; i < 100; i++) { GyroTilt before = t; gyro_tilt_tick(&t, 32767, 0, 0, 90, 0.01, NULL, g, a); expect(rate_error(&before, &t, g, 0.01) < 1e-9, "90 degrees: the rate matches the pose"); }
     expect(near(t.roll, 90 * deg, 1e-9) && near(a[2], 0, 1e-9) && near(fabs(a[0]), 1, 1e-9), "full right at 90: on its right edge, gravity along x");
 
+    /* Full tilt at 180 degrees, turning at the same time: face down (gravity out of the face), the rate still right. */
+    t = (GyroTilt){0};
+    for (int i = 0; i < 200; i++) { GyroTilt before = t; gyro_tilt_tick(&t, 0, 32767, 32767, 180, 0.01, NULL, g, a); expect(rate_error(&before, &t, g, 0.01) < 1e-9, "180 degrees and a turn: the rate matches the pose"); }
+    expect(near(t.pitch, -M_PI, 1e-9) && near(a[2], 1, 1e-9), "full up at 180: face down");
+    expect(run(&t, 200, 0, 0, 0, g, a) < 1e-9 && near(t.pitch, 0, 1e-9) && near(a[2], -1, 1e-9), "let go from face down: back to flat through the far edge");
+
     /* Tilt and turn at once. */
     t = (GyroTilt){0};
     expect(run(&t, 200, 20000, -12000, -32767, g, a) < 1e-9, "tilt and yaw together: the rate matches the pose");
 
-    expect(gyro_tilt_max(NULL) == 90 && gyro_tilt_max("85") == 85 && gyro_tilt_max("90") == 90 && gyro_tilt_max("91") == 90 && gyro_tilt_max("4") == 90 && gyro_tilt_max("30") == 30, "TOTK_GYRO_EMU_TILT: 5-90, else 90");
+    expect(gyro_tilt_max(NULL) == 180 && gyro_tilt_max("90") == 90 && gyro_tilt_max("180") == 180 && gyro_tilt_max("181") == 180 && gyro_tilt_max("4") == 180 && gyro_tilt_max("30") == 30, "TOTK_GYRO_EMU_TILT: 5-180, else 180");
 
     /* LT + RT (physical 8, 9): together within 150 ms, in either order; once per press. */
     enum { LT = 1 << 8, RT = 1 << 9 }; const uint64_t ms = 1000000;

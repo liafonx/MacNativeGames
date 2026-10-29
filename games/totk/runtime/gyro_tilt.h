@@ -22,11 +22,12 @@ enum { TILT_TICK_NS = 10000000, TILT_FIX_NS = 50000000, TILT_CHORD_NS = 15000000
 
 typedef struct { double pitch, roll, yaw; } GyroTilt;   /* radians: pitch about x (top edge down < 0), roll about y (right edge down > 0), yaw about z (clockwise from above < 0) */
 
-/* TOTK_GYRO_EMU_TILT: the full tilt in degrees, 5-90, default 90 (on its edge at full stick). */
+/* TOTK_GYRO_EMU_TILT: the full tilt in degrees, 5-180, default 180: full stick turns it face down (Toto Sah's chest and
+   stairs need the platform upside down), and the squared curve keeps small tilts fine (half stick: 45 degrees). */
 static inline double gyro_tilt_max(const char *text) {
-    if (!text || !*text) return 90;
+    if (!text || !*text) return 180;
     char *end; long v = strtol(text, &end, 10);
-    return *end || v < 5 || v > 90 ? 90 : (double)v;
+    return *end || v < 5 || v > 180 ? 180 : (double)v;
 }
 
 static inline void gyro_tilt_mul(const double a[3][3], const double b[3][3], double q[3][3]) {
