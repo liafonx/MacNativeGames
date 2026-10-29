@@ -1,7 +1,7 @@
 /* TOTK_PCHTXT=<file>: an emulator ExeFS patch for main in pchtxt form, as community mods ship them (for example
    TOTK-Ultrawide's aspect-ratio patch), for trying them here. One reader for both games (game_patches.c and
    game_patches_botw.c include it). Mac only: the phone's code is patched at build. Its @nsobid must be main's build id,
-   read from the extracted ExeFS (extracted/<TOTK_GAME_DIR>/exefs/main at 0x40); the lines after @enabled are
+   read from the extracted ExeFS (extracted/<TOTK_GAME_DIR>/exefs/main at 0x40, or exefs/main.build-id in a game app); the lines after @enabled are
    "<main address> <bytes>", @disabled switches the lines that follow off again (a section the author keeps without
    applying it) and @stop ends the file. "@flag offset_shift 0x100" must come before the first patch line: it says the
    addresses leave out the NSO header only the IPS form counts, which is how they are applied here; a file without it,
@@ -35,9 +35,16 @@ static void pchtxt_apply(Module *m, const char *tag, const PchtxtSite *reserved,
     char nso[256], want[41] = {0}; uint8_t id[20];
     snprintf(nso, sizeof nso, "extracted/%s/exefs/main", TOTK_GAME_DIR);
     FILE *n = fopen(nso, "rb");
-    if (!n || fseek(n, 0x40, SEEK_SET) || fread(id, 1, sizeof id, n) != sizeof id) runtime_fail("TOTK_PCHTXT: cannot read main's build id from extracted/<version>/exefs/main");
-    fclose(n);
-    for (int i = 0; i < 20; i++) snprintf(want + 2 * i, 3, "%02X", id[i]);
+    if (n) {
+        if (fseek(n, 0x40, SEEK_SET) || fread(id, 1, sizeof id, n) != sizeof id) runtime_fail("TOTK_PCHTXT: cannot read main's build id from extracted/<version>/exefs/main");
+        fclose(n);
+        for (int i = 0; i < 20; i++) snprintf(want + 2 * i, 3, "%02X", id[i]);
+    } else {   /* the game app keeps only the id (build_app.py write_main_build_id), not the extracted main */
+        snprintf(nso, sizeof nso, "extracted/%s/exefs/main.build-id", TOTK_GAME_DIR);
+        FILE *b = fopen(nso, "r");
+        if (!b || fscanf(b, "%40[0-9A-Fa-f]", want) != 1 || strlen(want) != 40) runtime_fail("TOTK_PCHTXT: cannot read main's build id from extracted/<version>/exefs/main or main.build-id");
+        fclose(b);
+    }
     char line[1024]; int enabled = 0, matched = 0, shifted = 0; unsigned count = 0, bytes = 0;
     while (fgets(line, sizeof line, f)) {
         if (!strncmp(line, "@nsobid-", 8)) {

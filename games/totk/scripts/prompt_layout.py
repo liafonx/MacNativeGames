@@ -45,16 +45,12 @@ MODES = ('hold', 'tap', 'toggle', 'aim')
 
 
 def default_layout():
-    """controller_map_default: the Switch's layout by position, the mouse buttons attack / draw the bow / target.
+    """controller_map_default: the Switch's layout by position; the mouse buttons drive nothing here (keyboard_map.h has them).
     Returns (map, modes): per physical button the Switch bit mask and the mode name; a mode 'aim' carries (fire index,)."""
     out = [1 << i if i < len(SWITCH) else 0 for i in range(len(PHYSICAL))]
     out[PHYSICAL.index('south')], out[PHYSICAL.index('east')] = 1 << SWITCH.index('b'), 1 << SWITCH.index('a')
     out[PHYSICAL.index('west')], out[PHYSICAL.index('north')] = 1 << SWITCH.index('y'), 1 << SWITCH.index('x')
-    out[PHYSICAL.index('mouse_left')] = 1 << SWITCH.index('y')
-    out[PHYSICAL.index('mouse_right')] = 1 << SWITCH.index('zr')
-    out[PHYSICAL.index('mouse_middle')] = 1 << SWITCH.index('zl')
     modes = [('hold', None)] * len(PHYSICAL)
-    modes[PHYSICAL.index('mouse_right')] = ('aim', PHYSICAL.index('mouse_left'))
     return out, modes
 
 
