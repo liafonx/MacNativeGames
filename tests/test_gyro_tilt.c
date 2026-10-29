@@ -28,7 +28,7 @@ static double run(GyroTilt *t, int n, int32_t lx, int32_t ly, int32_t rx, double
     double worst = 0;
     for (int i = 0; i < n; i++) {
         GyroTilt before = *t;
-        gyro_tilt_tick(t, lx, ly, rx, 30, 0.01, NULL, gyro, acc);
+        gyro_tilt_tick(t, lx, ly, rx, 0.01, NULL, gyro, acc);
         worst = fmax(worst, rate_error(&before, t, gyro, 0.01));
     }
     return worst;
@@ -42,7 +42,7 @@ static double fusion_error(int closed, const int *hold_ms, int ticks, int32_t ly
     double R[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}, g[3], a[3];
     for (int i = 0; i < ticks; i++) {
         double dt = i ? hold_ms[i - 1] / 1000.0 : 0.01;
-        gyro_tilt_tick(&t, 0, i < ly_ticks ? ly_until : 0, i < ly_ticks ? 20000 : 0, 30, dt, closed ? (const double (*)[3])R : NULL, g, a);
+        gyro_tilt_tick(&t, 0, i < ly_ticks ? ly_until : 0, i < ly_ticks ? 20000 : 0, dt, closed ? (const double (*)[3])R : NULL, g, a);
         double held = fmin(hold_ms[i], 50) / 1000.0, w = sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) * held, k[3] = {0, 0, 0}, E[3][3], KK[3][3], out[3][3];
         if (w > 0) for (int j = 0; j < 3; j++) k[j] = g[j] * held / w;
         double K[3][3] = {{0, -k[2], k[1]}, {k[2], 0, -k[0]}, {-k[1], k[0], 0}};
@@ -55,76 +55,62 @@ static double fusion_error(int closed, const int *hold_ms, int ticks, int32_t ly
     return acos(fmax(-1, fmin(1, (e - 1) / 2))) * 180 / M_PI;
 }
 
+/* The height (reference z) of the controller axis that pointed at reference direction d in pose `before`, in pose `after`. */
+static double height_of(const GyroTilt *before, const GyroTilt *after, const double d[3]) {
+    double b[3][3], q[3][3], v[3] = {0, 0, 0}, z = 0; gyro_tilt_matrix(before, b); gyro_tilt_matrix(after, q);
+    for (int i = 0; i < 3; i++) for (int k = 0; k < 3; k++) v[i] += b[k][i] * d[k];   /* b^T d */
+    for (int i = 0; i < 3; i++) z += q[2][i] * v[i];
+    return z;
+}
+
 int main(void) {
-    double g[3], a[3], deg = M_PI / 180;
-    GyroTilt t = {0};
+    double g[3], a[3], deg = M_PI / 180, far[3] = {0, 1, 0}, right[3] = {1, 0, 0};
+    GyroTilt t = {0}, start;
     run(&t, 10, 0, 0, 0, g, a);
     expect(g[0] == 0 && g[1] == 0 && g[2] == 0 && near(a[2], -1, 1e-12) && near(a[0], 0, 1e-12), "at rest: flat, no rate, z = -1 G");
 
-    /* Right stick right for one second: clockwise from above at TILT_YAW_DEG, gravity unchanged. */
-    expect(run(&t, 100, 0, 0, 32767, g, a) < 1e-9, "yaw: the rate turns the old pose into the new one");
-    expect(near(t.yaw, -TILT_YAW_DEG * deg, 1e-9), "one second of full right stick turns 90 degrees clockwise");
-    expect(near(g[2], -TILT_YAW_DEG * deg, 1e-6) && near(g[0], 0, 1e-9) && near(g[1], 0, 1e-9), "yaw reads as a rate about -z only");
-    expect(near(a[2], -1, 1e-12), "yaw leaves gravity alone while flat");
-
-    /* Let go: it stops and keeps the angle. */
+    /* Left stick up for half a second: the far edge goes down at TILT_SPEED_DEG; let go: it stays; up again: on from there. */
+    start = t;
+    expect(run(&t, 50, 0, 32767, 0, g, a) < 1e-9, "tilt: the rate turns the old pose into the new one");
+    expect(near(height_of(&start, &t, far), -sin(45 * deg), 1e-9), "half a second of stick up: the far edge 45 degrees down");
+    GyroTilt held = t;
     run(&t, 50, 0, 0, 0, g, a);
-    expect(near(t.yaw, -TILT_YAW_DEG * deg, 1e-9) && g[2] == 0, "let go: the angle stays, no rate");
+    expect(g[0] == 0 && g[1] == 0 && g[2] == 0 && !memcmp(&held, &t, sizeof t), "let go: it stays where it is, no rate");
+    run(&t, 150, 0, 32767, 0, g, a);
+    expect(near(a[2], 1, 1e-9), "up again for 1.5 s: on past its edge to face down (180 degrees)");
 
-    /* Another second to 180 degrees, then on past it: the angle wraps, the rate stays smooth. */
-    expect(run(&t, 150, 0, 0, 32767, g, a) < 1e-9, "past 180 degrees the rate stays right");
-    expect(near(t.yaw, 135 * deg, 1e-9) && near(g[2], -TILT_YAW_DEG * deg, 1e-6), "the angle wraps at 180 degrees");
-    expect(run(&t, 100, 0, 0, -16384, g, a) < 1e-9 && near(g[2], TILT_YAW_DEG * deg * 16384 / 32767, 1e-6), "half left stick: half the rate, counter-clockwise");
-
-    /* Turned while level, a tilt is still about the player's axes: stick up tips the far edge down, after a quarter or a
-       half turn alike. */
+    /* Every axis is fixed to the player: turned a quarter, a half, or tilted, stick up still tips the far edge down and
+       stick right the right edge, and the right stick turns about the vertical. */
     for (int k = 1; k <= 2; k++) {
         t = (GyroTilt){0};
-        run(&t, 100 * k, 0, 0, 32767, g, a);   /* turned 90 / 180 degrees clockwise, level */
-        double flat[3][3], q[3][3], v[3]; gyro_tilt_matrix(&t, flat);
-        for (int i = 0; i < 3; i++) v[i] = flat[1][i];   /* the controller axis that points away from the player */
-        expect(run(&t, 100, 0, 32767, 0, g, a) < 1e-9, "tilt on a turned controller: the rate matches the pose");
-        gyro_tilt_matrix(&t, q);
-        double far_z = q[2][0] * v[0] + q[2][1] * v[1] + q[2][2] * v[2];
-        expect(near(t.pitch, -30 * deg, 1e-9) && near(far_z, -0.5, 1e-9), k == 1 ? "a quarter turn, then stick up: the far edge goes down" : "a half turn, then stick up: the far edge goes down");
+        run(&t, 100 * k, 0, 0, 32767, g, a);   /* turned 90 / 180 degrees clockwise */
+        start = t;
+        run(&t, 33, 0, 32767, 0, g, a);   /* 30 degrees (0.33 s at 90 deg/s, rounded) */
+        expect(height_of(&start, &t, far) < -0.49, k == 1 ? "a quarter turn, then stick up: the far edge goes down" : "a half turn, then stick up: the far edge goes down");
+        start = t;
+        run(&t, 33, 32767, 0, 0, g, a);
+        expect(height_of(&start, &t, right) < -0.49, "tilted and turned, then stick right: the right edge goes down");
     }
-    expect(near(a[0] * a[0] + a[1] * a[1] + a[2] * a[2], 1, 1e-12), "gravity stays 1 G");
-    double q[3][3];
-
-    /* Tilted far and turning: a turntable, the turn is about the vertical, so gravity in the controller does not change
-       and the rate is about the reference's z (the controller's tilted normal would roll it over). */
     t = (GyroTilt){0};
-    run(&t, 100, 0, 32767, 0, g, a);   /* stick up held: tilted to 30 degrees */
-    double before_acc[3] = {a[0], a[1], a[2]};
-    expect(run(&t, 100, 0, 32767, 32767, g, a) < 1e-9, "turning while tilted: the rate matches the pose");
-    expect(near(a[0], before_acc[0], 1e-9) && near(a[1], before_acc[1], 1e-9) && near(a[2], before_acc[2], 1e-9), "turning while tilted: gravity in the controller stays");
+    run(&t, 50, 0, 32767, 0, g, a);   /* tilted 45 degrees */
+    double before_acc[3] = {a[0], a[1], a[2]}, q[3][3], world_rate[3] = {0, 0, 0};
+    expect(run(&t, 100, 0, 0, 32767, g, a) < 1e-9, "turning while tilted: the rate matches the pose");
+    expect(near(a[0], before_acc[0], 1e-9) && near(a[1], before_acc[1], 1e-9) && near(a[2], before_acc[2], 1e-9), "turning while tilted: gravity in the controller stays (a turntable)");
     gyro_tilt_matrix(&t, q);
-    double world_rate[3] = {0, 0, 0};   /* the body rate seen in the reference: q * g */
     for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) world_rate[i] += q[i][j] * g[j];
-    expect(near(world_rate[0], 0, 1e-6) && near(world_rate[1], 0, 1e-6) && near(world_rate[2], -TILT_YAW_DEG * deg, 1e-6), "turning while tilted: about the vertical, clockwise");
+    expect(near(world_rate[0], 0, 1e-6) && near(world_rate[1], 0, 1e-6) && near(world_rate[2], -TILT_SPEED_DEG * deg, 1e-6), "turning: about the vertical, clockwise at full speed");
 
-    /* The squared curve: half stick a quarter of the tilt, a tenth of the stick a hundredth, the sign kept. */
-    t = (GyroTilt){0}; run(&t, 100, 16384, -16384, 0, g, a);
-    expect(near(t.roll, 30 * deg * 0.25, 1e-3) && near(t.pitch, 30 * deg * 0.25, 1e-3), "half stick: a quarter of the full tilt");
-    t = (GyroTilt){0}; run(&t, 100, -3277, 0, 0, g, a);
-    expect(near(t.roll, -30 * deg * 0.01, 1e-4), "a tenth of the stick: a hundredth of the tilt, to the left");
+    /* The squared curve: half stick, a quarter of the speed; the sign kept. */
+    t = (GyroTilt){0}; start = t;
+    run(&t, 100, -16384, 0, 0, g, a);
+    expect(near(height_of(&start, &t, right), sin(TILT_SPEED_DEG * deg * (16384 / 32767.0) * (16384 / 32767.0)), 1e-9), "half stick left for 1 s: the right edge 22.5 degrees up");
 
-    /* Full tilt at 90 degrees: on its edge, the rate still right. */
+    /* All three at once, for a while: the rate always matches the pose, and the pose stays a rotation. */
     t = (GyroTilt){0};
-    for (int i = 0; i < 100; i++) { GyroTilt before = t; gyro_tilt_tick(&t, 32767, 0, 0, 90, 0.01, NULL, g, a); expect(rate_error(&before, &t, g, 0.01) < 1e-9, "90 degrees: the rate matches the pose"); }
-    expect(near(t.roll, 90 * deg, 1e-9) && near(a[2], 0, 1e-9) && near(fabs(a[0]), 1, 1e-9), "full right at 90: on its right edge, gravity along x");
-
-    /* Full tilt at 180 degrees, turning at the same time: face down (gravity out of the face), the rate still right. */
-    t = (GyroTilt){0};
-    for (int i = 0; i < 200; i++) { GyroTilt before = t; gyro_tilt_tick(&t, 0, 32767, 32767, 180, 0.01, NULL, g, a); expect(rate_error(&before, &t, g, 0.01) < 1e-9, "180 degrees and a turn: the rate matches the pose"); }
-    expect(near(t.pitch, -M_PI, 1e-9) && near(a[2], 1, 1e-9), "full up at 180: face down");
-    expect(run(&t, 200, 0, 0, 0, g, a) < 1e-9 && near(t.pitch, 0, 1e-9) && near(a[2], -1, 1e-9), "let go from face down: back to flat through the far edge");
-
-    /* Tilt and turn at once. */
-    t = (GyroTilt){0};
-    expect(run(&t, 200, 20000, -12000, -32767, g, a) < 1e-9, "tilt and yaw together: the rate matches the pose");
-
-    expect(gyro_tilt_max(NULL) == 180 && gyro_tilt_max("90") == 90 && gyro_tilt_max("180") == 180 && gyro_tilt_max("181") == 180 && gyro_tilt_max("4") == 180 && gyro_tilt_max("30") == 30, "TOTK_GYRO_EMU_TILT: 5-180, else 180");
+    expect(run(&t, 500, 20000, -12000, -32767, g, a) < 1e-9, "all three at once: the rate matches the pose");
+    gyro_tilt_matrix(&t, q);
+    double det = q[0][0] * (q[1][1] * q[2][2] - q[1][2] * q[2][1]) - q[0][1] * (q[1][0] * q[2][2] - q[1][2] * q[2][0]) + q[0][2] * (q[1][0] * q[2][1] - q[1][1] * q[2][0]);
+    expect(near(det, 1, 1e-12) && near(a[0] * a[0] + a[1] * a[1] + a[2] * a[2], 1, 1e-12), "the pose stays a rotation, gravity 1 G");
 
     /* LT + RT (physical 8, 9): together within 150 ms, in either order; once per press. */
     enum { LT = 1 << 8, RT = 1 << 9 }; const uint64_t ms = 1000000;

@@ -600,13 +600,12 @@ void runtime_mouse_release(void) {   /* main thread: the window let the pointer 
 /* ---- Tilt mode (runtime/gyro_tilt.h) ----
    For the motion-control puzzles on a controller without motion sensors. LT + RT pressed together turn it on and off,
    when gyro_tilt_allowed says so (TOTK_GYRO_EMU; by default only while no controller feeds real motion). While on, a
-   10 ms timer turns the controller's left stick into the pose of a controller lying face up, tilted up to
-   TOTK_GYRO_EMU_TILT degrees (180: face down), turns it about the vertical while the right stick is held left or right,
-   and feeds the pose to the sensor in the mouse's place (runtime_motion_mouse); the game gets neither stick meanwhile
-   (runtime/input.c). While the settings panel or a text field has the controller, the sticks count as centred. Off: the sensor
+   10 ms timer turns a virtual controller lying face up by the sticks (left: tilt, right x: turn, each about the player's
+   axes at a speed; let go and it stays, gyro_tilt.h) and feeds the pose to the sensor in the mouse's place
+   (runtime_motion_mouse); the game gets neither stick meanwhile (runtime/input.c). While the settings panel or a text
+   field has the controller, the pose holds still. Off: the sensor
    goes back to the mouse mode's gyro or to the controller. */
 static GyroTilt tilt;                          /* tilt queue */
-static double tiltMax;
 static uint64_t tiltLast;
 static dispatch_source_t tiltTimer;
 static dispatch_queue_t tiltQueue;
@@ -623,7 +622,7 @@ static void tilt_tick(void) {
     RuntimeMotionState shown; double from[3][3];   /* the pose the sensor shows now (gyro_tilt_tick) */
     int have = runtime_motion_read(&shown, 1) == 1;
     if (have) for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) from[j][i] = shown.dir[i * 3 + j];
-    gyro_tilt_tick(&tilt, lx, ly, rx, tiltMax, dt, have ? (const double (*)[3])from : NULL, gyro, acc);
+    gyro_tilt_tick(&tilt, lx, ly, rx, dt, have ? (const double (*)[3])from : NULL, gyro, acc);
     if (atomic_load(&tiltMode)) runtime_motion_feed_mouse(acc, gyro, now);
 }
 static void tilt_toggle(const char *why) {   /* main queue */
@@ -636,7 +635,7 @@ static void tilt_toggle(const char *why) {   /* main queue */
     if (!tiltQueue) tiltQueue = dispatch_queue_create("totk.tilt", DISPATCH_QUEUE_SERIAL);
     dispatch_sync(tiltQueue, ^{
         if (on) {
-            tilt = (GyroTilt){0}; tiltLast = 0; tiltMax = gyro_tilt_max(getenv("TOTK_GYRO_EMU_TILT"));
+            tilt = (GyroTilt){0}; tiltLast = 0;   /* on: flat again */
             runtime_motion_mouse(1);
             atomic_store(&tiltMode, 1);
             tiltTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, tiltQueue);
@@ -650,7 +649,7 @@ static void tilt_toggle(const char *why) {   /* main queue */
             runtime_motion_mouse(mouse);
         }
     });
-    if (on) fprintf(stderr, "[totk-input] tilt mode on (%s): the left stick tilts the controller up to %.0f degrees, the right stick turns it\n", why, tiltMax);
+    if (on) fprintf(stderr, "[totk-input] tilt mode on (%s): the left stick tilts the controller, the right stick turns it; let go and it stays\n", why);
     else fprintf(stderr, "[totk-input] tilt mode off (%s)\n", why);
 }
 
