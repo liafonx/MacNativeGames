@@ -620,13 +620,16 @@ static void tilt_tick(void) {
     uint64_t now = runtime_now_ns();
     double dt = tiltLast && now > tiltLast && now - tiltLast < 100000000ull ? (now - tiltLast) / 1e9 : TILT_TICK_NS / 1e9, gyro[3], acc[3];
     tiltLast = now;
-    gyro_tilt_tick(&tilt, lx, ly, rx, tiltMax, dt, gyro, acc);
+    RuntimeMotionState shown; double from[3][3];   /* the pose the sensor shows now (gyro_tilt_tick) */
+    int have = runtime_motion_read(&shown, 1) == 1;
+    if (have) for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) from[j][i] = shown.dir[i * 3 + j];
+    gyro_tilt_tick(&tilt, lx, ly, rx, tiltMax, dt, have ? (const double (*)[3])from : NULL, gyro, acc);
     if (atomic_load(&tiltMode)) runtime_motion_feed_mouse(acc, gyro, now);
 }
-static void tilt_toggle(void) {   /* main queue */
+static void tilt_toggle(const char *why) {   /* main queue */
     int on = !atomic_load(&tiltMode);
     if (on && !gyro_tilt_allowed(getenv("TOTK_GYRO_EMU"), runtime_gyro_enabled(), runtime_motion_controller_live())) {
-        fprintf(stderr, "[totk-input] tilt mode (LT + RT): not available: %s\n", !runtime_gyro_enabled() ? "the game has no six-axis device in this run (TOTK_GYRO / gyro.txt)"
+        fprintf(stderr, "[totk-input] tilt mode (%s): not available: %s\n", why, !runtime_gyro_enabled() ? "the game has no six-axis device in this run (TOTK_GYRO / gyro.txt)"
                 : "a controller with a gyro is in use or TOTK_GYRO_EMU=0 (TOTK_GYRO_EMU=1 allows it anyway)");
         return;
     }
@@ -647,7 +650,7 @@ static void tilt_toggle(void) {   /* main queue */
             runtime_motion_mouse(mouse);
         }
     });
-    fprintf(stderr, "[totk-input] tilt mode %s (LT + RT): the left stick tilts the controller up to %.0f degrees, the right stick turns it\n", on ? "on" : "off", tiltMax);
+    fprintf(stderr, "[totk-input] tilt mode %s (%s): the left stick tilts the controller up to %.0f degrees, the right stick turns it\n", on ? "on" : "off", why, tiltMax);
 }
 
 static void refresh_gamepads(void) {
@@ -742,7 +745,9 @@ static void refresh_gamepads(void) {
     gamepadRawLeftAt = rawAt; gamepadRawRightAt = rawRightAt;
     gamepadNativeLx = nativeLx; gamepadNativeLy = nativeLy; gamepadNativeRx = nativeRx; gamepadNativeRy = nativeRy;
     pthread_mutex_unlock(&gamepadLock);
-    if (tiltPressed) tilt_toggle();   /* after the unlock: the tilt timer takes gamepadLock */
+    /* After the unlock: the tilt timer takes gamepadLock. The last controller gone: tilt mode ends, so the keyboard drives again. */
+    if (tiltPressed) tilt_toggle("LT + RT");
+    else if (!next.connected && atomic_load(&tiltMode)) tilt_toggle("controller disconnected");
 }
 
 static void attach_gamepad(GCController *controller) {

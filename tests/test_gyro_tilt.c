@@ -3,6 +3,7 @@
 #define _DEFAULT_SOURCE   /* M_PI */
 #include "../games/totk/runtime/gyro_tilt.h"
 #include <stdio.h>
+#include <string.h>
 
 static int failures;
 static void expect(int ok, const char *what) { if (!ok) { fprintf(stderr, "FAIL: %s\n", what); failures++; } }
@@ -27,10 +28,31 @@ static double run(GyroTilt *t, int n, int32_t lx, int32_t ly, int32_t rx, double
     double worst = 0;
     for (int i = 0; i < n; i++) {
         GyroTilt before = *t;
-        gyro_tilt_tick(t, lx, ly, rx, 30, 0.01, gyro, acc);
+        gyro_tilt_tick(t, lx, ly, rx, 30, 0.01, NULL, gyro, acc);
         worst = fmax(worst, rate_error(&before, t, gyro, 0.01));
     }
     return worst;
+}
+
+/* runtime/motion_fusion.c as tilt mode sees it: each sample's rate is held until the next sample, at most 50 ms after it,
+   and integrated in the body frame. hold_ms[i] is the gap after tick i (a late timer tick: a long gap). Returns the angle
+   in degrees between the pose shown at the end and the virtual controller's. */
+static double fusion_error(int closed, const int *hold_ms, int ticks, int32_t ly_until, int ly_ticks) {
+    GyroTilt t = {0};
+    double R[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}, g[3], a[3];
+    for (int i = 0; i < ticks; i++) {
+        double dt = i ? hold_ms[i - 1] / 1000.0 : 0.01;
+        gyro_tilt_tick(&t, 0, i < ly_ticks ? ly_until : 0, i < ly_ticks ? 20000 : 0, 30, dt, closed ? (const double (*)[3])R : NULL, g, a);
+        double held = fmin(hold_ms[i], 50) / 1000.0, w = sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]) * held, k[3] = {0, 0, 0}, E[3][3], KK[3][3], out[3][3];
+        if (w > 0) for (int j = 0; j < 3; j++) k[j] = g[j] * held / w;
+        double K[3][3] = {{0, -k[2], k[1]}, {k[2], 0, -k[0]}, {-k[1], k[0], 0}};
+        gyro_tilt_mul(K, K, KK);
+        for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) E[r][c] = (r == c) + sin(w) * K[r][c] + (1 - cos(w)) * KK[r][c];
+        gyro_tilt_mul(R, E, out); memcpy(R, out, sizeof R);
+    }
+    double q[3][3], e = 0; gyro_tilt_matrix(&t, q);
+    for (int k = 0; k < 3; k++) e += R[k][0] * q[k][0] + R[k][1] * q[k][1] + R[k][2] * q[k][2];
+    return acos(fmax(-1, fmin(1, (e - 1) / 2))) * 180 / M_PI;
 }
 
 int main(void) {
@@ -65,7 +87,7 @@ int main(void) {
 
     /* Full tilt at 90 degrees: on its edge, the rate still right. */
     t = (GyroTilt){0};
-    for (int i = 0; i < 100; i++) { GyroTilt before = t; gyro_tilt_tick(&t, 32767, 0, 0, 90, 0.01, g, a); expect(rate_error(&before, &t, g, 0.01) < 1e-9, "90 degrees: the rate matches the pose"); }
+    for (int i = 0; i < 100; i++) { GyroTilt before = t; gyro_tilt_tick(&t, 32767, 0, 0, 90, 0.01, NULL, g, a); expect(rate_error(&before, &t, g, 0.01) < 1e-9, "90 degrees: the rate matches the pose"); }
     expect(near(t.roll, 90 * deg, 1e-9) && near(a[2], 0, 1e-9) && near(fabs(a[0]), 1, 1e-9), "full right at 90: on its right edge, gravity along x");
 
     /* Tilt and turn at once. */
@@ -96,6 +118,15 @@ int main(void) {
     expect(gyro_tilt_allowed("1", 1, 1) && !gyro_tilt_allowed("0", 1, 0), "TOTK_GYRO_EMU=1 always, =0 never");
     expect(!gyro_tilt_allowed("1", 0, 0) && !gyro_tilt_allowed(NULL, 0, 0), "never without the game's six-axis device");
     expect(gyro_tilt_allowed("", 1, 0) && !gyro_tilt_allowed("yes", 1, 1), "another value counts as unset");
+
+    /* A late timer tick (90 ms, the fusion holds 50 ms of it) while tilting and turning, then the stick let go: steering
+       from the pose the sensor shows ends level and on the controller's angle; the open-loop rate would stay off (control). */
+    int hold[200]; for (int i = 0; i < 200; i++) hold[i] = 10;
+    hold[20] = 90; hold[35] = 3; hold[36] = 17;
+    expect(fusion_error(1, hold, 200, 32767, 50) < 0.1, "a late tick: the sensor ends on the controller's pose");
+    expect(fusion_error(0, hold, 200, 32767, 50) > 1, "negative control: the open-loop rate stays off after a late tick");
+    for (int i = 0; i < 200; i++) hold[i] = 10;
+    expect(fusion_error(1, hold, 200, 32767, 50) < 1e-6 && fusion_error(0, hold, 200, 32767, 50) < 1e-6, "even ticks: both end on the pose");
 
     if (failures) return 1;
     puts("gyro tilt: ok");

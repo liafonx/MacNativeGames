@@ -41,21 +41,29 @@ static inline void gyro_tilt_matrix(const GyroTilt *t, double q[3][3]) {
     gyro_tilt_mul(x, y, xy); gyro_tilt_mul(xy, z, q);
 }
 
-/* One tick: move *t toward the left stick (-32767..32767 per axis, y up), turn it by the right stick's x, and give the body-frame rate (rad/s) that turns the
-   old pose into the new one over dt, and the new pose's gravity in G. */
-static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t rx, double max_deg, double dt, double gyro[3], double acc[3]) {
+/* The body-frame rate (rad/s) that turns pose `from` into pose `to` over dt. */
+static inline void gyro_tilt_rate(const double from[3][3], const double to[3][3], double dt, double gyro[3]) {
+    double e[3][3];
+    for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) { e[i][j] = 0; for (int k = 0; k < 3; k++) e[i][j] += from[k][i] * to[k][j]; }
+    double c = (e[0][0] + e[1][1] + e[2][2] - 1) / 2, angle = acos(c > 1 ? 1 : c < -1 ? -1 : c), s = sin(angle);
+    double axis[3] = {e[2][1] - e[1][2], e[0][2] - e[2][0], e[1][0] - e[0][1]};
+    for (int i = 0; i < 3; i++) gyro[i] = angle < 1e-9 ? 0 : axis[i] / (2 * s) * angle / dt;
+}
+
+/* One tick: move *t toward the left stick (-32767..32767 per axis, y up) over dt, turn it by the right stick's x, and give
+   the new pose's gravity in G and the body-frame rate that turns `from` into the new pose over TILT_TICK_NS. `from` is the
+   pose the sensor shows now (runtime/motion_fusion.c holds each rate until the next sample and drops what a late tick
+   misses, so steering from what it shows keeps a late tick from leaving it off level); NULL: the old pose. */
+static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t rx, double max_deg, double dt, const double (*from)[3], double gyro[3], double acc[3]) {
     const double full = max_deg * M_PI / 180, step = TILT_RATE_DEG * M_PI / 180 * dt;
-    double want_pitch = -full * ly / 32767.0, want_roll = full * lx / 32767.0, old[3][3], now[3][3], e[3][3];
+    double want_pitch = -full * ly / 32767.0, want_roll = full * lx / 32767.0, old[3][3], now[3][3];
     gyro_tilt_matrix(t, old);
     double dp = want_pitch - t->pitch, dr = want_roll - t->roll;
     t->pitch += dp > step ? step : dp < -step ? -step : dp;
     t->roll += dr > step ? step : dr < -step ? -step : dr;
     t->yaw = remainder(t->yaw - TILT_YAW_DEG * M_PI / 180 * dt * rx / 32767.0, 2 * M_PI);
     gyro_tilt_matrix(t, now);
-    for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) { e[i][j] = 0; for (int k = 0; k < 3; k++) e[i][j] += old[k][i] * now[k][j]; }
-    double c = (e[0][0] + e[1][1] + e[2][2] - 1) / 2, angle = acos(c > 1 ? 1 : c < -1 ? -1 : c), s = sin(angle);
-    double axis[3] = {e[2][1] - e[1][2], e[0][2] - e[2][0], e[1][0] - e[0][1]};
-    for (int i = 0; i < 3; i++) gyro[i] = angle < 1e-9 ? 0 : axis[i] / (2 * s) * angle / dt;
+    gyro_tilt_rate(from ? from : (const double (*)[3])old, now, TILT_TICK_NS / 1e9, gyro);
     for (int j = 0; j < 3; j++) acc[j] = -now[2][j];
 }
 
