@@ -603,16 +603,20 @@ void runtime_mouse_release(void) {   /* main thread: the window let the pointer 
    10 ms timer turns a virtual controller lying face up by the sticks (left: tilt, right x: turn, each about the player's
    axes at a speed; let go and it stays, gyro_tilt.h) and feeds the pose to the sensor in the mouse's place
    (runtime_motion_mouse); the game gets neither stick meanwhile (runtime/input.c). While the settings panel or a text
-   field has the controller, the pose holds still. Off: the sensor
+   field has the controller, the pose holds still. B (leaving the device) lays it flat again. Off: the sensor
    goes back to the mouse mode's gyro or to the controller. */
 static GyroTilt tilt;                          /* tilt queue */
 static uint64_t tiltLast;
 static dispatch_source_t tiltTimer;
 static dispatch_queue_t tiltQueue;
 static GyroTiltChord tiltChord;                /* main queue (refresh_gamepads) */
+static _Atomic int tiltReset;                  /* B pressed: lay it flat at the next tick */
 int runtime_tilt_active(void) { return atomic_load(&tiltMode); }
 static void tilt_tick(void) {
     int32_t lx = 0, ly = 0, rx = 0;
+    /* B leaves a motion-control device, and the game puts the platform back where it started; lay the virtual controller
+       flat too and restart the sensor level (runtime_motion_mouse restarts the fusion), so both start over together. */
+    if (atomic_exchange(&tiltReset, 0)) { tilt = (GyroTilt){0}; tiltLast = 0; runtime_motion_mouse(1); }
     pthread_mutex_lock(&gamepadLock);
     if (!textCapture) { lx = gamepadState.lx; ly = gamepadState.ly; rx = gamepadState.rx; }
     pthread_mutex_unlock(&gamepadLock);
@@ -741,6 +745,7 @@ static void refresh_gamepads(void) {
     textEdges |= (physical & 0x1ffffu) & ~textPad.buttons;
     textPad = next; textPad.buttons = physical & 0x1ffffu;
     pressedEdges |= next.buttons & ~gamepadState.buttons;
+    int tiltCancel = (next.buttons & ~gamepadState.buttons & 2) != 0;   /* the game's B (Cancel) pressed */
     gamepadState = next;
     gamepadRawLeftAt = rawAt; gamepadRawRightAt = rawRightAt;
     gamepadNativeLx = nativeLx; gamepadNativeLy = nativeLy; gamepadNativeRx = nativeRx; gamepadNativeRy = nativeRy;
@@ -748,6 +753,7 @@ static void refresh_gamepads(void) {
     /* After the unlock: the tilt timer takes gamepadLock. The last controller gone: tilt mode ends, so the keyboard drives again. */
     if (tiltPressed) tilt_toggle("LT + RT");
     else if (!next.connected && atomic_load(&tiltMode)) tilt_toggle("controller disconnected");
+    else if (tiltCancel && atomic_load(&tiltMode)) { atomic_store(&tiltReset, 1); fprintf(stderr, "[totk-input] tilt mode: B pressed, the controller lies flat again\n"); }
 }
 
 static void attach_gamepad(GCController *controller) {
