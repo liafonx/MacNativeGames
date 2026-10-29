@@ -601,7 +601,7 @@ void runtime_mouse_release(void) {   /* main thread: the window let the pointer 
    For the motion-control puzzles on a controller without motion sensors. LT + RT pressed together turn it on and off,
    when gyro_tilt_allowed says so (TOTK_GYRO_EMU; by default only while no controller feeds real motion). While on, a
    10 ms timer turns the controller's left stick into the pose of a controller lying face up, tilted up to
-   TOTK_GYRO_EMU_TILT degrees (180: face down), turns it about the axis out of its face while the right stick is held left or right,
+   TOTK_GYRO_EMU_TILT degrees (180: face down), turns it about the vertical while the right stick is held left or right,
    and feeds the pose to the sensor in the mouse's place (runtime_motion_mouse); the game gets neither stick meanwhile
    (runtime/input.c). While the settings panel or a text field has the controller, the sticks count as centred. Off: the sensor
    goes back to the mouse mode's gyro or to the controller. */

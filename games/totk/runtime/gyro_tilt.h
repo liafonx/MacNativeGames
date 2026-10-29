@@ -2,9 +2,9 @@
    lying face up, for the motion-control puzzles (Breath of the Wild: Myahm Agana's maze board, Toto Sah's stairs). LT + RT pressed together
    turn it on and off (gyro_tilt_chord); runtime/gamepad.m ticks it and feeds the six-axis sensor.
    The left stick sets the tilt, not its rate, on a squared curve (half way: a quarter of the tilt): pushed fully up, the top edge goes down by the full tilt; right, the right
-   edge goes down; let go, the controller lies flat again. The right stick's x turns it about the axis out of its face (yaw,
+   edge goes down; let go, the controller lies flat again. The right stick's x turns it about the vertical (yaw,
    for puzzles that also turn the platform, Toto Sah): held right it turns clockwise seen from above at up to TILT_YAW_DEG
-   per second, let go it stops and keeps the angle; the tilt stays about the player's axes whatever the yaw. The pose moves toward the stick at up to TILT_RATE_DEG per second,
+   per second, let go it stops and keeps the angle; it turns about the vertical even while tilted, and the tilt turns with it. The pose moves toward the stick at up to TILT_RATE_DEG per second,
    so the game's sensor fusion (runtime/motion_fusion.c) sees a smooth rotation, and each 10 ms tick hands it the rotation
    rate to the next pose in the controller frame plus the gravity of that pose (the fusion's frame: x right, y top edge,
    z out of the face; flat it reads z = -1 G). The turn uses mouse mode's frame (runtime/mouse_look.h: right is clockwise
@@ -34,12 +34,13 @@ static inline void gyro_tilt_mul(const double a[3][3], const double b[3][3], dou
     for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) { q[i][j] = 0; for (int k = 0; k < 3; k++) q[i][j] += a[i][k] * b[k][j]; }
 }
 
-/* Controller -> reference (rows = reference axes in controller coordinates, as runtime/motion_fusion.c): Rx(pitch) Ry(roll) Rz(yaw),
-   so the controller turns on the table first and tilts about the reference axes after. */
+/* Controller -> reference (rows = reference axes in controller coordinates, as runtime/motion_fusion.c): Rz(yaw) Rx(pitch) Ry(roll),
+   so the turn is always about the vertical, a turntable even while tilted, and the tilt is about the turned controller's own
+   axes (after a quarter turn, stick up tips the edge that was its top edge). */
 static inline void gyro_tilt_matrix(const GyroTilt *t, double q[3][3]) {
     double cp = cos(t->pitch), sp = sin(t->pitch), cr = cos(t->roll), sr = sin(t->roll), cy = cos(t->yaw), sy = sin(t->yaw), xy[3][3];
     double x[3][3] = {{1, 0, 0}, {0, cp, -sp}, {0, sp, cp}}, y[3][3] = {{cr, 0, sr}, {0, 1, 0}, {-sr, 0, cr}}, z[3][3] = {{cy, -sy, 0}, {sy, cy, 0}, {0, 0, 1}};
-    gyro_tilt_mul(x, y, xy); gyro_tilt_mul(xy, z, q);
+    gyro_tilt_mul(x, y, xy); gyro_tilt_mul(z, xy, q);
 }
 
 /* The body-frame rate (rad/s) that turns pose `from` into pose `to` over dt. */

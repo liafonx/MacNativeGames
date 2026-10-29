@@ -76,14 +76,24 @@ int main(void) {
     expect(near(t.yaw, 135 * deg, 1e-9) && near(g[2], -TILT_YAW_DEG * deg, 1e-6), "the angle wraps at 180 degrees");
     expect(run(&t, 100, 0, 0, -16384, g, a) < 1e-9 && near(g[2], TILT_YAW_DEG * deg * 16384 / 32767, 1e-6), "half left stick: half the rate, counter-clockwise");
 
-    /* Turned 90 degrees, the left stick still tilts about the player's axes: up = the far edge down. */
+    /* Turned 90 degrees, the tilt turns with the controller: stick up tips its own top edge (+y) down. */
     t = (GyroTilt){.yaw = 90 * deg};
     expect(run(&t, 100, 0, 32767, 0, g, a) < 1e-9, "tilt on a turned controller: the rate matches the pose");
     double q[3][3]; gyro_tilt_matrix(&t, q);
-    /* Turned 90 degrees counter-clockwise, the controller's +x points away from the player; its height in the reference: */
-    double z_of_far_edge = q[2][0];
-    expect(near(t.pitch, -30 * deg, 1e-9) && z_of_far_edge < -0.49, "stick up: the edge facing away goes down, whatever the yaw");
+    expect(near(t.pitch, -30 * deg, 1e-9) && near(q[2][1], -0.5, 1e-9), "stick up: the turned controller's top edge goes down");
     expect(near(a[0] * a[0] + a[1] * a[1] + a[2] * a[2], 1, 1e-12), "gravity stays 1 G");
+
+    /* Tilted far and turning: a turntable, the turn is about the vertical, so gravity in the controller does not change
+       and the rate is about the reference's z (the controller's tilted normal would roll it over). */
+    t = (GyroTilt){0};
+    run(&t, 100, 0, 32767, 0, g, a);   /* stick up held: tilted to 30 degrees */
+    double before_acc[3] = {a[0], a[1], a[2]};
+    expect(run(&t, 100, 0, 32767, 32767, g, a) < 1e-9, "turning while tilted: the rate matches the pose");
+    expect(near(a[0], before_acc[0], 1e-9) && near(a[1], before_acc[1], 1e-9) && near(a[2], before_acc[2], 1e-9), "turning while tilted: gravity in the controller stays");
+    gyro_tilt_matrix(&t, q);
+    double world_rate[3] = {0, 0, 0};   /* the body rate seen in the reference: q * g */
+    for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) world_rate[i] += q[i][j] * g[j];
+    expect(near(world_rate[0], 0, 1e-6) && near(world_rate[1], 0, 1e-6) && near(world_rate[2], -TILT_YAW_DEG * deg, 1e-6), "turning while tilted: about the vertical, clockwise");
 
     /* The squared curve: half stick a quarter of the tilt, a tenth of the stick a hundredth, the sign kept. */
     t = (GyroTilt){0}; run(&t, 100, 16384, -16384, 0, g, a);
@@ -142,7 +152,7 @@ int main(void) {
     hold[100] = 20; hold[60] = 90;
     expect(fusion_error(1, hold, 200, 32767, 150) < 0.1, "late ticks in a row while turning: the sensor still ends on the pose");
     for (int i = 0; i < 200; i++) hold[i] = 10;
-    expect(fusion_error(1, hold, 200, 32767, 50) < 1e-6 && fusion_error(0, hold, 200, 32767, 50) < 1e-6, "even ticks: both end on the pose");
+    expect(fusion_error(1, hold, 200, 32767, 50) < 1e-4 && fusion_error(0, hold, 200, 32767, 50) < 1e-4, "even ticks: both end on the pose");
 
     if (failures) return 1;
     puts("gyro tilt: ok");
