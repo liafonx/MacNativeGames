@@ -1,5 +1,5 @@
 /* Tilt mode: a controller without motion sensors (an Xbox pad) tilts and turns a virtual controller lying face up, for the
-   motion-control puzzles (Breath of the Wild: Myahm Agana's maze board, Toto Sah's stairs). d-pad left + right pressed
+   motion-control puzzles (Breath of the Wild: Myahm Agana's maze board, Toto Sah's stairs). LB + LT (Switch L + ZL) pressed
    together turn it on and off (gyro_tilt_chord); runtime/gamepad.m ticks it and feeds the six-axis sensor.
    Every stick axis turns it at a speed, about an axis fixed to the player, never to the controller: left stick up tips the
    far edge down (about x), right tips the right edge down (about y), right stick right turns it clockwise seen from above
@@ -140,20 +140,20 @@ static inline int gyro_tilt_home(GyroTilt *t, double dt, const double (*from)[3]
     return 1;
 }
 
-/* TOTK_GYRO_EMU: whether d-pad left + right may turn tilt mode on. Never without the game's six-axis device (TOTK_GYRO / gyro.txt);
+/* TOTK_GYRO_EMU: whether LB + LT may turn tilt mode on. Never without the game's six-axis device (TOTK_GYRO / gyro.txt);
    "0" never, "1" always, else (unset) only while no controller feeds real motion (a DualSense or Switch Pro keeps its gyro). */
 static inline int gyro_tilt_allowed(const char *env, int six_axis, int motion_live) {
     if (!six_axis || (env && !strcmp(env, "0"))) return 0;
     return (env && !strcmp(env, "1")) || !motion_live;
 }
 
-/* D-pad left + right pressed together (physical buttons 12 and 14, controller_map.h; owner, 2026-10-30: LT + RT came together
-   in play): 1 on the press that completes the pair when the two presses came within TILT_CHORD_NS of each other.
+/* LB + LT pressed together (physical buttons 6 and 8, controller_map.h; Switch L + ZL; owner, 2026-10-30: LT + RT came
+   together in play, and a D-pad cannot press left and right at once): 1 on the press that completes the pair when the two presses came within TILT_CHORD_NS of each other.
    A held pair fires once; both must be let go (one is enough) and pressed again. */
 typedef struct { uint64_t at[2]; int down; } GyroTiltChord;
 static inline int gyro_tilt_chord(GyroTiltChord *c, uint64_t physical, uint64_t edges, uint64_t now) {
-    const uint64_t pair = 1ull << 12 | 1ull << 14;
-    for (int i = 0; i < 2; i++) if (edges >> (12 + 2 * i) & 1) c->at[i] = now;
+    const uint64_t pair = 1ull << 6 | 1ull << 8;
+    for (int i = 0; i < 2; i++) if (edges >> (6 + 2 * i) & 1) c->at[i] = now;
     int both = (physical & pair) == pair, fire = 0;
     if (both && !c->down && (edges & pair)) fire = (c->at[0] > c->at[1] ? c->at[0] - c->at[1] : c->at[1] - c->at[0]) <= TILT_CHORD_NS;
     c->down = both;

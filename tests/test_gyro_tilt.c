@@ -1,4 +1,4 @@
-/* Test tilt mode (games/totk/runtime/gyro_tilt.h): the virtual controller's tilt, turn and reported rates, the d-pad left + right
+/* Test tilt mode (games/totk/runtime/gyro_tilt.h): the virtual controller's tilt, turn and reported rates, the LB + LT
    chord and when tilt mode is allowed. */
 #define _DEFAULT_SOURCE   /* M_PI */
 #include "../games/totk/runtime/gyro_tilt.h"
@@ -112,23 +112,24 @@ int main(void) {
     double det = q[0][0] * (q[1][1] * q[2][2] - q[1][2] * q[2][1]) - q[0][1] * (q[1][0] * q[2][2] - q[1][2] * q[2][0]) + q[0][2] * (q[1][0] * q[2][1] - q[1][1] * q[2][0]);
     expect(near(det, 1, 1e-12) && near(a[0] * a[0] + a[1] * a[1] + a[2] * a[2], 1, 1e-12), "the pose stays a rotation, gravity 1 G");
 
-    /* D-pad left + right (physical 12, 14): together within 150 ms, in either order; once per press. */
-    enum { DL = 1 << 12, DR = 1 << 14 }; const uint64_t ms = 1000000;
+    /* LB + LT (physical 6, 8): together within 150 ms, in either order; once per press. */
+    enum { LB = 1 << 6, LT = 1 << 8 }; const uint64_t ms = 1000000;
     GyroTiltChord c = {0};
-    expect(!gyro_tilt_chord(&c, DL, DL, 1000 * ms) && gyro_tilt_chord(&c, DL | DR, DR, 1100 * ms), "DL then DR 100 ms later toggles");
-    expect(!gyro_tilt_chord(&c, DL | DR, 0, 1200 * ms) && !gyro_tilt_chord(&c, DL | DR, 0, 3000 * ms), "a held pair toggles once");
-    expect(!gyro_tilt_chord(&c, DL, 0, 3100 * ms) && !gyro_tilt_chord(&c, DL | DR, DR, 3200 * ms), "DL still held from the pair, DR let go and pressed again: no toggle");
+    expect(!gyro_tilt_chord(&c, LB, LB, 1000 * ms) && gyro_tilt_chord(&c, LB | LT, LT, 1100 * ms), "LB then LT 100 ms later toggles");
+    expect(!gyro_tilt_chord(&c, LB | LT, 0, 1200 * ms) && !gyro_tilt_chord(&c, LB | LT, 0, 3000 * ms), "a held pair toggles once");
+    expect(!gyro_tilt_chord(&c, LB, 0, 3100 * ms) && !gyro_tilt_chord(&c, LB | LT, LT, 3200 * ms), "LB still held from the pair, LT let go and pressed again: no toggle");
     c = (GyroTiltChord){0};
-    expect(!gyro_tilt_chord(&c, DR, DR, 5000 * ms) && gyro_tilt_chord(&c, DL | DR, DL, 5150 * ms), "DR then DL at exactly 150 ms toggles");
+    expect(!gyro_tilt_chord(&c, LT, LT, 5000 * ms) && gyro_tilt_chord(&c, LB | LT, LB, 5150 * ms), "LT then LB at exactly 150 ms toggles");
     c = (GyroTiltChord){0};
-    expect(!gyro_tilt_chord(&c, DL, DL, 7000 * ms) && !gyro_tilt_chord(&c, DL | DR, DR, 7151 * ms), "151 ms apart: no toggle");
+    expect(!gyro_tilt_chord(&c, LB, LB, 7000 * ms) && !gyro_tilt_chord(&c, LB | LT, LT, 7151 * ms), "151 ms apart: no toggle");
     c = (GyroTiltChord){0};
-    expect(!gyro_tilt_chord(&c, DL, DL, 9000 * ms) && !gyro_tilt_chord(&c, DL | DR, DR, 11000 * ms), "left held, right 2 s later: no toggle");
-    expect(!gyro_tilt_chord(&c, 0, 0, 12000 * ms) && !gyro_tilt_chord(&c, DL, DL, 13000 * ms) && gyro_tilt_chord(&c, DL | DR, DR, 13050 * ms),
+    expect(!gyro_tilt_chord(&c, LB, LB, 9000 * ms) && !gyro_tilt_chord(&c, LB | LT, LT, 11000 * ms), "left held, right 2 s later: no toggle");
+    expect(!gyro_tilt_chord(&c, 0, 0, 12000 * ms) && !gyro_tilt_chord(&c, LB, LB, 13000 * ms) && gyro_tilt_chord(&c, LB | LT, LT, 13050 * ms),
            "after both are let go, a new pair toggles");
     c = (GyroTiltChord){0};
-    expect(gyro_tilt_chord(&c, DL | DR, DL | DR, 15000 * ms), "both in one report toggle");
+    expect(gyro_tilt_chord(&c, LB | LT, LB | LT, 15000 * ms), "both in one report toggle");
     { GyroTiltChord t = {0}; expect(!gyro_tilt_chord(&t, 1 << 8 | 1 << 9, 1 << 8 | 1 << 9, 16000 * ms), "LT + RT no longer toggles (owner, 2026-10-30)"); }
+    { GyroTiltChord t = {0}; expect(!gyro_tilt_chord(&t, 1 << 12 | 1 << 14, 1 << 12 | 1 << 14, 17000 * ms), "D-pad left + right does not toggle"); }
 
     /* When the pair may turn it on. */
     expect(gyro_tilt_allowed(NULL, 1, 0) && !gyro_tilt_allowed(NULL, 1, 1), "unset: only without a controller gyro");

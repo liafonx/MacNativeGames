@@ -223,7 +223,7 @@ int runtime_motion_axes(const char *spec);   /* TOTK_GYRO_AXES ("-x,y,-z"): 1 se
 void runtime_motion_deadzone_default(double deg_s);   /* when TOTK_GYRO_DEADZONE is unset: 1.2 for HID motion, else 0 */
 void runtime_motion_live(int on);   /* a controller with motion attached (1) / detached (0) */
 int runtime_motion_controller_live(void);   /* a controller with motion is attached now */
-int runtime_tilt_active(void);   /* runtime/gamepad.m: tilt mode (d-pad left + right, runtime/gyro_tilt.h) owns the sticks */
+int runtime_tilt_active(void);   /* runtime/gamepad.m: tilt mode (LB + LT, runtime/gyro_tilt.h) owns the sticks */
 int runtime_tilt_speed(void);          /* the settings panel's tilt rows: 45, 60 or 90 degrees a second, saved in tilt.txt */
 void runtime_tilt_speed_set(int speed);
 int runtime_tilt_invert(void);         /* the stick axes reversed: TILT_INVERT_* bits (runtime/gyro_tilt.h), 0 none */

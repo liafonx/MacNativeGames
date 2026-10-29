@@ -308,7 +308,7 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
  [rows addObject:settings_gain_row()];
  [rows addObject:settings_feedback_row(1)];
  for(NSUInteger i=0;i<rows.count;i++)rows[i].page=i<display?SETTINGS_PAGE_DISPLAY:SETTINGS_PAGE_INPUT;
- /* Tilt mode (d-pad left + right on a controller without a gyro, gamepad.m), on the key bindings page under the controller (user
+ /* Tilt mode (LB + LT on a controller without a gyro, gamepad.m), on the key bindings page under the controller (user
     2026-10-30): its top speed and which stick axis it reverses (one or all three); both in force at the next tick, also
     while it is on, and saved in tilt.txt. */
  NSUInteger tilt=rows.count;

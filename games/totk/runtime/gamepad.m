@@ -598,7 +598,7 @@ void runtime_mouse_release(void) {   /* main thread: the window let the pointer 
 }
 
 /* ---- Tilt mode (runtime/gyro_tilt.h) ----
-   For the motion-control puzzles on a controller without motion sensors. D-pad left + right pressed together turn it on and off,
+   For the motion-control puzzles on a controller without motion sensors. LB + LT (Switch L + ZL) pressed together turn it on and off,
    when gyro_tilt_allowed says so (TOTK_GYRO_EMU; by default only while no controller feeds real motion). While on, a
    10 ms timer turns a virtual controller lying face up by the sticks (left: tilt, right x: turn, each about the player's
    axes at a speed; let go and it stays, gyro_tilt.h) and feeds the pose to the sensor in the mouse's place
@@ -790,10 +790,10 @@ static void refresh_gamepads(void) {
     gamepadNativeLx = nativeLx; gamepadNativeLy = nativeLy; gamepadNativeRx = nativeRx; gamepadNativeRy = nativeRy;
     pthread_mutex_unlock(&gamepadLock);
     /* After the unlock: the tilt timer takes gamepadLock. The last controller gone: tilt mode ends, so the keyboard drives again. */
-    if (tiltPressed) tilt_toggle("d-pad left + right");
+    if (tiltPressed) tilt_toggle("LB + LT");
     else if (!next.connected && atomic_load(&tiltMode)) tilt_toggle("controller disconnected");
     else if (atomic_load(&tiltMode) && !gyro_tilt_allowed(getenv("TOTK_GYRO_EMU"), runtime_gyro_enabled(), runtime_motion_controller_live()))
-        tilt_toggle("a controller with a gyro of its own is in use");   /* d-pad left + right is off for those too (gyro_tilt_allowed) */
+        tilt_toggle("a controller with a gyro of its own is in use");   /* LB + LT is off for those too (gyro_tilt_allowed) */
     else if (tiltCancel && atomic_load(&tiltMode)) { atomic_store(&tiltReset, runtime_now_ns() + TILT_RESET_NS); fprintf(stderr, "[totk-input] tilt mode: B pressed, the controller turns back to flat in %.1f s\n", TILT_RESET_NS / 1e9); }
 }
 
