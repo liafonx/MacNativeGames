@@ -16,6 +16,7 @@
 #include <string.h>
 
 enum { TILT_TICK_NS = 10000000, TILT_FIX_NS = 50000000, TILT_CHORD_NS = 150000000 };
+#define TILT_RESET_NS 500000000ull   /* B: the pose holds this long, then lies flat (runtime/gamepad.m) */
 #define TILT_SPEED_DEG 90.0
 
 /* The pose, controller -> reference (rows = reference axes in controller coordinates, as runtime/motion_fusion.c);
