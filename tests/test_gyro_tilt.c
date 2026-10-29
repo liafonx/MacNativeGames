@@ -165,6 +165,19 @@ int main(void) {
         expect(!t.set && near(a[2], -1, 1e-6), "B: ends exactly flat, z = -1 G");
     }
 
+    /* tilt.txt: speed and inverted axes; a bad line keeps the default and is counted. */
+    {
+        GyroTiltConfig c;
+        expect(gyro_tilt_config("", &c) == 0 && c.speed == TILT_SPEED_DEG && !c.invert_lx && !c.invert_ly && !c.invert_rx, "tilt.txt: empty: the defaults");
+        expect(gyro_tilt_config("# slower, left stick x reversed\nspeed = 20\ninvert = lx, rx\n", &c) == 0 && c.speed == 20 && c.invert_lx && !c.invert_ly && c.invert_rx, "tilt.txt: speed and two inverted axes");
+        expect(gyro_tilt_config("speed=360\r\ninvert=ly\r\n", &c) == 0 && c.speed == 360 && c.invert_ly, "tilt.txt: no spaces, CRLF");
+        expect(gyro_tilt_config("speed = 1000\ninvert = up\ncolour = red\n", &c) == 3 && c.speed == TILT_SPEED_DEG && !c.invert_lx, "tilt.txt: out of range, unknown axis, unknown key: three bad lines, defaults kept");
+        GyroTilt a1 = {0}, a2 = {0}; double g2[3], acc2[3];
+        for (int i = 0; i < 100; i++) { gyro_tilt_tick_at(&a1, 32767, 0, 0, 20, 0.01, NULL, g, a); gyro_tilt_tick(&a2, 32767, 0, 0, 0.01, NULL, g2, acc2); }
+        GyroTilt flat = {0};
+        expect(near(height_of(&flat, &a1, right), -sin(20 * deg), 1e-9) && near(height_of(&flat, &a2, right), -sin(TILT_SPEED_DEG * deg), 1e-9), "tilt.txt speed 20: a second of full stick turns 20 degrees");
+    }
+
     puts("gyro tilt: ok");
     return 0;
 }

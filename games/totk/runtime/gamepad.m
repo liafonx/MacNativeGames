@@ -612,6 +612,7 @@ static dispatch_queue_t tiltQueue;
 static GyroTiltChord tiltChord;                /* main queue (refresh_gamepads) */
 static _Atomic uint64_t tiltReset;             /* B pressed: turn it back to flat from this time (0: none) */
 static int tiltHoming;                         /* tilt queue: on the way back to flat */
+static GyroTiltConfig tiltConfig;              /* tilt queue: tilt.txt, read when tilt mode turns on */
 int runtime_tilt_active(void) { return atomic_load(&tiltMode); }
 static void tilt_tick(void) {
     int32_t lx = 0, ly = 0, rx = 0;
@@ -630,7 +631,8 @@ static void tilt_tick(void) {
     int have = runtime_motion_read(&shown, 1) == 1;
     if (have) for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) from[j][i] = shown.dir[i * 3 + j];
     if (tiltHoming) tiltHoming = !gyro_tilt_home(&tilt, dt, have ? (const double (*)[3])from : NULL, gyro, acc);
-    else gyro_tilt_tick(&tilt, lx, ly, rx, dt, have ? (const double (*)[3])from : NULL, gyro, acc);
+    else gyro_tilt_tick_at(&tilt, tiltConfig.invert_lx ? -lx : lx, tiltConfig.invert_ly ? -ly : ly, tiltConfig.invert_rx ? -rx : rx, tiltConfig.speed, dt,
+                           have ? (const double (*)[3])from : NULL, gyro, acc);
     if (atomic_load(&tiltMode)) runtime_motion_feed_mouse(acc, gyro, now);
 }
 static void tilt_toggle(const char *why) {   /* main queue */
@@ -644,6 +646,11 @@ static void tilt_toggle(const char *why) {   /* main queue */
     dispatch_sync(tiltQueue, ^{
         if (on) {
             tilt = (GyroTilt){0}; tiltLast = 0; tiltHoming = 0; atomic_store(&tiltReset, 0);   /* on: flat again */
+            char text[1024] = "", path[1024] = "";
+            int found = setting_read("tilt.txt", text, sizeof text, path, sizeof path), bad = gyro_tilt_config(text, &tiltConfig);
+            if (found) fprintf(stderr, "[totk-input] tilt mode: %s: up to %.0f degrees a second%s%s%s%s\n", path, tiltConfig.speed,
+                               tiltConfig.invert_lx ? ", left stick x reversed" : "", tiltConfig.invert_ly ? ", left stick y reversed" : "",
+                               tiltConfig.invert_rx ? ", right stick x reversed" : "", bad ? " (some lines not understood: kept the default for them)" : "");
             runtime_motion_mouse(1);
             atomic_store(&tiltMode, 1);
             tiltTimer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, tiltQueue);

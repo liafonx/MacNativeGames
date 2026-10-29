@@ -12,6 +12,7 @@
 #define GYRO_TILT_H
 #include <math.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -68,11 +69,45 @@ static inline void gyro_tilt_turn(GyroTilt *t, const double w[3], double dt, con
    gravity in G and the body-frame rate: the move over dt plus the turn from `from` to the old pose over TILT_FIX_NS.
    `from` is the pose the sensor shows now (runtime/motion_fusion.c holds each rate until the next sample and drops what a
    late tick misses, so steering from what it shows keeps late ticks from leaving it off); NULL: the old pose. */
-static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t rx, double dt, const double (*from)[3], double gyro[3], double acc[3]) {
-    const double speed = TILT_SPEED_DEG * M_PI / 180;
+static inline void gyro_tilt_tick_at(GyroTilt *t, int32_t lx, int32_t ly, int32_t rx, double speed_deg, double dt, const double (*from)[3], double gyro[3], double acc[3]) {
+    const double speed = speed_deg * M_PI / 180;
     double x = lx / 32767.0, y = ly / 32767.0, z = rx / 32767.0;
     double w[3] = {-speed * y * fabs(y), speed * x * fabs(x), -speed * z * fabs(z)};   /* reference frame, rad/s; squared, sign kept */
     gyro_tilt_turn(t, w, dt, from, gyro, acc);
+}
+static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t rx, double dt, const double (*from)[3], double gyro[3], double acc[3]) {
+    gyro_tilt_tick_at(t, lx, ly, rx, TILT_SPEED_DEG, dt, from, gyro, acc);
+}
+
+/* tilt.txt next to controls.txt, read each time tilt mode turns on (runtime/gamepad.m), so a change needs no rebuild or
+   restart. One setting a line, '#' starts a comment:
+     speed = 45          top speed in degrees a second, 5 to 360 (default TILT_SPEED_DEG)
+     invert = lx ly rx   the stick axes whose direction is reversed (left stick x, left stick y, right stick x; any of them)
+   Returns the number of lines it could not read; those keep the default. */
+typedef struct { double speed; int invert_lx, invert_ly, invert_rx; } GyroTiltConfig;
+static inline int gyro_tilt_config(const char *text, GyroTiltConfig *c) {
+    *c = (GyroTiltConfig){TILT_SPEED_DEG, 0, 0, 0};
+    int bad = 0;
+    for (const char *p = text; p && *p;) {
+        char line[200]; size_t n = strcspn(p, "\n"); if (n >= sizeof line) n = sizeof line - 1;
+        memcpy(line, p, n); line[n] = 0; p += strcspn(p, "\n"); if (*p) p++;
+        char *hash = strchr(line, '#'); if (hash) *hash = 0;
+        char key[32], rest[160] = "";
+        if (sscanf(line, " %31[a-z] = %159[^\n]", key, rest) < 1) { for (char *q = line; *q; q++) if (*q != ' ' && *q != '\t' && *q != '\r') { bad++; break; } continue; }
+        if (!strcmp(key, "speed")) {
+            char *end; double v = strtod(rest, &end);
+            while (*end == ' ' || *end == '\t' || *end == '\r') end++;
+            if (end != rest && !*end && v >= 5 && v <= 360) c->speed = v; else bad++;
+        } else if (!strcmp(key, "invert")) {
+            for (char *w = rest; *w;) {   /* words split by spaces or commas */
+                w += strspn(w, " ,\t\r"); size_t m = strcspn(w, " ,\t\r"); if (!m) break;
+                if (m == 2 && !strncmp(w, "lx", 2)) c->invert_lx = 1; else if (m == 2 && !strncmp(w, "ly", 2)) c->invert_ly = 1;
+                else if (m == 2 && !strncmp(w, "rx", 2)) c->invert_rx = 1; else if (!(m == 4 && !strncmp(w, "none", 4))) bad++;
+                w += m;
+            }
+        } else bad++;
+    }
+    return bad;
 }
 
 /* One tick of the way back to flat after B: turn *t toward level, yaw 0, at up to TILT_HOME_DEG per second, about the
