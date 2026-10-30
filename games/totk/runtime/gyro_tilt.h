@@ -19,7 +19,7 @@
 enum { TILT_TICK_NS = 10000000, TILT_FIX_NS = 50000000, TILT_CHORD_NS = 150000000 };
 #define TILT_RESET_NS 200000000ull   /* B: the pose holds this long, then turns back to flat (runtime/gamepad.m) */
 #define TILT_HOME_DEG 720.0           /* ... at this speed (gyro_tilt_home): back within 0.45 s, before a quick re-entry */
-#define TILT_SPEED_DEG 45.0   /* owner, 2026-10-29: 90 moved too far per push; half that, for fine moves */
+#define TILT_SPEED_DEG 60.0   /* owner: 90 moved too far per push (2026-10-29); 60 the default (2026-10-30) */
 
 /* The pose, controller -> reference (rows = reference axes in controller coordinates, as runtime/motion_fusion.c);
    {0} is flat. */
@@ -81,7 +81,7 @@ static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t r
 
 /* tilt.txt next to controls.txt: the settings panel's tilt rows (runtime/settings_panel.h) write it, and runtime/gamepad.m
    reads it once at the first use. One setting a line, '#' starts a comment:
-     speed = 45     top speed in degrees a second: 45 (default, TILT_SPEED_DEG), 60 or 90
+     speed = 60     top speed in degrees a second: 45, 60 (default, TILT_SPEED_DEG) or 90
      invert = off   the stick axis reversed: off (default), all (all three), or one of lx, ly, rx (left stick x, left
                     stick y, right stick x)
    Returns the number of lines it could not read; those keep the default. */

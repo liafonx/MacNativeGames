@@ -79,7 +79,7 @@ void runtime_rumble_gain_set(float gain) { fakeGain = gain; }
 /* gamepad.m's tilt mode rows. */
 static int fakeMotionLive;   /* motion_fusion.c: a controller with a gyro of its own */
 int runtime_motion_controller_live(void) { return fakeMotionLive; }
-static int fakeTiltSpeed = 45, fakeTiltInvert;
+static int fakeTiltSpeed = 60, fakeTiltInvert;
 int runtime_tilt_speed(void) { return fakeTiltSpeed; }
 void runtime_tilt_speed_set(int speed) { fakeTiltSpeed = speed; }
 int runtime_tilt_invert(void) { return fakeTiltInvert; }
@@ -400,9 +400,9 @@ int main(int argc, const char **argv) { @autoreleasepool {
     pick(@"Rumble strength", @"0.5×"); assert(fakeGain == 0.5f); pick(@"Rumble strength", @"1× (default)"); assert(fakeGain == 1);
     assert(switched(@"Gyro aiming")); flip(@"Gyro aiming", NO); assert(!fakeFeedback[1]); flip(@"Gyro aiming", YES); assert(fakeFeedback[1]);
     /* Tilt mode (on the key bindings page): three fixed speeds; one stick axis or all three reversed. */
-    shows(@"Tilt speed", @"45°/s (default)");
+    shows(@"Tilt speed", @"60°/s (default)");
     pick(@"Tilt speed", @"90°/s"); assert(fakeTiltSpeed == 90); shows(@"Tilt speed", @"90°/s");
-    pick(@"Tilt speed", @"45°/s (default)"); assert(fakeTiltSpeed == 45);
+    pick(@"Tilt speed", @"45°/s"); assert(fakeTiltSpeed == 45); pick(@"Tilt speed", @"60°/s (default)"); assert(fakeTiltSpeed == 60);
     shows(@"Reverse tilt", @"Off");
     pick(@"Reverse tilt", @"Left stick up / down"); assert(fakeTiltInvert == TILT_INVERT_LY); shows(@"Reverse tilt", @"Left stick up / down");
     pick(@"Reverse tilt", @"All"); assert(fakeTiltInvert == TILT_INVERT_ALL); pick(@"Reverse tilt", @"Off"); assert(!fakeTiltInvert);
@@ -485,8 +485,8 @@ int main(int argc, const char **argv) { @autoreleasepool {
            [settingsPanel.listToggle.title isEqualToString:@"Show drawings"] && settingsPanel.listToggle.enabled);
     /* Tilt mode's two menus under the list (user 2026-10-30), after its rows for a controller: left / right changes them. */
     assert(!settingsPanel.tiltStrip.hidden && settingsPanel.controllerTargets[17] == menu(@"Tilt speed").superview && settingsPanel.controllerTargets[18] == menu(@"Reverse tilt").superview);
-    settingsPanel.controllerIndex = 17; [settingsPanel controllerChange:1 select:NO]; assert(fakeTiltSpeed == 60);
-    [settingsPanel controllerChange:-1 select:NO]; assert(fakeTiltSpeed == 45);
+    settingsPanel.controllerIndex = 17; [settingsPanel controllerChange:1 select:NO]; assert(fakeTiltSpeed == 90);
+    [settingsPanel controllerChange:-1 select:NO]; assert(fakeTiltSpeed == 60);
     settingsPanel.controllerIndex = 18; [settingsPanel controllerChange:-1 select:NO]; assert(fakeTiltInvert == TILT_INVERT_RX);
     [settingsPanel controllerChange:1 select:YES]; assert(fakeTiltInvert == 0); settingsPanel.controllerIndex = 0;
     /* A controller with a gyro of its own (DualSense, Switch Pro): no tilt menus, the list takes their row back. */

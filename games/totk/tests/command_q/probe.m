@@ -131,7 +131,7 @@ int runtime_rumble_gain_locked(void){return 0;}
 float runtime_rumble_gain(void){return 1;}
 void runtime_rumble_gain_set(float gain){(void)gain;}
 #ifndef FRONTEND_REAL_GAMEPAD   /* the settings panel's tilt menus (runtime/gamepad.m when it is in) */
-int runtime_tilt_speed(void){return 45;}
+int runtime_tilt_speed(void){return 60;}
 void runtime_tilt_speed_set(int speed){(void)speed;}
 int runtime_tilt_invert(void){return 0;}
 void runtime_tilt_invert_set(int invert){(void)invert;}

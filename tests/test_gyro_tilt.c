@@ -72,27 +72,27 @@ int main(void) {
     /* Left stick up for a second: the far edge goes down at TILT_SPEED_DEG; let go: it stays; up again: on from there. */
     start = t;
     expect(run(&t, 100, 0, 32767, 0, g, a) < 1e-9, "tilt: the rate turns the old pose into the new one");
-    expect(near(height_of(&start, &t, far), -sin(45 * deg), 1e-9), "a second of stick up: the far edge 45 degrees down");
+    expect(near(height_of(&start, &t, far), -sin(TILT_SPEED_DEG * deg), 1e-9), "a second of stick up: the far edge 60 degrees down");
     GyroTilt held = t;
     run(&t, 50, 0, 0, 0, g, a);
     expect(g[0] == 0 && g[1] == 0 && g[2] == 0 && !memcmp(&held, &t, sizeof t), "let go: it stays where it is, no rate");
-    run(&t, 300, 0, 32767, 0, g, a);
-    expect(near(a[2], 1, 1e-9), "up again for 3 s: on past its edge to face down (180 degrees)");
+    run(&t, 200, 0, 32767, 0, g, a);
+    expect(near(a[2], 1, 1e-9), "up again for 2 s: on past its edge to face down (180 degrees)");
 
     /* Every axis is fixed to the player: turned a quarter, a half, or tilted, stick up still tips the far edge down and
        stick right the right edge, and the right stick turns about the vertical. */
     for (int k = 1; k <= 2; k++) {
         t = (GyroTilt){0};
-        run(&t, 200 * k, 0, 0, 32767, g, a);   /* turned 90 / 180 degrees clockwise */
+        run(&t, 150 * k, 0, 0, 32767, g, a);   /* turned 90 / 180 degrees clockwise */
         start = t;
-        run(&t, 67, 0, 32767, 0, g, a);   /* 30 degrees (0.67 s at 45 deg/s, rounded) */
+        run(&t, 50, 0, 32767, 0, g, a);   /* 30 degrees (0.5 s at 60 deg/s) */
         expect(height_of(&start, &t, far) < -0.49, k == 1 ? "a quarter turn, then stick up: the far edge goes down" : "a half turn, then stick up: the far edge goes down");
         start = t;
         run(&t, 67, 32767, 0, 0, g, a);
         expect(height_of(&start, &t, right) < -0.49, "tilted and turned, then stick right: the right edge goes down");
     }
     t = (GyroTilt){0};
-    run(&t, 100, 0, 32767, 0, g, a);   /* tilted 45 degrees */
+    run(&t, 100, 0, 32767, 0, g, a);   /* tilted 60 degrees */
     double before_acc[3] = {a[0], a[1], a[2]}, q[3][3], world_rate[3] = {0, 0, 0};
     expect(run(&t, 100, 0, 0, 32767, g, a) < 1e-9, "turning while tilted: the rate matches the pose");
     expect(near(a[0], before_acc[0], 1e-9) && near(a[1], before_acc[1], 1e-9) && near(a[2], before_acc[2], 1e-9), "turning while tilted: gravity in the controller stays (a turntable)");
@@ -103,7 +103,7 @@ int main(void) {
     /* The squared curve: half stick, a quarter of the speed; the sign kept. */
     t = (GyroTilt){0}; start = t;
     run(&t, 100, -16384, 0, 0, g, a);
-    expect(near(height_of(&start, &t, right), sin(TILT_SPEED_DEG * deg * (16384 / 32767.0) * (16384 / 32767.0)), 1e-9), "half stick left for 1 s: the right edge 11.25 degrees up");
+    expect(near(height_of(&start, &t, right), sin(TILT_SPEED_DEG * deg * (16384 / 32767.0) * (16384 / 32767.0)), 1e-9), "half stick left for 1 s: the right edge 15 degrees up");
 
     /* All three at once, for a while: the rate always matches the pose, and the pose stays a rotation. */
     t = (GyroTilt){0};
@@ -155,9 +155,9 @@ int main(void) {
        turned and tilted, and upside down (the axis-angle edge at 180 degrees). */
     for (int c = 0; c < 3; c++) {
         t = (GyroTilt){0};
-        if (c == 0) run(&t, 100, 0, 32767, 0, g, a);   /* tilted 45 degrees */
+        if (c == 0) run(&t, 100, 0, 32767, 0, g, a);   /* tilted 60 degrees */
         if (c == 1) { run(&t, 100, 0, 32767, 0, g, a); run(&t, 150, 0, 0, 32767, g, a); run(&t, 80, -20000, 0, 0, g, a); }
-        if (c == 2) run(&t, 400, 0, 32767, 0, g, a);   /* 180 degrees: face down */
+        if (c == 2) run(&t, 300, 0, 32767, 0, g, a);   /* 180 degrees: face down */
         double q0[3][3]; gyro_tilt_matrix(&t, q0);
         double cc = (q0[0][0] + q0[1][1] + q0[2][2] - 1) / 2, angle = acos(cc > 1 ? 1 : cc < -1 ? -1 : cc) * 180 / M_PI, worst = 0;
         int ticks = 0, done = 0;
@@ -170,11 +170,11 @@ int main(void) {
     /* tilt.txt: one of three speeds, one axis or all reversed; a bad line keeps the default and is counted. */
     {
         GyroTiltConfig c;
-        expect(gyro_tilt_config("", &c) == 0 && c.speed == 45 && !c.invert, "tilt.txt: empty: the defaults");
+        expect(gyro_tilt_config("", &c) == 0 && c.speed == 60 && !c.invert, "tilt.txt: empty: the defaults");
         expect(gyro_tilt_config("# faster, all reversed\nspeed = 90\ninvert = all\n", &c) == 0 && c.speed == 90 && c.invert == TILT_INVERT_ALL, "tilt.txt: speed 90, all reversed");
         expect(gyro_tilt_config("invert = ly\n", &c) == 0 && c.invert == TILT_INVERT_LY && gyro_tilt_config("invert = rx\n", &c) == 0 && c.invert == TILT_INVERT_RX, "tilt.txt: one axis reversed");
         expect(gyro_tilt_config("speed=60\r\ninvert=off\r\n", &c) == 0 && c.speed == 60 && !c.invert, "tilt.txt: no spaces, CRLF");
-        expect(gyro_tilt_config("speed = 30\nspeed = 360\nspeed = 045\ninvert = on\ninvert = lx ly\ncolour = red\n", &c) == 6 && c.speed == 45 && !c.invert,
+        expect(gyro_tilt_config("speed = 30\nspeed = 360\nspeed = 045\ninvert = on\ninvert = lx ly\ncolour = red\n", &c) == 6 && c.speed == 60 && !c.invert,
                "tilt.txt: other speeds, on, two axes, an unknown key: six bad lines, defaults kept");
         char text[64]; GyroTiltConfig w = {60, TILT_INVERT_LX}, r;
         gyro_tilt_config_text(&w, text, sizeof text);

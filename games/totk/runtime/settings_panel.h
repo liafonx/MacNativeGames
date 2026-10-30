@@ -313,7 +313,7 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
     while it is on, and saved in tilt.txt. */
  NSUInteger tilt=rows.count;
  [rows addObject:settings_row(settings_text("倾斜速度","Tilt speed"),
-  @[settings_text("45°/秒（默认）","45°/s (default)"),settings_text("60°/秒","60°/s"),settings_text("90°/秒","90°/s")],@[@45,@60,@90],
+  @[settings_text("45°/秒","45°/s"),settings_text("60°/秒（默认）","60°/s (default)"),settings_text("90°/秒","90°/s")],@[@45,@60,@90],
   ^int{return runtime_tilt_speed();},^(int v){runtime_tilt_speed_set(v);})];
  [rows addObject:settings_row(settings_text("反转倾斜","Reverse tilt"),
   @[settings_on_off(0),settings_text("全部","All"),settings_text("左摇杆左右","Left stick left / right"),settings_text("左摇杆上下","Left stick up / down"),
