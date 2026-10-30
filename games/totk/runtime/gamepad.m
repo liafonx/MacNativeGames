@@ -784,7 +784,7 @@ static void refresh_gamepads(void) {
     textEdges |= (physical & 0x1ffffu) & ~textPad.buttons;
     textPad = next; textPad.buttons = physical & 0x1ffffu;
     pressedEdges |= next.buttons & ~gamepadState.buttons;
-    int tiltCancel = (next.buttons & ~gamepadState.buttons & 2) != 0;   /* the game's B (Cancel) pressed */
+    int tiltCancel = !textCapture && (next.buttons & ~gamepadState.buttons & 2) != 0;   /* the game's B (Cancel) pressed, not a panel pick */
     gamepadState = next;
     gamepadRawLeftAt = rawAt; gamepadRawRightAt = rawRightAt;
     gamepadNativeLx = nativeLx; gamepadNativeLy = nativeLy; gamepadNativeRx = nativeRx; gamepadNativeRy = nativeRy;
