@@ -621,7 +621,7 @@ static void tilt_settings_load(void) {
     char text[1024] = "", path[4096] = "";
     GyroTiltConfig c;
     int found = setting_read("tilt.txt", text, sizeof text, path, sizeof path), bad = gyro_tilt_config(found ? text : "", &c);
-    if (bad) fprintf(stderr, "[totk-input] %s: %d line(s) not understood (speed = 45, 60 or 90; invert = off, all, lx, ly or rx): kept the default for them\n", path, bad);
+    if (bad) fprintf(stderr, "[totk-input] %s: %d line(s) not understood (speed = 60, 90, 180 or 360; invert = off, all, lx, ly or rx): kept the default for them\n", path, bad);
     int none = 0;
     if (atomic_compare_exchange_strong(&tiltSpeed, &none, c.speed)) atomic_store(&tiltInvert, c.invert);
 }

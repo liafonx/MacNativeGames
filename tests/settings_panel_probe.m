@@ -421,7 +421,7 @@ int main(int argc, const char **argv) { @autoreleasepool {
     /* Tilt mode (on the key bindings page): three fixed speeds; one stick axis or all three reversed. */
     shows(@"Tilt speed", @"60°/s (default)");
     pick(@"Tilt speed", @"90°/s"); assert(fakeTiltSpeed == 90); shows(@"Tilt speed", @"90°/s");
-    pick(@"Tilt speed", @"45°/s"); assert(fakeTiltSpeed == 45); pick(@"Tilt speed", @"60°/s (default)"); assert(fakeTiltSpeed == 60);
+    pick(@"Tilt speed", @"180°/s"); assert(fakeTiltSpeed == 180); pick(@"Tilt speed", @"360°/s"); assert(fakeTiltSpeed == 360); pick(@"Tilt speed", @"60°/s (default)"); assert(fakeTiltSpeed == 60);
     shows(@"Reverse tilt", @"Off");
     pick(@"Reverse tilt", @"Left stick up / down"); assert(fakeTiltInvert == TILT_INVERT_LY); shows(@"Reverse tilt", @"Left stick up / down");
     pick(@"Reverse tilt", @"All"); assert(fakeTiltInvert == TILT_INVERT_ALL); pick(@"Reverse tilt", @"Off"); assert(!fakeTiltInvert);

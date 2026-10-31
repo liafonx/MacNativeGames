@@ -81,13 +81,13 @@ static inline void gyro_tilt_tick(GyroTilt *t, int32_t lx, int32_t ly, int32_t r
 
 /* tilt.txt next to controls.txt: the settings panel's tilt rows (runtime/settings_panel.h) write it, and runtime/gamepad.m
    reads it once at the first use. One setting a line, '#' starts a comment:
-     speed = 60     top speed in degrees a second: 45, 60 (default, TILT_SPEED_DEG) or 90
+     speed = 60     top speed in degrees a second: 60 (default, TILT_SPEED_DEG), 90, 180 or 360
      invert = off   the stick axis reversed: off (default), all (all three), or one of lx, ly, rx (left stick x, left
                     stick y, right stick x)
    Returns the number of lines it could not read; those keep the default. */
 enum { TILT_INVERT_LX = 1, TILT_INVERT_LY = 2, TILT_INVERT_RX = 4, TILT_INVERT_ALL = 7 };   /* GyroTiltConfig.invert */
 typedef struct { int speed, invert; } GyroTiltConfig;
-static inline int gyro_tilt_speed_ok(int speed) { return speed == 45 || speed == 60 || speed == 90; }
+static inline int gyro_tilt_speed_ok(int speed) { return speed == 60 || speed == 90 || speed == 180 || speed == 360; }
 static inline const char *gyro_tilt_invert_name(int invert) {   /* NULL: not a choice */
     switch (invert) { case 0: return "off"; case TILT_INVERT_LX: return "lx"; case TILT_INVERT_LY: return "ly"; case TILT_INVERT_RX: return "rx"; case TILT_INVERT_ALL: return "all"; }
     return NULL;
@@ -104,7 +104,7 @@ static inline int gyro_tilt_config(const char *text, GyroTiltConfig *c) {
         int got = sscanf(line, " %31[a-z] = %31[a-z0-9] %1s", key, value, extra);
         if (got < 1) { for (char *q = line; *q; q++) if (*q != ' ' && *q != '\t' && *q != '\r') { bad++; break; } continue; }
         if (got != 2) bad++;
-        else if (!strcmp(key, "speed") && gyro_tilt_speed_ok(atoi(value)) && strlen(value) == 2) c->speed = atoi(value);
+        else if (!strcmp(key, "speed") && gyro_tilt_speed_ok(atoi(value)) && strlen(value) == (atoi(value) >= 100 ? 3u : 2u)) c->speed = atoi(value);
         else if (!strcmp(key, "invert")) {
             int found = -1;
             for (int i = 0; i < 8; i++) if (gyro_tilt_invert_name(i) && !strcmp(value, gyro_tilt_invert_name(i))) found = i;

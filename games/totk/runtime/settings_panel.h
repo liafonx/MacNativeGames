@@ -45,7 +45,7 @@
    Key bindings: one row per game action with two keyboard and mouse inputs (keyboard_map.h, runtime_keymap_set: in force
    at once, saved in keyboard.txt) and the controller buttons that drive it (controller_map.h, runtime_controller_map_set:
    controls.txt). Under the controller (the drawing's controller side, or the list's bottom; user 2026-10-30), while no
-   controller with a gyro of its own is connected, tilt mode's two menus: tilt speed 45 / 60 / 90 degrees a second (runtime_tilt_speed_set) and reverse tilt off / all / one stick axis
+   controller with a gyro of its own is connected, tilt mode's two menus: tilt speed 60 / 90 / 180 / 360 degrees a second (runtime_tilt_speed_set) and reverse tilt off / all / one stick axis
    (runtime_tilt_invert_set), both in tilt.txt (gamepad.m) and in force at the next tick. Click a box, then press a key or a mouse button (key 1 cancels; Command keys stay the system's) or, in
    the controller column, a controller button; with a controller, pick a row and press A, then the new button. An input
    another action holds swaps places with this box's. Right-click clears a box. Two buttons reset the keyboard and mouse,
@@ -357,7 +357,7 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
     while it is on, and saved in tilt.txt. */
  NSUInteger tilt=rows.count;
  [rows addObject:settings_row(settings_text("倾斜速度","Tilt speed"),
-  @[settings_text("45°/秒","45°/s"),settings_text("60°/秒（默认）","60°/s (default)"),settings_text("90°/秒","90°/s")],@[@45,@60,@90],
+  @[settings_text("60°/秒（默认）","60°/s (default)"),settings_text("90°/秒","90°/s"),settings_text("180°/秒","180°/s"),settings_text("360°/秒","360°/s")],@[@60,@90,@180,@360],
   ^int{return runtime_tilt_speed();},^(int v){runtime_tilt_speed_set(v);})];
  [rows addObject:settings_row(settings_text("反转倾斜","Reverse tilt"),
   @[settings_on_off(0),settings_text("全部","All"),settings_text("左摇杆左右","Left stick left / right"),settings_text("左摇杆上下","Left stick up / down"),

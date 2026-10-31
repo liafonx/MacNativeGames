@@ -172,9 +172,10 @@ int main(void) {
         GyroTiltConfig c;
         expect(gyro_tilt_config("", &c) == 0 && c.speed == 60 && !c.invert, "tilt.txt: empty: the defaults");
         expect(gyro_tilt_config("# faster, all reversed\nspeed = 90\ninvert = all\n", &c) == 0 && c.speed == 90 && c.invert == TILT_INVERT_ALL, "tilt.txt: speed 90, all reversed");
+        expect(gyro_tilt_config("speed = 180\n", &c) == 0 && c.speed == 180 && gyro_tilt_config("speed = 360\n", &c) == 0 && c.speed == 360, "tilt.txt: speed 180 and 360");
         expect(gyro_tilt_config("invert = ly\n", &c) == 0 && c.invert == TILT_INVERT_LY && gyro_tilt_config("invert = rx\n", &c) == 0 && c.invert == TILT_INVERT_RX, "tilt.txt: one axis reversed");
         expect(gyro_tilt_config("speed=60\r\ninvert=off\r\n", &c) == 0 && c.speed == 60 && !c.invert, "tilt.txt: no spaces, CRLF");
-        expect(gyro_tilt_config("speed = 30\nspeed = 360\nspeed = 045\ninvert = on\ninvert = lx ly\ncolour = red\n", &c) == 6 && c.speed == 60 && !c.invert,
+        expect(gyro_tilt_config("speed = 30\nspeed = 45\nspeed = 090\ninvert = on\ninvert = lx ly\ncolour = red\n", &c) == 6 && c.speed == 60 && !c.invert,
                "tilt.txt: other speeds, on, two axes, an unknown key: six bad lines, defaults kept");
         char text[64]; GyroTiltConfig w = {60, TILT_INVERT_LX}, r;
         gyro_tilt_config_text(&w, text, sizeof text);
