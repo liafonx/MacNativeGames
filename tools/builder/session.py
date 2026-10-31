@@ -34,6 +34,15 @@ class SettingsNotSaved:
 
 
 @dataclass(frozen=True)
+class PathsSaved:
+    """The storage tab: a path the player changed was written to settings.json now, without a build."""
+
+    game: str
+    ok: bool
+    error: str = ''
+
+
+@dataclass(frozen=True)
 class PathsIncomplete:
     missing: tuple
 
@@ -92,16 +101,6 @@ class ProcessError:
 @dataclass(frozen=True)
 class CancelStuck:
     pass
-
-
-@dataclass(frozen=True)
-class UpdateStatusReady:
-    status: object          # tools.builder.updates.UpdateStatus (S4.1)
-
-
-@dataclass(frozen=True)
-class UpdateApplied:
-    result: object          # tools.builder.updates.UpdateResult (S4.1)
 
 
 @dataclass(frozen=True)

@@ -158,7 +158,7 @@ class FakeController:
     """The BuildController methods the CLI uses. Each command queues its script, one batch of events per tick; after
     the build's batches, the controller stays busy (not idle) for saving_ticks more ticks, then becomes idle."""
 
-    def __init__(self, load=None, checks=None, build=(), saving_ticks=0):
+    def __init__(self, load=None, checks=None, build=(), saving_ticks=0, store=None):
         self.load = [[SettingsLoaded(())]] if load is None else load
         self.checks = [[ChecksDone(True)]] if checks is None else checks
         self.build, self.saving_ticks = list(build), saving_ticks
@@ -167,9 +167,11 @@ class FakeController:
         self.planned = ['/py', 'build_app.py', 'totk']
         self.tick_errors = deque()              # S2.1b: exceptions tick() raises during a build, one per call
         self.saved, self.game, self.fields = {}, None, {}       # S2.2: like the controller's selection
-        self.update_calls, self.repo_root = [], '/repo'
+        self.saved_paths_value = None                           # S2.3 storage: what saved_paths() answers
+        self.store = store                                      # S2.3: settings.json's path, for the home
+        self.repo_root = '/repo'
         self.background_calls = []                                  # S4.3
-        self.update_pending = self.background_pending = False       # S4.4b: refused like the real controller
+        self.background_pending = False       # S4.4b: refused like the real controller
         self.background_forced = False                              # a test may hold the picture "busy"
         self.start = FakeStart(self)                                # S5.1: refuses like controller_start
         self.mods = FakeMods(self)                                  # S5.2: refuses like controller_mods
@@ -185,7 +187,7 @@ class FakeController:
 
     @property
     def idle(self):
-        return not self.busy and not self.update_pending and not self.controls.holds
+        return not self.busy and not self.controls.holds
 
     def load_settings(self):
         self.calls.append('load_settings')
@@ -202,21 +204,17 @@ class FakeController:
     def selection(self):
         return self.game, dict(self.fields)
 
+    def saved_paths(self):
+        return self.saved_paths_value
+
+    def save_paths(self, **fields):
+        self.calls.append(('save_paths', fields))
+
     def games(self):
         return (('totk', 'Tears of the Kingdom'), ('botw', 'Breath of the Wild'))
 
     def path_fields(self):
         return PATH_FIELDS
-
-    def check_updates(self):                    # S4.1: recorded apart, so call-order tests keep their lists
-        self.update_calls.append('check_updates')
-
-    def apply_update(self):
-        """S4.4b: recorded first, then refused like the real one when not idle; pending until the next tick."""
-        self.update_calls.append('apply_update')
-        if not self.idle:
-            raise RuntimeError('a build is running or being prepared')
-        self.update_pending = True
 
     def background(self, action, *args):
         """S4.4b: recorded first, then refused like the real one while a change is pending (until the next tick)."""
@@ -243,7 +241,7 @@ class FakeController:
 
     def tick(self):
         self.ticks += 1
-        self.update_pending = self.background_pending = self.start.pending = self.mods.pending = False
+        self.background_pending = self.start.pending = self.mods.pending = False
         self.controls.pending = False
         if self.busy and self.tick_errors:
             raise self.tick_errors.popleft()

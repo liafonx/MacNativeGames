@@ -6,10 +6,12 @@ imports it after tkinter. The pump ticks the controller every 200 ms, hands each
 controls are enabled; it always reschedules itself. Quit signals (SIGINT, SIGHUP when the Terminal window closes,
 SIGTERM) only set exit_requested (S3.4, B1), wherever they land; the pump then cancels a running build and closes once
 it has stopped (no time limit)."""
+import os
 import subprocess
 import sys
 import time
 import tkinter as tk
+from pathlib import Path
 
 from tools.builder.gui_background import BackgroundPanel
 from tools.builder.gui_build import BuildPanel, DonePanel
@@ -19,14 +21,16 @@ from tools.builder.gui_controls import ControlsPanel
 from tools.builder.gui_exit import _tell, exit_signals, settle, wire_quit      # noqa: F401  re-exported
 from tools.builder.gui_files import FilesPanel
 from tools.builder.gui_mods import ModsPanel
+from tools.builder.gui_saves import SavesPanel
 from tools.builder.gui_settings import SettingsPanel
+from tools.builder.gui_storage import StoragePanel
 from tools.builder.gui_layout import IMAGE_TYPES, ScrollArea, TabBar, dialog_chooser, zones  # noqa: F401
 from tools.builder.gui_style import PAD, apply, muted
-from tools.builder.gui_update import UpdatePanel
+from tools.builder.gui_details import DetailsPanel
 from tools.builder.session import (BackgroundChanged, BuildStarted, CancelStuck, CheckResultReady, ChecksDone,
                                    ChecksInvalidated, Finished, GpuProbed, Heartbeat, LogLine, ModsApplied,
-                                   ModsStateReady, PathsIncomplete, PlayDone, ProcessError, SettingsLoaded,
-                                   SettingsNotSaved, StageChanged, StartStateReady, UpdateApplied, UpdateStatusReady)
+                                   ModsStateReady, PathsIncomplete, PathsSaved, PlayDone, ProcessError,
+                                   SettingsLoaded, SettingsNotSaved, StageChanged, StartStateReady)
 from tools.builder.strings import text
 
 PUMP_MS = 200
@@ -37,9 +41,20 @@ MODS_EVENTS = (ModsStateReady, ModsApplied)
 BUILD_EVENTS = (BuildStarted, StageChanged, Heartbeat, LogLine, CancelStuck, SettingsNotSaved, ProcessError)
 
 
+def home_of(controller):
+    """The home the settings file sits under (.../Library/Application Support/MacNativeGames/Builder/...), so a
+    window opened with HOME changed still finds the same caches and saves; Path.home() when there is no store."""
+    path = getattr(getattr(controller, 'store', None), 'path', None)
+    parents = Path(path).parents if path is not None else ()
+    if len(parents) > 4 and parents[2].name == 'Application Support' and parents[1].name == 'MacNativeGames':
+        return parents[4]
+    return Path.home()
+
+
 class GuiView:
-    def __init__(self, root, controller, choose, copy, opener, confirm, monotonic):
+    def __init__(self, root, controller, choose, copy, opener, confirm, monotonic, home=None):
         self.root, self.controller, self.confirm, self.monotonic = root, controller, confirm, monotonic
+        self.home = Path(home) if home is not None else home_of(controller)   # S2.3/S2.4: under home
         self._after, self._closed, self._preselect, self._loaded = None, False, None, False
         self._load_since, self._load_late = monotonic(), False
         self._close_pending, self._building = False, False
@@ -52,8 +67,8 @@ class GuiView:
         tk.Label(form, text=text('gui.title'), font=self.fonts['title']).pack(anchor='w', padx=PAD, pady=(22, 6))
         top = tk.Frame(form)
         top.pack(fill='x', padx=PAD)
-        self.updates = UpdatePanel(top, controller, self.fonts)  # S4.1: discreet, at the top
-        self.updates.frame.pack(fill='x')
+        self.details = DetailsPanel(top, controller, self.fonts)  # discreet, at the top
+        self.details.frame.pack(fill='x')
         self.tabs = TabBar(form, self.fonts['section'], self._tab)
         self.tabs.frame.pack(fill='x', padx=PAD, pady=(14, 0))
         self.footer = tk.Frame(form)                            # S4.4b, B1: packed before the body, so it always fits
@@ -65,13 +80,18 @@ class GuiView:
         self.settings = SettingsPanel(self.body, self.footer, controller, self.fonts, copy)  # S5.1
         self.mods = ModsPanel(self.body, self.footer, controller, self.fonts, choose, confirm,
                               lambda line: self.done.note(line), lambda line: self.checks.show_code(line))  # S5.4
-        self.controls = ControlsPanel(self.body, self.footer, controller, self.fonts, confirm)   # E6 S6.2
+        self.controls = ControlsPanel(self.body, self.footer, controller, self.fonts, confirm,
+                                      home=self.home)                                  # E6 S6.2
+        self.storage = StoragePanel(self.body, self.footer, controller, self.fonts, choose, confirm,
+                                    self.home, os.environ, time.time)                    # S2.3
+        self.saves = SavesPanel(self.body, self.footer, controller, self.fonts, choose, confirm,
+                                self.home, os.environ, time.time)                          # S2.4
         self.files = FilesPanel(self.body, controller, choose, self._paths_changed, self.fonts, self.area.sync)
         self.checks = ChecksPanel(self.body, self.footer, controller, copy, self.files.commit_all, self.start_build,
-                                  self._checking, self.fonts)
+                                  self._checking, self.fonts, home=self.home, choose=choose, now=time.time)
         self.build = BuildPanel(self.body, self.footer, controller, monotonic, self._show_log)
         self.done = DonePanel(self.body, self.footer, controller, opener, copy, self.new_build)
-        self.background = BackgroundPanel(root, controller, choose, self.updates.details, self.fonts)   # S4.3
+        self.background = BackgroundPanel(root, controller, choose, self.details.details, self.fonts)   # S4.3
         self.background.frame.pack(fill='x')
         self.background.canvas.grid(row=0, column=picture_column, sticky='nsew')
         self._panels = (self.files, self.checks)
@@ -79,7 +99,6 @@ class GuiView:
         self._show_problems()
         root.protocol('WM_DELETE_WINDOW', self.close)
         controller.load_settings()
-        self.updates.check()                                    # the window looks for updates on its own
         self._schedule()
 
     @property
@@ -93,11 +112,13 @@ class GuiView:
             self._tab('build')
 
     def _tab(self, name):
-        panels = (self.files, self.checks, self.build, self.done, self.settings, self.mods, self.controls)
+        panels = (self.files, self.checks, self.build, self.done, self.settings, self.mods, self.controls,
+                  self.storage, self.saves)
         for frame in [p.frame for p in panels] + [p.foot for p in panels[1:]]:
             frame.pack_forget()
         if name != 'build':                             # another tab: its panel, its footer, fresh state
-            tab = {'settings': self.settings, 'mods': self.mods, 'controls': self.controls}[name]
+            tab = {'settings': self.settings, 'mods': self.mods, 'controls': self.controls,
+                   'storage': self.storage, 'saves': self.saves}[name]
             tab.frame.pack(fill='x')
             tab.foot.pack(fill='x')
             tab.opened()
@@ -187,11 +208,12 @@ class GuiView:
 
     def on_event(self, event):
         where = event.where if isinstance(event, ProcessError) else None
-        for panel, kinds, wheres in ((self.updates, (UpdateStatusReady, UpdateApplied), ('update',)),
-                                     (self.background, (BackgroundChanged,), ('background',)),
+        for panel, kinds, wheres in ((self.background, (BackgroundChanged,), ('background',)),
                                      (self.settings, SETTINGS_EVENTS, ('settings', 'play')),
                                      (self.mods, MODS_EVENTS, ('mods',)),
-                                     (self.controls, self.controls.EVENTS, ('controls',))):
+                                     (self.controls, self.controls.EVENTS, ('controls',)),
+                                     (self.storage, self.storage.EVENTS, ()),
+                                     (self.saves, self.saves.EVENTS, ())):
             if isinstance(event, kinds) or where in wheres:
                 return panel.on_event(event)
         if isinstance(event, SettingsLoaded):
@@ -225,13 +247,11 @@ class GuiView:
         """R5: what is enabled follows the controller: nothing while it is busy (preparing, running or saving)."""
         idle = self.controller.idle
         self.files.set_busy(not idle)
-        self.updates.set_idle(idle)
         self.background.refresh()
-        for tab in (self.settings, self.mods, self.controls):
+        for tab in (self.settings, self.mods, self.controls, self.storage, self.saves):
             tab.refresh(idle)
         self._show_problems()
-        can_build = not self.updates.restart_needed             # S4.1: the old code is loaded until reopened
-        self.checks.set_enabled(self.controller.selection()[0] is not None and can_build, idle and can_build)
+        self.checks.set_enabled(self.controller.selection()[0] is not None, idle)
         self.done.set_idle(idle)
         if self._building:
             self.build.refresh()
@@ -274,6 +294,8 @@ class GuiView:
                     self.controller.cancel()
             return
         self._closed = self.files.closed = True
+        self.storage.close()
+        self.saves.close()
         self.build.stop()
         if self._after is not None:
             self.root.after_cancel(self._after)

@@ -175,7 +175,7 @@ void fps_overlay_text(const fps_overlay_info *info, char *text, size_t n) {
     else if (e && !strcmp(e, "screen") && w == big_w && h == big_h && w > 1920) res = "  screen";
     snprintf(text, n, "FPS %s%s  %s%s%s%s", fps, gen, ss, sc, info->mfx ? TOTK_UI("  MetalFX已开启", "  MetalFX on") : "", res);
 #else
-    snprintf(text, n, "FPS %s%s  %s%s%s%s", fps, gen, ss, sc, info->mfx ? TOTK_UI("  MetalFX已开启", "  MetalFX on") : "", info->big ? "  2K" : "");
+    snprintf(text, n, "FPS %s%s  %s%s%s%s", fps, gen, ss, sc, info->mfx ? TOTK_UI("  MetalFX已开启", "  MetalFX on") : "", info->big == 2 ? "  4K" : info->big ? "  2K" : "");
 #endif
 }
 

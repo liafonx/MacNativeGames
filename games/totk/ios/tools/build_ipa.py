@@ -7,6 +7,7 @@ from pathlib import Path
 from compile_seed import METAL_FLAGS
 from device_pipelines import connected_gpus
 from xcode_dir import developer_dir
+import settings_strings
 
 def settings_without_totk(root):
     """The pane for Breath of the Wild, in place: every row Root.plist marks TOTKApp=totk (its picture modes and scene
@@ -116,12 +117,15 @@ def main():
     flags=subprocess.check_output([sys.executable,ios/'tools/gen_embed.py',rewritten,gen/'embed.S','--text-dir',modules,'main','subsdk0','sdk'],text=True,env=env).strip()
     # The app's sources use version-specific patch and generated runtime tables.
     project=project_for_platform((ios/'project.yml').read_text(),a.platform)
+    # The Settings pane, copied so it can be changed for the game and given its languages (settings_strings.py: one language,
+    # the device's, instead of every row in Chinese and English).
+    settings=gen/'Settings.bundle'; shutil.rmtree(settings,ignore_errors=True); shutil.copytree(ios/'Settings.bundle',settings)
+    project=project.replace('      - Settings.bundle','      - path: Gen/Settings.bundle',1)
     if botw:   # game_patches_botw.c instead of both Tears of the Kingdom files; GAME_BOTW for the runtime and the graphics layer
         project=project.replace('          - game_patches_botw.c','          - game_patches.c\n          - game_patches_v143.c')
         project=project.replace('-I../build\n','-I../build -DGAME_BOTW=1 -DGAME_'+a.version.upper()+'=1\n')
         # The Settings pane with the Full HD switch described for this game: its docked scene is 1920x1080, not 1600x900.
         # Then the rows Root.plist marks TOTKApp=totk leave (settings_without_totk above); the Full HD row is not one.
-        settings=gen/'Settings.bundle'; shutil.rmtree(settings,ignore_errors=True); shutil.copytree(ios/'Settings.bundle',settings)
         root=plistlib.loads((settings/'Root.plist').read_bytes()); specs=root['PreferenceSpecifiers']
         at=next(i for i,s in enumerate(specs) if s.get('Key')=='TOTK_DOCKED')
         specs[at-1]['FooterText']=('開啟：遊戲的底座設定，輸出和畫面都是 1920×1080，需要較快的 iPad（M 系列）。關閉：手持 1280×720（內部 960×540）。'
@@ -129,9 +133,9 @@ def main():
                                    'Off: handheld 1280×720 (960×540 inside). Takes effect after relaunching the game')
         root=settings_without_totk(root)
         (settings/'Root.plist').write_bytes(plistlib.dumps(root))
-        project=project.replace('      - Settings.bundle','      - path: Gen/Settings.bundle',1)
     elif a.version=='v143': project=project.replace('          - loader.c','          - loader.c\n          - game_patches.c')
     else: project=project.replace('          - loader.c','          - loader.c\n          - game_patches_v143.c')
+    settings_strings.localize(settings)   # after the game's own changes to the pane
     if not botw and a.version!='v0': project=project.replace('-I../build\n','-I../build -DTOTK_GAME_'+a.version.upper()+'=1\n')
     # The home screen icon: the game's own, which the build took from its control data for the Mac app
     # (build/AppIcon.icns, scripts/extract_app_icon.py), as a single-size asset catalog. Without it the app had none.
@@ -217,12 +221,9 @@ def main():
     # list there, and the runtime reads both (nvn_mtl.m warm_start). Before 2026-10-22 they stayed in the build logs.
     lists=tree/'build/ios-seed-lists';shutil.rmtree(lists,ignore_errors=True);lists.mkdir(parents=True)
     shader_list=tree.parent/'botw/assets/shader_list.tsv' if botw else tree/'assets/shader_list.tsv'   # the work folder's copy of games/botw
-    run([sys.executable,tree/'scripts/shader_list.py','export',shader_list,lists/'pso_list.tsv',
+    # This version's rows, each variant named as the device seed serves its bind state (shader_list.py resolve).
+    run([sys.executable,tree/'scripts/shader_list.py','resolve',seed_src,shader_list,lists/'pso_list.tsv',
          lists/'pso_title.tsv'],tree,logs/'shader-list.log',env)
-    aliases=seed_src.with_name(seed_src.name+'.aliases.tsv')   # listed variants the seed carries under another name
-    if aliases.is_file():
-        run([sys.executable,tree/'scripts/shader_list.py','rename',aliases,lists/'pso_title.tsv',
-             lists/'pso_list.tsv'],tree,logs/'shader-list-rename.log',env)
     # The device's pipeline archive, compiled here (2026-10-29): the Mac game binary makes every pipeline of the lists from
     # the device seed's metallibs (pipeline-archive mode), device_pipelines.py compiles them for the device GPU with metal-tt
     # into the seed (pipelines-<arch>-*). The first start then takes them from there instead of filling its own archive:

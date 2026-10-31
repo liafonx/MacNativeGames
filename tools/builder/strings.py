@@ -23,6 +23,7 @@ EN = {
     'check.input_rules': 'Input combination',
     'check.disk_space': 'Free disk space',
     'check.output_volume': 'Output folder volume',
+    'check.keys': 'Keys file (prod.keys)',
 
     # one sentence per message id; {detail} is the check's detail
     'msg.ok': 'Ready.',
@@ -56,6 +57,9 @@ EN = {
     'reason.fonts_needed': 'this game needs the system fonts (choose a firmware folder or a shared-fonts folder)',
     'reason.botw_needs_update': 'a Breath of the Wild base NSP needs its 1.6.0 update',
     'msg.disk_space': 'Not enough free space: {detail}.',
+    'msg.keys_unreadable': 'The keys file cannot be read: {detail}.',
+    'msg.keys_invalid': 'The keys file has lines that are not "name = 32 or 64 hex digits": {detail}.',
+    'msg.keys_missing_names': 'The keys file lacks {detail}.',
     'msg.output_other_volume': 'The app goes to another volume than the work folder ({detail}); copying takes longer.',
 
     # outcomes (CANCELLED is the sentence for a cancel before anything ran; T7 covers the others)
@@ -82,6 +86,7 @@ EN = {
     'cli.fix': '        fix: {fix}',
     'cli.checks_ready': 'Checks: ready.',
     'cli.checks_blocked': 'Checks: blocked. Nothing was started.',
+    'cli.logs': '  logs: {path}',
     'cli.command': 'Command: {command}',
     'cli.prompt': 'Build now? [y/N] ',
     'cli.not_started': 'Not started.',
@@ -153,30 +158,12 @@ EN = {
     'gui.error': 'Error: {error}',
     'gui.last_lines': 'Last {n} log lines:',
     'gui.new_build': 'New build',
-    'gui.confirm_close': 'A build, an update or a mod change is running, or a build is finishing its saves. Cancel '
+    'gui.confirm_close': 'A build or a mod change is running, or a build is finishing its saves. Cancel '
                          'what can be cancelled and close the window when it has stopped?',
     'gui.confirm.yes': 'Yes',
     'gui.confirm.no': 'No',
     'gui.still_stopping': 'Still stopping the build...',
-    'gui.update.check': 'Check for updates',
-    'gui.update.update': 'Update',
-    'gui.update.checking': 'Checking for updates...',
-    'gui.update.updating': 'Updating...',
-    'gui.update.up_to_date': 'Up to date.',
-    'gui.update.follows': 'Updates come from MacNativeGames ({upstream}); this is branch {branch}.',
-    'gui.update.available': 'Update available: {waiting} new commit(s) on {upstream}.',
-    'gui.update.local_changes': 'An update is waiting, but files were changed here: update by hand (git status).',
-    'gui.update.diverged': 'An update is waiting, but {branch} has commits of its own: update by hand.',
-    'gui.update.other_branch': '{waiting} new commit(s) on MacNativeGames ({upstream}). You are on {branch}: merge '
-                               'them by hand.',
-    'gui.update.not_git': 'Not a git clone (a ZIP download?): download the new version to update.',
-    'gui.update.no_project': 'No remote points at MacNativeGames (github.com/ly05010419/MacNativeGames): nothing to '
-                             'check.',
-    'gui.update.offline': 'Could not check for updates: {detail}',
-    'gui.update.where': 'Repository: {repo}',
-    'gui.update.done': 'Updated {old} -> {new}.',
-    'gui.update.reopen': 'Close and reopen the builder, then build again: your saved paths stay.',
-    'gui.update.failed': 'The update did not run: {detail}',
+    'gui.details.where': 'Repository: {repo}',
     'gui.background.label': 'Picture:',
     'gui.background.choose': 'Choose picture...',
     'gui.background.remove': 'Remove',
