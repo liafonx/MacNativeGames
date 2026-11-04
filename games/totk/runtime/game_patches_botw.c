@@ -1112,7 +1112,6 @@ void runtime_game_patches(Module *m) {
     patch_pchtxt(m);   /* first: on a Mac the patches below check the original words they replace (the phone's code is patched at build, CODE_PATCHED_AT_BUILD) */
     if (!patch_output_res(m)) patch_render_1080(m);
     patch_phone_render(m);
-    patch_font_size(m);
 #if defined(GAME_BOTW190) || defined(GAME_BOTW160)
     patch_hd_heaps(m);
 #endif
