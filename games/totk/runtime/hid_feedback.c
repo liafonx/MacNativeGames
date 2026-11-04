@@ -80,6 +80,7 @@ static int vibration_side(const uint32_t *h) {
     static _Atomic int warned; note_once(&warned, "vibration call with a handle this controller does not have; ignored", *h);
     return -1;
 }
+void (*runtime_vr_haptic)(int side, float amp, float freq);   /* zeldaVR: the Quest controllers' vibration (gfx/nvn/totk_vr.m), set while VR runs */
 static void play(int side, const VibrationValue *v) {
     if (!v) runtime_fail("vibration value pointer");
     if (side < 0) return;
@@ -90,6 +91,8 @@ static void play(int side, const VibrationValue *v) {
                                                                          side ? "right" : "left", c.amp_low, c.freq_low, c.amp_high, c.freq_high);
     if (atomic_load(&rumble_muted)) c.amp_low = c.amp_high = 0;
     runtime_rumble_set((unsigned)side, c.amp_low, c.freq_low, c.amp_high, c.freq_high);
+    { void (*vh)(int, float, float) = __atomic_load_n(&runtime_vr_haptic, __ATOMIC_ACQUIRE);
+      if (vh) vh(side, fmaxf(c.amp_low, c.amp_high), c.amp_high > c.amp_low ? c.freq_high : c.freq_low); }
 #if TARGET_OS_IOS
     runtime_phone_rumble_set((unsigned)side, c.amp_low, c.freq_low, c.amp_high, c.freq_high);
 #endif
@@ -148,6 +151,15 @@ static uint32_t six_states(int *out, SixAxisState *s, int max, const uint32_t *h
     *out = n; return 0;
 }
 static uint32_t six_state(SixAxisState *s, const uint32_t *h) { int n; return six_states(&n, s, 1, h); }
+/* SDK 20's public forms (Donkey Kong Bananza imports nn::hid::GetSixAxisSensorStates and the others without detail::): the
+   count is the return value. With the feature off they answer as a controller without it, since their SDK code would open
+   the hid service. */
+static int six_states_public(SixAxisState *s, int max, const uint32_t *h) { int n = 0; six_states(&n, s, max, h); return n; }
+static int no_six_states(SixAxisState *s, int max, const uint32_t *h) { (void)s; (void)max; (void)h; return 0; }
+static void six_state_public(SixAxisState *s, const uint32_t *h) { int n = 0; if (six_states(&n, s, 1, h) || !n) memset(s, 0, sizeof *s); }
+static void no_six_state(SixAxisState *s, const uint32_t *h) { (void)h; memset(s, 0, sizeof *s); }
+static void no_feedback(const void *h) { (void)h; }
+static void no_vibration(const void *h, const void *v) { (void)h; (void)v; }
 static int no_handles(void *out, int max, const uint32_t *id, uint32_t style) { (void)out; (void)max; (void)id; (void)style; return 0; }
 
 /* "flag rumble 0|1", "flag gyro 0|1": 1 if the name was one of these. */
@@ -204,6 +216,15 @@ void *runtime_hid_feedback_override(const char *name) {
         {"_ZN2nn3hid6detail17StopSixAxisSensorERKNS0_19SixAxisSensorHandleE", (void *)six_stop, true},
         {"_ZN2nn3hid6detail22GetSixAxisSensorStatesEPiPNS0_18SixAxisSensorStateEiRKNS0_19SixAxisSensorHandleE", (void *)six_states, true},
         {"_ZN2nn3hid6detail21GetSixAxisSensorStateEPNS0_18SixAxisSensorStateERKNS0_19SixAxisSensorHandleE", (void *)six_state, true}};
+    static const struct { const char *name; void *on, *off; bool gyro; } sdk20[] = {
+        {"_ZN2nn3hid25InitializeVibrationDeviceERKNS0_21VibrationDeviceHandleE", (void *)vib_init, (void *)no_feedback, false},
+        {"_ZN2nn3hid18SendVibrationValueERKNS0_21VibrationDeviceHandleERKNS0_14VibrationValueE", (void *)vib_send, (void *)no_vibration, false},
+        {"_ZN2nn3hid22GetVibrationDeviceInfoEPNS0_19VibrationDeviceInfoERKNS0_21VibrationDeviceHandleE", (void *)vib_info, (void *)vib_info, false},
+        {"_ZN2nn3hid18StartSixAxisSensorERKNS0_19SixAxisSensorHandleE", (void *)six_start, (void *)no_feedback, true},
+        {"_ZN2nn3hid22GetSixAxisSensorStatesEPNS0_18SixAxisSensorStateEiRKNS0_19SixAxisSensorHandleE", (void *)six_states_public, (void *)no_six_states, true},
+        {"_ZN2nn3hid21GetSixAxisSensorStateEPNS0_18SixAxisSensorStateERKNS0_19SixAxisSensorHandleE", (void *)six_state_public, (void *)no_six_state, true}};
+    for (unsigned i = 0; i < sizeof sdk20 / sizeof *sdk20; i++)
+        if (!strcmp(name, sdk20[i].name)) return (sdk20[i].gyro ? gyro : rumble) ? sdk20[i].on : sdk20[i].off;
     for (unsigned i = 0; i < sizeof entries / sizeof *entries; i++)
         if (!strcmp(name, entries[i].name)) return (entries[i].gyro ? gyro : rumble) ? entries[i].fn : NULL;
     return NULL;

@@ -102,7 +102,10 @@ int runtime_render_res(unsigned *w, unsigned *h);   /* TOTK_RENDER_RES above 160
    Native 4K (1.4.3, an app built with native 4K: build_app.py's default on a Mac with 16 GB or more): a 3840x2160
    canvas and scene (game_patches_v143.c runtime_output_res).
    runtime_output_modes: a bit (1 << mode) for each this game and start offer; 0 when the resolution cannot change. */
-enum { OUTPUT_MODE_OFF, OUTPUT_MODE_METALFX, OUTPUT_MODE_NATIVE, OUTPUT_MODE_NATIVE_METALFX, OUTPUT_MODE_720P, OUTPUT_MODE_NATIVE_4K };
+/* OUTPUT_MODE_NATIVE_4K_METALFX (4K + MetalFX to the headset) and OUTPUT_MODE_NATIVE_6K: VR only (zeldaVR,
+   game_patches_v143.c vr_big_mode); after NATIVE_5K, whose number players' graphics-output.txt keeps. */
+enum { OUTPUT_MODE_OFF, OUTPUT_MODE_METALFX, OUTPUT_MODE_NATIVE, OUTPUT_MODE_NATIVE_METALFX, OUTPUT_MODE_720P, OUTPUT_MODE_NATIVE_4K, OUTPUT_MODE_NATIVE_5K, OUTPUT_MODE_NATIVE_4K_METALFX, OUTPUT_MODE_NATIVE_6K };
+enum { OUTPUT_MODE_LAST = OUTPUT_MODE_NATIVE_6K };
 int runtime_output_modes(void);
 int runtime_output_mode(void);
 int runtime_output_mode_set(int mode);                  /* returns 0 where that mode is not offered */
@@ -110,10 +113,12 @@ int runtime_output_native(int mode, unsigned *w, unsigned *h);   /* the canvas o
 uint64_t runtime_output_size_current(void);              /* configured canvas: width in low 32 bits, height in high 32 bits */
 void runtime_warm_progress(uint64_t done,uint64_t total,uint64_t shaders,uint64_t shader_total,uint64_t pipelines,uint64_t pipeline_total);
 void runtime_warm_done(void);
+void runtime_warm_title(void);   /* nvn_mtl.m warm_start: the title may be seen now, the rest of the warm-up behind it or done */
 void runtime_audio_hold(int on);   /* audio_mixer.c: silent output while the first frame waits for the warm-up */
 void runtime_game_slot_acquire(const char *mode);   /* runtime/game_slot.c: one game at a time */
 void *runtime_front_override(const char *name);
 int runtime_front_focus(void);
+void runtime_front_hdr_toggle(void);   /* Mac key 8: checked TOTK 1.4.3 HDR / EDR only */
 void runtime_settings_toggle(void);   /* key 1 (runtime/input.c): the settings panel opens or closes (frontend.m; nothing on the phone) */
 void fps_overlay_set_hud_mode(int mode);   /* gfx/nvn/fps_overlay.h HUD_MODE_*: the panel's overlay choice */
 int fps_overlay_hud_mode(void);
@@ -130,6 +135,7 @@ int hud_snapshot(int line, char *out, size_t n, int *highlight);   /* line 0..3:
 void *runtime_account_override(const char *name);
 
 void runtime_gfx_probe(int negative);
+void runtime_shader_seed(const char *corpus, const char *list);   /* nvn_mtl.m: seed-shaders mode (list: the shared shader list, or NULL) */
 void runtime_vpool_probe(void);
 
 void runtime_memory_probe(void);
@@ -138,18 +144,29 @@ void runtime_input_key(unsigned code,int down);   /* a window key: the player's 
 void runtime_input_mouse(int button,int down);    /* runtime/gamepad.m, mouse mode: a mouse button through the same layout */
 void runtime_keyboard_capture(int on);   /* iOS only (runtime/gamepad.m, TARGET_OS_IPHONE): a UIKit text field takes the hardware keyboard; it must not also drive the game */
 void runtime_input_clear(void);
+void runtime_input_clear_window(void);   /* focus loss: release window keys/mouse, keep physical controller input */
 uint64_t runtime_keyboard_buttons(void);   /* runtime/input.c: the Switch buttons the held keys drive now (no lock) */
 struct KeyMap;   /* runtime/keyboard_map.h */
 void runtime_keymap_get(struct KeyMap *out);       /* runtime/input.c: the keyboard and mouse layout in force */
 void runtime_keymap_set(const struct KeyMap *map); /* in force at once, saved in keyboard.txt (the settings panel) */
 void runtime_keymap_reset(void);                   /* the default layout, keyboard.txt removed */
+int runtime_graphics_initialized(void);   /* nv::InitializeGraphics has run on the host (runtime/gfx_bridge.c) */
+void *runtime_ns2_override(const char *name);
+void *runtime_offline_override(const char *name);   /* runtime/offline_host.c: nifm and the console identity of an offline host (GAME_NS2) */
+void *runtime_ns2_codec_override(const char *name);
+void *runtime_ns2_audio_out_override(const char *name);
+void *runtime_ns2_opus_ms_override(const char *name);   /* nn::codec Opus multistream (runtime/ns2_opus_ms.c, GAME_NS2) */   /* nn::audio AudioOut (runtime/ns2_audio_out.c, GAME_NS2) */   /* nn::codec video and sync point events (runtime/ns2_codec.c, GAME_NS2) */   /* Switch 2 SDK calls (runtime/ns2_host.c, GAME_NS2 builds only) */
 int runtime_handheld_mode(void);   /* TOTK_OPERATION_MODE=handheld (runtime/services.c) */
 void *runtime_input_override(const char *name);
 typedef struct { uint64_t buttons; int32_t lx,ly,rx,ry; int connected; } RuntimeGamepadState;
 void runtime_gamepad_start(void);
+int runtime_gamepad_background_enabled(void);   /* Mac: saved opt-in; default off */
+void runtime_gamepad_background_set(int on);    /* main thread: apply and save */
+void runtime_gamepad_focus(int on);             /* Mac window focus, independent of the guest's focus state */
 void runtime_gamepad_switch_left(void *controller, int x, int y);
 void runtime_gamepad_switch_right(void *controller, int x, int y);
 void runtime_gamepad_read(RuntimeGamepadState *out);
+extern int (*runtime_vr_pad)(int plain, uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);   /* zeldaVR: set by gfx/nvn/totk_vr.m while VR runs (the Quest 3 controllers) */
 /* Mac software keyboard: exclusive controller capture; UI reads physical positions (controller_map.h),
    independent of gameplay remaps. Main-thread only. Closing waits for release before gameplay resumes. */
 void runtime_gamepad_text_capture(int on);

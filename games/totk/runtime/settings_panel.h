@@ -1,8 +1,8 @@
 /* The settings panel (Mac; included by frontend.m): key 1 opens and closes it (runtime/input.c), Esc and its close
-   button close it. User 2026-10-25: it replaces the shortcut keys 2-7 and their reminder box. PR #1210: three
-   pages (Display, Input, Key bindings) chosen by the tabs at the top, or L1 / R1 on a controller; the version in the
-   bottom-left corner instead of the overlay box; no key hints at the bottom. One row per setting, a pop-up menu, a switch
-   or a slider, each applied at once:
+   button close it. User 2026-10-25: it replaces the shortcut keys 2-7 and their reminder box. PR #1210: the pages
+   (Display, Input, User, Effects, Key bindings, Update) are chosen by the tabs at the top, or L1 / R1 on a controller;
+   the version in the bottom-left corner instead of the overlay box; no key hints at the bottom. One row per setting, a
+   pop-up menu, a switch or a slider, each applied at once:
    Display
      overlay              all / FPS + playtime / off               fps_overlay_set_hud_mode (gfx/nvn/fps_overlay.c)
      FPS graph            switch, default on                 fps-graph.txt above the game's folder (both games)
@@ -19,15 +19,9 @@
                                                              the window takes that shape at once, its height kept
                                                              (runtime_front_resize_aspect; user 2026-10-25: no fitting the
                                                              window any more); TOTK_ASPECT's ratio is offered too
-     edge smoothing       switch                             taa_set (gfx/nvn/totk_taa.m)
-     ambient occlusion    off / 1.5x / 2x / 3x, default off  dm_gfx_ssao_* (gfx/nvn/totk_ssao.h, PR #1316), saved in ssao.txt
-                                                             (off or the strength and radius in percent); Tears of the
-                                                             Kingdom 1.4.3 and Breath of the Wild 1.9.0 only. Its shaders
-                                                             are always the patched ones on the Mac (off: the stock AO,
-                                                             bit for bit), so every choice acts at once (user 2026-10-30);
-                                                             TOTK_SSAO / _STRENGTH / _RADIUS decide first (greyed out)
    Input
      controller type      auto / Xbox / PlayStation / Switch runtime_gamepad_type_set (gamepad.m), saved
+     background controller switch, default off              runtime_gamepad_background_set, controller-background.txt
      DualSense bow trigger switch                            runtime_triggers_choose (gamepad_feedback.m), saved in
                                                              dualsense-triggers.txt; Breath of the Wild 1.9.0 and Tears of
                                                              the Kingdom 1.4.3 only; TOTK_DUALSENSE_TRIGGERS or an agent's
@@ -42,12 +36,67 @@
                                                              switches first, TOTK_RUMBLE_GAIN the strength (the row greyed
                                                              out); a device the run started without comes at the next
                                                              launch (its title says so)
+   Effects (user 2026-10-30, after UltraCam's render distance and shader switches; the rows from FOV on are Tears of the
+   Kingdom 1.4.3's, greyed on other versions; "Reset to defaults" at the bottom right sets every row back to the game's own
+   and removes its file, a row the environment decides staying)
+     edge smoothing       switch                             taa_set (gfx/nvn/totk_taa.m)
+     anisotropic filtering off / 2x / 4x / 8x / 16x          dm_gfx_aniso_set (gfx/nvn/nvn_mtl.m: the samplers made again),
+                                                             at once; graphics-aniso.txt; TOTK_ANISO first
+     ambient occlusion    off / 1.5x / 2x / 3x, default off  dm_gfx_ssao_* (gfx/nvn/totk_ssao.h, PR #1316), saved in ssao.txt
+                                                             (off or the strength and radius in percent); Tears of the
+                                                             Kingdom 1.2.1 / 1.4.3 and Breath of the Wild 1.9.0 only. Its shaders
+                                                             are always the patched ones on the Mac (off: the stock AO,
+                                                             bit for bit), so every choice acts at once (user 2026-10-30);
+                                                             TOTK_SSAO / _STRENGTH / _RADIUS decide first (greyed out)
+     shadow resolution    as the game has it / 2048 per       Breath of the Wild 1.9.0 (PR #1447): runtime_shadow_res_save
+                          cascade                            (game_patches_botw.c, botw_shadow_res.h), shadows.txt (off or
+                                                             2048); the game sizes the map once, so the choice is the next
+                                                             launch's (its title says so); TOTK_SHADOW_RES decides first
+     model detail distance 1x / 2x / 4x / 10x / 20x / 50x / runtime_lod_scale_set (game_patches_v143.c): the level of
+                                                             detail a model gets at a distance is the one it had at
+     100x                                                    1/K of it; graphics-lod.txt (x100); TOTK_LOD_SCALE first
+     render distance      1x .. 10x                          runtime_far_scale_set: the camera's far plane x K (user
+                                                             2026-10-30: larger, not smaller; the game's 25000 already
+                                                             spans the map); graphics-far.txt (percent); TOTK_FAR_SCALE
+                                                             first
+     field of view        0.8x .. 1.5x                       runtime_fov_scale_set: the game camera's vertical FOV
+                                                             (its zooms scale too); graphics-fov.txt (x100)
+     field of view        1x .. 1.5x                         Breath of the Wild 1.9.0: runtime_fov_scale_set
+                                                             (game_patches_botw.c, botw_fov.h: the main camera's vertical
+                                                             FOV x K at its setFovy call, at once; tried in play); graphics-fov.txt, x100
+     model detail distance also "always the finest" (graphics-lod.txt "max": the level a model has up close)
+     shadow resolution    off / 1x (800) / 2x / 3x / 4x      runtime_shadow_scale_set (game_patches_v143.c: the cascades'
+                                                             size x K where the game works it out); off = the effect
+                                                             switch "shadow" (totk_ssao.h); graphics-shadow.txt (x100)
+     FXAA anti-aliasing   switch                             dm_gfx_fxaa_set (gfx/nvn/totk_finish.h); graphics-fxaa.txt
+                                                             (Breath of the Wild 1.9.0: gfx/nvn/botw_finish.h; greyed while
+                                                             MetalFX replaces its FXAA / upscale draw)
+     depth of field       switch                             runtime_dof_set (game_patches_v143.c: no DOF request stored
+                                                             while off; events still complete); graphics-dof.txt
+     sharpening           off / 25% / 50% / 75% / 100%       dm_gfx_sharpen_set: FSR 1 RCAS on the 3D picture;
+                                                             graphics-sharpen.txt (percent); Breath of the Wild 1.9.0: on
+                                                             the canvas before the UI (gfx/nvn/botw_finish.h)
+     one switch per effect                                   dm_gfx_fx_set (gfx/nvn/totk_fx.h): its passes left out while
+                                                             off; graphics-effects.txt lists the ones that are off;
+                                                             Breath of the Wild 1.9.0: ambient occlusion (botw_effects.h)
+   User (runtime/users.h, docs/users.md; the save area is named after the user's id, so another user
+   plays on their own saves; a running game keeps its user)
+     user this run        fixed (greyed)                     runtime_users_active: the user this run opened with
+                                                             the game opened with, as on a console
+     user                 pop-up of the users,               runtime_users_choose: names the user the next launch opens
+                          from the next launch               with (at most 8, as on a console)
+     Add User… (bottom    the game's text bar                runtime_front_text_input takes the name (at most 10
+     right)               takes the name                     characters), runtime_users_add keeps it; the panel closes
+                                                             while the bar is up and comes back after
    Key bindings: one row per game action with two keyboard and mouse inputs (keyboard_map.h, runtime_keymap_set: in force
    at once, saved in keyboard.txt) and the controller buttons that drive it (controller_map.h, runtime_controller_map_set:
    controls.txt). Click a box, then press a key or a mouse button (key 1 cancels; Command keys stay the system's) or, in
    the controller column, a controller button; with a controller, pick a row and press A, then the new button. An input
    another action holds swaps places with this box's. Right-click clears a box. Two buttons reset the keyboard and mouse,
    or the controller, to the default (the file removed). A capture ends after 6 seconds without input.
+   Update (PR #1404; user 2026-10-31): the version, and that it is the newest or each newer commit's message; an Update
+   button that closes the game, updates the app from its checkout and opens it again, or why it cannot and how to update
+   the code and build again by hand (update_tab.h, app/auto_update.h).
    On the display page, at the right of the bottom line, two buttons (user 2026-10-25): contribute the shaders and pipelines
    the shared list lacks (sent with gh in the background when it is signed in, as the launcher's reminder does; else the
    GitHub form opens and Finder shows the file), and star the project (its GitHub page); their results show for a few
@@ -60,13 +109,31 @@
 #include "../third_party/d2r_gfx/gfx/nvn/totk_shader_contrib.h"   /* the contribution file, TOTK_REPO_URL */
 #include "contrib_submit.h"   /* gh_path, contrib_submit (shared with app/launcher.m) */
 #include "aspect_math.h"     /* aspect_near, ASPECT_GAME */
+#include "../zeldaVR/runtime/vr_camera.h"   /* runtime_camera_distance_*: 1.4.3's camera hook, a default elsewhere */
 #include "keyboard_map.h"    /* the keyboard and mouse layout */
 #include "controller_map.h"  /* the controller layout */
 #include "feedback_settings.h"   /* feedback_word: ssao.txt */
+#include "users.h"           /* the local users (runtime/account.c): the User page */
 
 void dm_gfx_set_flag(const char *name, int value);
 void dm_gfx_ssao_start(int pct); int dm_gfx_ssao_locked(void); int dm_gfx_ssao_live(void); void dm_gfx_ssao_set(int pct);   /* totk_ssao.h */
+void dm_gfx_aniso_start(int n); int dm_gfx_aniso_locked(void); int dm_gfx_aniso(void); void dm_gfx_aniso_set(int n);   /* gfx/nvn/nvn_mtl.m */
+#ifdef GAME_BOTW190
+int runtime_shadow_res_available(void); int runtime_shadow_res_locked(void); int runtime_shadow_res_saved(void);
+void runtime_shadow_res_save(int size);   /* game_patches_botw.c */
+double runtime_fov_scale(void); void runtime_fov_scale_set(double k); int runtime_fov_scale_locked(void); int runtime_fov_available(void);
+#endif
 void nvn_fps_lock_set(int fps);   /* gfx/nvn/hle_nvn.c: the shared totk_fps_limits choices */
+#ifdef TOTK_GAME_V143   /* the effects page: its shader keys and patch sites are 1.4.3's */
+int dm_gfx_fx_count(void); const char *dm_gfx_fx_id(int i); const char *dm_gfx_fx_name(int i, int english);   /* totk_fx.h */
+int dm_gfx_fx_available(int i); int dm_gfx_fx_on(int i); void dm_gfx_fx_set(int i, int on);
+double runtime_lod_scale(void); void runtime_lod_scale_set(double k); int runtime_lod_scale_locked(void);   /* game_patches_v143.c */
+double runtime_far_scale(void); void runtime_far_scale_set(double k); int runtime_far_scale_locked(void);
+double runtime_fov_scale(void); void runtime_fov_scale_set(double k); int runtime_fov_scale_locked(void); int runtime_fov_available(void);
+double runtime_shadow_scale(void); void runtime_shadow_scale_set(double k); int runtime_shadow_scale_locked(void);
+void runtime_dof_set(int on); int runtime_dof_on(void);   /* game_patches_v143.c */
+void dm_gfx_fxaa_set(int on); int dm_gfx_fxaa_on(void); void dm_gfx_sharpen_set(int pct); int dm_gfx_sharpen(void);   /* gfx/nvn/totk_finish.h */
+#endif
 int nvn_fps_lock(void);
 
 /* Picking a resolution sizes the window to it at once (user 2026-10-25): 720p 1280x720, 1080p 1920x1080, MetalFX 2560x1440, native its own size (2K), 2K + MetalFX and native 4K 3840x2160, in the window's points as the first window (frontend.m runtime_front_run), the picture's shape kept
@@ -75,7 +142,8 @@ static void settings_window_for(int mode) {
  if(!window||(window.styleMask&NSWindowStyleMaskFullScreen))return;
  unsigned w=1920,h=1080;
  if(mode==OUTPUT_MODE_METALFX){w=2560;h=1440;}
- else if(mode==OUTPUT_MODE_NATIVE_METALFX||mode==OUTPUT_MODE_NATIVE_4K){w=3840;h=2160;}
+ else if(mode==OUTPUT_MODE_NATIVE_METALFX||mode==OUTPUT_MODE_NATIVE_4K||mode==OUTPUT_MODE_NATIVE_4K_METALFX||mode==OUTPUT_MODE_NATIVE_6K){w=3840;h=2160;}
+ else if(mode==OUTPUT_MODE_NATIVE_5K){w=5120;h=2880;}
  else if(mode==OUTPUT_MODE_720P){w=1280;h=720;}
  else if(mode==OUTPUT_MODE_NATIVE&&!runtime_output_native(mode,&w,&h)){w=1920;h=1080;}
  double ratio=runtime_aspect_ratio()>0?runtime_aspect_ratio():(double)w/h;
@@ -112,7 +180,7 @@ static void settings_save_frame(void) {
 }
 /* Ambient occlusion (PR #1316): ssao.txt holds off or the strength and radius in percent, read before the guest starts
    because the shaders are patched as they load. The levels the row offers; a hand-written percent is kept too. */
-#if defined(TOTK_GAME_V143) || defined(GAME_BOTW190)
+#if defined(TOTK_GAME_V143) || defined(GAME_BOTW190) || defined(TOTK_GAME_V121)
 #define SETTINGS_SSAO 1
 #endif
 static int settingsSsao;   /* the saved choice: 0 off, else percent */
@@ -125,20 +193,58 @@ static void settings_ssao_restore(void) {
  settingsSsao=(int)pct;dm_gfx_ssao_start(settingsSsao);
 #endif
 }
+/* A number from a setting file, within lo..hi (1.4.3's graphics rows; Breath of the Wild 1.9.0's sharpening, PR #1637). */
+static inline int settings_read_number(const char *name, double lo, double hi, double *value) {
+ char word[32],*end;if(!runtime_setting_word(name,word,sizeof word))return 0;
+ double d=strtod(word,&end);while(*end==' '||*end=='\n'||*end=='\r'||*end=='\t')end++;
+ if(end==word||*end||!(d>=lo&&d<=hi))return 0;*value=d;return 1;
+}
+/* The effects page: graphics-effects.txt holds the ids of the effects that are off, one word each ("none" when all are
+   on); graphics-lod.txt the model detail distance x100, graphics-far.txt the render distance in percent (0.1 to 100). */
+#ifdef TOTK_GAME_V143
+/* "Always the finest": a factor no distance in the map reaches, so a model keeps the level it has up close. */
+#define SETTINGS_LOD_MAX 1e6
+static void settings_effects_save(void) {
+ char line[512]="";size_t n=0;
+ for(int i=0;i<dm_gfx_fx_count();i++)if(!dm_gfx_fx_on(i))n+=(size_t)snprintf(line+n,sizeof line-n,"%s%s",n?" ":"",dm_gfx_fx_id(i));
+ runtime_setting_save("graphics-effects.txt",n?line:"none","effects");
+}
+static void settings_effects_restore(void) {
+ char line[512];
+ if(runtime_setting_word("graphics-effects.txt",line,sizeof line))
+  for(char *w=strtok(line," \t\r\n");w;w=strtok(NULL," \t\r\n"))
+   for(int i=0;i<dm_gfx_fx_count();i++)if(!strcmp(w,dm_gfx_fx_id(i)))dm_gfx_fx_set(i,0);
+ double d;char word[16];
+ if(!runtime_lod_scale_locked()&&runtime_setting_word("graphics-lod.txt",word,sizeof word)&&!strncmp(word,"max",3))runtime_lod_scale_set(SETTINGS_LOD_MAX);
+ else if(!runtime_lod_scale_locked()&&settings_read_number("graphics-lod.txt",100,10000,&d))runtime_lod_scale_set(d/100);
+ if(!runtime_fov_scale_locked()&&settings_read_number("graphics-fov.txt",50,200,&d))runtime_fov_scale_set(d/100);
+ if(!runtime_shadow_scale_locked()&&settings_read_number("graphics-shadow.txt",25,800,&d))runtime_shadow_scale_set(d/100);
+ if(runtime_setting_word("graphics-fxaa.txt",word,sizeof word)&&!strncmp(word,"off",3))dm_gfx_fxaa_set(0);
+ if(settings_read_number("graphics-sharpen.txt",0,100,&d))dm_gfx_sharpen_set((int)d);
+ if(runtime_setting_word("graphics-dof.txt",word,sizeof word)&&!strncmp(word,"off",3))runtime_dof_set(0);
+ if(!runtime_far_scale_locked()&&settings_read_number("graphics-far.txt",0.1,1000,&d))runtime_far_scale_set(d/100);
+}
+#elif defined(GAME_BOTW190)
+static void settings_effects_restore(void);   /* botw_effects.h */
+#else
+static void settings_effects_restore(void) {}
+#endif
 static void settings_restore_begin(void) {
  int v;char word[32];
  if(settings_read_int("graphics-overlay.txt",&v)&&v<=HUD_MODE_MINIMAL)fps_overlay_set_hud_mode(v);
  if(!getenv("TOTK_MFX")&&runtime_setting_word("graphics-frame.txt",word,sizeof word)){
   int n=0;char tail=0;
   if(sscanf(word,"lock-%d %c",&n,&tail)==1&&(n>0&&totk_fps_limit_valid(n))){dm_gfx_set_flag("mfx_interp",MFX_OFF);nvn_fps_lock_set(n);}
-  else if(sscanf(word,"interp-%d %c",&n,&tail)==1&&n>=MFX_30&&n<=MFX_MAX){nvn_fps_lock_set(0);dm_gfx_set_flag("mfx_interp",n);}
+  else if(sscanf(word,"interp-%d %c",&n,&tail)==1&&n>=MFX_30&&n<MFX_NMODES){nvn_fps_lock_set(0);dm_gfx_set_flag("mfx_interp",n);}
   else if(!strcmp(word,"off")||!strcmp(word,"off\n")){nvn_fps_lock_set(0);dm_gfx_set_flag("mfx_interp",MFX_OFF);}
  }
  if(!getenv("TOTK_TAA")&&settings_read_int("graphics-taa.txt",&v)&&(v==0||v==1))taa_set(v);
  settings_ssao_restore();
+ if(!dm_gfx_aniso_locked()&&settings_read_int("graphics-aniso.txt",&v)&&v<=16)dm_gfx_aniso_start(v);
+ settings_effects_restore();
  const char *output=getenv("TOTK_OUTPUT_RES");
  if((!output||!*output||!strcmp(output,"auto"))&&!getenv("TOTK_MFX_OUTPUT")&&!getenv("TOTK_MFX_UPSCALE")&&
-    settings_read_int("graphics-output.txt",&v)&&v<=OUTPUT_MODE_NATIVE_4K)settingsPendingOutput=v;
+    settings_read_int("graphics-output.txt",&v)&&v<=OUTPUT_MODE_LAST)settingsPendingOutput=v;
  if(!getenv("TOTK_ASPECT")&&runtime_setting_word("graphics-aspect.txt",word,sizeof word)){
   char *end;float ratio=strtof(word,&end);while(*end==' '||*end=='\n'||*end=='\r'||*end=='\t')end++;
   if(end!=word&&!*end&&isfinite(ratio)&&ratio>=0.5f&&ratio<=8)settingsPendingAspect=ratio;
@@ -168,7 +274,11 @@ static void settings_restore_start(void) {
  [NSRunLoop.mainRunLoop addTimer:settingsRestoreTimer forMode:NSRunLoopCommonModes];
 }
 
-enum { SETTINGS_PAGE_DISPLAY, SETTINGS_PAGE_INPUT, SETTINGS_PAGE_BINDINGS, SETTINGS_PAGES };
+/* The pages, in tab order. A page added here is counted in perPage (the panel height), given its tab, and its rows a
+   SETTINGS_PAGE_* below. VR (zeldaVR) is last and only there while VR is on (settings_pages). */
+enum { SETTINGS_PAGE_DISPLAY, SETTINGS_PAGE_INPUT, SETTINGS_PAGE_USERS, SETTINGS_PAGE_EFFECTS, SETTINGS_PAGE_BINDINGS, SETTINGS_PAGE_UPDATE, SETTINGS_PAGE_VR, SETTINGS_PAGES };
+int vr_enabled(void);   /* zeldaVR/gfx/totk_vr.m: a headset link was asked for (TOTK_VR_CONTROL) */
+static int settings_pages(void){return vr_enabled()?SETTINGS_PAGES:SETTINGS_PAGE_VR;}
 static void settings_refresh_all(void);
 static void settings_rebuild(void);
 static void settings_pointer_used(void);
@@ -180,7 +290,7 @@ static void settings_pointer_used(void);
 @property(copy) void (^set)(int value);
 @property(copy) NSString *(^firstTitle)(void);   /* a first choice whose text changes (auto: the controller it sees) */
 @property int sliderMin, sliderMax;              /* a slider when sliderMax > sliderMin */
-@property NSInteger page;                        /* SETTINGS_PAGE_DISPLAY or SETTINGS_PAGE_INPUT */
+@property NSInteger page;                        /* SETTINGS_PAGE_DISPLAY, _INPUT, _EFFECTS or _VR */
 @property(strong) NSControl *control;
 @property(strong) NSTextField *valueLabel;       /* a slider's value */
 -(BOOL)slider;
@@ -209,6 +319,8 @@ static void settings_pointer_used(void);
 @end
 
 static NSString *settings_text(const char *zh, const char *en) { return @(TOTK_UI(zh, en)); }
+static void settings_user_added(NSString *name);   /* the User page's add: runs after the global panel is made again */
+#define SETTINGS_HDR_ROWS 2   /* the effects page's HDR rows on 1.4.3 when HDR is available (settings_hdr_rows; PR #1129) */
 static TOTKSettingRow *settings_row(NSString *title, NSArray<NSString *> *choices, NSArray<NSNumber *> *values,
                                     int (^get)(void), void (^set)(int)) {
  TOTKSettingRow *r=[TOTKSettingRow new];r.title=title;r.choices=choices;r.values=values;r.get=get;r.set=set;return r;
@@ -262,6 +374,97 @@ static NSString *settings_pad_auto_text(void) {
  return settings_text("自动（未接手柄）","Auto (no controller)");
 }
 
+/* VR settings (zeldaVR; user 2026-10-26: "放在一个新设置 叫 vr设置里 可以选这几种分辨率"), shown while VR is on
+   (TOTK_VR_CONTROL): the per-eye size the streamer sends to the headset. Picking one restarts the streamer the game
+   runs (TOTK_VR_STREAMER) and the headset reconnects in a few seconds. Measured on a Quest 3: 1344x1408 and 1680x1760
+   hold 72 Hz (about 81 ms); 1920x2048 is sharper at about 60 Hz and 120 ms; 2048x2208 (user 2026-10-26: "增加 2048×2208")
+   the sharpest, its H.264 encode takes about 41 ms a frame (vr开发.md). */
+int vr_enabled(void);
+int vr_streamer_managed(void);
+void vr_resolution(int *w, int *h);
+int vr_set_resolution(int w, int h);
+int vr_first_person(void);
+void vr_set_first_person(int on);
+int vr_offset_cm(int axis);
+void vr_set_offset_cm(int axis, int cm);
+int vr_mirror_mode(void);
+void vr_set_mirror_mode(int on);
+int vr_quest_view(void);
+void vr_set_quest_view(int on);
+int vr_quest_zoom(void);
+void vr_set_quest_zoom(int x);
+int vr_eye_spring_ms(void);
+void vr_set_eye_spring_ms(int ms);
+int vr_afr(void);
+void vr_set_afr(int on);
+int vr_ipd_pct(void);
+void vr_set_ipd_pct(int pct);
+int vr_6dof(void);
+void vr_set_6dof(int on);
+int vr_snap_ms(void);
+void vr_set_snap_ms(int ms);
+int vr_motion(void);
+void vr_set_motion(int on);
+/* Third-person camera distance (zeldaVR, user 2026-10-26: "在第三人称 时候 调整 摄像机距离 ... 在设置里 我可以设置"):
+   1.4.3's camera hook (game_patches_v143.c) moves the camera along its view; with VR and without. Other versions have
+   no hook: the row is left out (runtime_camera_distance_available, ../zeldaVR/runtime/vr_camera.h). */
+/* Link's head (zeldaVR, user 2026-10-26: "第一人称 我希望 去掉头", "先做到 第三人称里 头是去掉 或者隐藏 这样方便调试"): the
+   graphics layer leaves the head's meshes out of the picture, not out of the shadows (nvn_mtl.m vr_head_mesh). Auto:
+   while VR's first person puts the camera in his head. */
+int vr_hide_head_mode(void) __attribute__((weak_import));
+void vr_set_hide_head_mode(int m) __attribute__((weak_import));
+static void settings_camera_rows(NSMutableArray<TOTKSettingRow *> *rows) {
+ if(vr_hide_head_mode&&vr_set_hide_head_mode)
+  [rows addObject:settings_row(settings_text("林克的头","Link's head"),
+   @[settings_text("自动（第一人称时隐藏）","Auto (hidden in first person)"),settings_text("隐藏","Hidden"),settings_text("显示","Shown")],@[@-1,@1,@0],
+   ^int{return vr_hide_head_mode();},^(int v){vr_set_hide_head_mode(v);})];
+ if(!runtime_camera_distance_available())return;
+ [rows addObject:settings_row(settings_text("摄像机距离（第三人称）","Camera distance (third person)"),
+  @[settings_text("默认","Default"),settings_text("近 1 米","1 m closer"),settings_text("近 2 米","2 m closer"),settings_text("近 3 米","3 m closer"),
+    settings_text("近 4 米","4 m closer"),settings_text("近 5 米","5 m closer")],   /* user 2026-10-26: "改成 近1m 近2m 近3m 近4m 近5m" */
+  @[@0,@-100,@-200,@-300,@-400,@-500],^int{return runtime_camera_distance_cm();},^(int v){runtime_camera_distance_set(v);})];
+}
+static void settings_vr_rows(NSMutableArray<TOTKSettingRow *> *rows) {
+ if(!vr_enabled())return;
+ [rows addObject:settings_row(settings_text("VR 设置 · 视角","VR · view"),@[settings_text("第一人称","First person"),settings_text("第三人称","Third person")],@[@1,@0],
+  ^int{return vr_first_person();},^(int v){vr_set_first_person(v);})];
+ /* the camera's spring on the head, ms (user 2026-11-02: "用 弹性 解决" the shaking; 0: bound rigidly) */
+ {TOTKSettingRow *r=settings_row(settings_text("第一人称镜头弹性（毫秒，0 = 绑死）","First person camera spring (ms, 0 = rigid)"),nil,nil,^int{return vr_eye_spring_ms();},^(int v){vr_set_eye_spring_ms(v);});
+  r.sliderMin=0;r.sliderMax=300;[rows addObject:r];}
+ /* The camera's position (user 2026-10-29: "可以改变 摄像头 上下前后左右 位置 ，方便我 实时调整"): -100..100 cm each, from where
+    the game's camera faces, applied while dragging (totk_vr.m vr_set_offset_cm, kept in vr-offset.txt). */
+ NSArray<NSString *> *axes=@[settings_text("摄像头 上下（厘米）","Camera up / down (cm)"),settings_text("摄像头 前后（厘米）","Camera forward / back (cm)"),
+  settings_text("摄像头 左右（厘米）","Camera right / left (cm)")];
+ for(int a=0;a<3;a++){TOTKSettingRow *r=settings_row(axes[(NSUInteger)a],nil,nil,^int{return vr_offset_cm(a);},^(int v){vr_set_offset_cm(a,v);});
+  r.sliderMin=-100;r.sliderMax=100;[rows addObject:r];}
+ /* What the Mac window shows (user 2026-10-29: "屏幕 显示 类似vr 那种 两个屏幕"): both eyes as the headset gets them, or the game's picture. */
+ /* "显示 Quest 画面" (user 2026-10-30: "桌面显示 和 quest里面 一样的画面 设置里加一个 按钮 叫 显示quest画面"): the Mac window shows
+    both eyes; on, each inside its lens opening as in the headset; off, uncovered ("就是 不遮挡状态"). */
+ [rows addObject:settings_row(settings_text("显示 Quest 画面","Show the Quest view"),nil,nil,^int{return vr_quest_view();},^(int v){vr_set_quest_view(v);})];
+ /* ... each eye's middle 2..10 times larger then (user 2026-10-30: "设置里可以调 2倍 到 10 倍") */
+ {TOTKSettingRow *r=settings_row(settings_text("Quest 画面放大（倍）","Quest view zoom (x)"),nil,nil,^int{return vr_quest_zoom();},^(int v){vr_set_quest_zoom(v);});
+  r.sliderMin=2;r.sliderMax=10;[rows addObject:r];}
+ /* The head's position (6DoF) and snap turning ("按建议 都做", 2026-10-30, after BotW BetterVR and UEVR). */
+ [rows addObject:settings_row(settings_text("头部位置（6DoF：探身、下蹲）","Head position (6DoF: lean, crouch)"),nil,nil,^int{return vr_6dof();},^(int v){vr_set_6dof(v);})];
+ [rows addObject:settings_row(settings_text("立体（左右眼轮流渲染）","Stereo (the eyes rendered in turn)"),nil,nil,^int{return vr_afr();},^(int v){vr_set_afr(v);})];
+ {TOTKSettingRow *r=settings_row(settings_text("立体 · 两眼间距（%）","Stereo · eye distance (%)"),nil,nil,^int{return vr_ipd_pct();},^(int v){vr_set_ipd_pct(v);});
+  r.sliderMin=30;r.sliderMax=200;[rows addObject:r];}
+ [rows addObject:settings_row(settings_text("体感操作（挥剑、举盾、拉弓、手势）","Motion controls (swing, shield, bow, gestures)"),nil,nil,^int{return vr_motion();},^(int v){vr_set_motion(v);})];
+ [rows addObject:settings_row(settings_text("转身方式","Turning"),@[settings_text("平滑","Smooth"),settings_text("分段（小）","Snap (small)"),settings_text("分段（中）","Snap (medium)"),settings_text("分段（大）","Snap (large)")],
+  @[@0,@120,@200,@300],^int{return vr_snap_ms();},^(int v){vr_set_snap_ms(v);})];
+ static const int sizes[][2]={{1344,1408},{1680,1760},{1920,2048},{2048,2208}};
+ NSArray<NSString *> *names=@[settings_text("1344×1408（流畅，72 帧）","1344×1408 (smooth, 72 Hz)"),
+  settings_text("1680×1760（推荐，72 帧）","1680×1760 (recommended, 72 Hz)"),
+  settings_text("1920×2048（更清楚，约 60 帧）","1920×2048 (sharper, about 60 Hz)"),
+  settings_text("2048×2208（最清楚，约 54 帧）","2048×2208 (sharpest, about 54 Hz)")];
+ NSString *title=settings_text("VR 设置 · 分辨率（每眼）","VR · resolution (per eye)");
+ if(!vr_streamer_managed()){int w=0,h=0;vr_resolution(&w,&h);
+  [rows addObject:settings_fixed(title,w>0?[NSString stringWithFormat:@"%d×%d",w,h]:settings_text("未连接","not connected"))];return;}
+ [rows addObject:settings_row(title,names,@[@0,@1,@2,@3],^int{int w=0,h=0;vr_resolution(&w,&h);
+   for(int i=0;i<4;i++)if(sizes[i][0]==w&&sizes[i][1]==h)return i;return -1;},
+  ^(int v){if(v>=0&&v<4)vr_set_resolution(sizes[v][0],sizes[v][1]);})];
+}
+
 /* Ambient occlusion: off, or the shadow pre-pass's AO with strength and radius both scaled (1.5x is the PR's tested
    level), applied at once. A run whose shaders carry no parameters (TOTK_SSAO=0) shows its one value. */
 static TOTKSettingRow *settings_ssao_row(void) {
@@ -280,6 +483,178 @@ static TOTKSettingRow *settings_ssao_row(void) {
   if(v)settings_save_int("ssao.txt",v,"ambient occlusion");else runtime_setting_save("ssao.txt","off","ambient occlusion");});
 #endif
 }
+/* The effects page: the two distances (1.4.3), then a switch per effect (a greyed "not in this version" when the game's
+   shaders are not the ones the switches know). */
+#ifdef TOTK_GAME_V143
+static TOTKSettingRow *settings_distance_row(int lod) {
+ NSString *t=lod?settings_text("模型细节距离（LOD）","Model detail distance (LOD)"):settings_text("渲染距离","Render distance");
+ /* the row's values: the factor x100 for the detail distance, x1000 for the render distance (0.1% = 1) */
+ double unit=lod?100:1000;
+ int (^current)(void)=^int{double k=lod?runtime_lod_scale():runtime_far_scale();return lod&&k>=SETTINGS_LOD_MAX?-1:(int)lround(k*unit);};
+ int now=current();
+ NSString *(^text)(int)=^NSString *(int v){
+  if(v<0)return settings_text("始终最高精度","Always the finest");
+  if(v==unit)return settings_text("1×（游戏原样）","1x (as the game has it)");
+  return [NSString stringWithFormat:@"%g×",v/unit];};
+ if(lod?runtime_lod_scale_locked():runtime_far_scale_locked())return settings_fixed(t,text(now));
+ NSMutableArray<NSNumber *> *values=[(lod?@[@100,@200,@400,@1000,@2000,@5000,@10000,@-1]:@[@1000,@2000,@3000,@4000,@5000,@6000,@7000,@8000,@9000,@10000]) mutableCopy];
+ if(![values containsObject:@(now)])[values addObject:@(now)];
+ NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
+ return settings_row(t,choices,values,current,^(int v){
+  if(lod&&v<0){runtime_lod_scale_set(SETTINGS_LOD_MAX);runtime_setting_save("graphics-lod.txt","max","model detail distance");}
+  else if(lod){runtime_lod_scale_set(v/100.0);settings_save_int("graphics-lod.txt",v,"model detail distance");}
+  else{char word[16];snprintf(word,sizeof word,"%g",v/10.0);runtime_far_scale_set(v/1000.0);runtime_setting_save("graphics-far.txt",word,"render distance");}});
+}
+/* The game camera's field of view, in hundredths of the game's own (its zooms scale with it). */
+static TOTKSettingRow *settings_fov_row(void) {
+ NSString *t=settings_text("视野（FOV）","Field of view (FOV)");
+ NSString *(^text)(int)=^NSString *(int v){return v==100?settings_text("1×（游戏原样）","1x (as the game has it)"):[NSString stringWithFormat:@"%g×",v/100.0];};
+ int now=(int)lround(runtime_fov_scale()*100);
+ if(runtime_fov_scale_locked())return settings_fixed(t,text(now));
+ if(!runtime_fov_available())return settings_fixed(t,settings_text("游戏原样（Vert+ 开着）","As the game has it (Vert+ is on)"));
+ NSMutableArray<NSNumber *> *values=[@[@80,@90,@100,@110,@120,@130,@140,@150] mutableCopy];
+ if(![values containsObject:@(now)])[values addObject:@(now)];
+ NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
+ return settings_row(t,choices,values,^int{return (int)lround(runtime_fov_scale()*100);},^(int v){runtime_fov_scale_set(v/100.0);settings_save_int("graphics-fov.txt",v,"field of view");});
+}
+/* The sun's shadows: off (the effect switch "shadow": the shadow term lit) or their maps' resolution, x1 being the game's
+   800 x 800 per cascade; graphics-shadow.txt holds the resolution (x100), graphics-effects.txt whether they are off. */
+static int settings_fx_index(const char *id) { for(int i=0;i<dm_gfx_fx_count();i++)if(!strcmp(dm_gfx_fx_id(i),id))return i; return -1; }
+static TOTKSettingRow *settings_shadow_row(void) {
+ NSString *t=settings_text("阴影分辨率","Shadow resolution");int fx=settings_fx_index("shadow");
+ NSString *(^text)(int)=^NSString *(int v){
+  if(!v)return settings_text("关（无阴影）","Off (no shadows)");
+  if(v==100)return settings_text("1×（游戏原样 800）","1x (as the game has it, 800)");
+  return [NSString stringWithFormat:@"%g×（%d）",v/100.0,v*8];};
+ int (^current)(void)=^int{return fx>=0&&!dm_gfx_fx_on(fx)?0:(int)lround(runtime_shadow_scale()*100);};
+ if(runtime_shadow_scale_locked())return settings_fixed(t,text(current()));
+ NSMutableArray<NSNumber *> *values=[@[@0,@100,@200,@300,@400] mutableCopy];
+ if(fx<0||!dm_gfx_fx_available(fx))[values removeObject:@0];
+ if(![values containsObject:@(current())])[values addObject:@(current())];
+ NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
+ return settings_row(t,choices,values,current,^(int v){
+  if(fx>=0&&dm_gfx_fx_available(fx))dm_gfx_fx_set(fx,v!=0);
+  if(v){runtime_shadow_scale_set(v/100.0);settings_save_int("graphics-shadow.txt",v,"shadow resolution");}
+  settings_effects_save();});
+}
+/* HDR / EDR (PR #1129, the RenoDX approach; Mac, 1.4.3): the switch and the game's brightness (its white in SDR-white
+   units). hdr.txt holds on / off; each tone-mapping value its own hdr-<name>.txt (totk_hdr.h lists all thirteen; the
+   others, peak (0: the display's headroom), UI white, exposure, ..., are set in their files; the page has no room). Off leaves every shader, pipeline and texture as without HDR (nvn_mtl.m keeps both compose shaders).
+   Frame interpolation shows SDR MetalFX frames, so turning HDR on turns it off (and picking it turns HDR off). */
+static TOTKSettingRow *settings_hdr_choice(int which,NSString *title,const int *milli,int n,NSString *(^text)(int)){
+ int (^current)(void)=^int{return (int)lroundf(front_hdr_parameter(which)*1000);};
+ NSMutableArray<NSNumber *> *values=[NSMutableArray array];for(int i=0;i<n;i++)[values addObject:@(milli[i])];
+ if(![values containsObject:@(current())])[values addObject:@(current())];   /* a hand-written value is kept */
+ NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
+ return settings_row(title,choices,values,current,^(int v){front_hdr_parameter_save(which,v/1000.0f);});
+}
+static void settings_hdr_rows(NSMutableArray<TOTKSettingRow *> *rows){
+ [rows addObject:settings_row(settings_text("HDR / EDR","HDR / EDR"),nil,nil,^int{return front_hdr_enabled();},^(int v){
+  if(v&&mfx_requested()!=MFX_OFF){dm_gfx_set_flag("mfx_interp",MFX_OFF);settings_save_frame();}
+  runtime_front_hdr_set(v);})];
+ static const int white[]={500,750,1000,1500,2000};
+ [rows addObject:settings_hdr_choice(TOTK_HDR_GAME_WHITE,settings_text("HDR 游戏亮度","HDR game brightness"),white,5,^NSString *(int v){
+  return [NSString stringWithFormat:@"%g×",v/1000.0];})];
+}
+static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {
+ NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray arrayWithObjects:settings_fov_row(),settings_distance_row(1),settings_distance_row(0),settings_shadow_row(),nil];
+ /* FXAA (the game's edge smoothing of the 3D picture) and sharpening (FSR 1 RCAS on the 3D picture, not the UI) */
+ [rows addObject:settings_row(settings_text("FXAA 抗锯齿","FXAA anti-aliasing"),nil,nil,^int{return dm_gfx_fxaa_on();},^(int v){
+  dm_gfx_fxaa_set(v);runtime_setting_save("graphics-fxaa.txt",v?"on":"off","FXAA");})];
+ [rows addObject:settings_row(settings_text("景深","Depth of field"),nil,nil,^int{return runtime_dof_on();},^(int v){
+  runtime_dof_set(v);runtime_setting_save("graphics-dof.txt",v?"on":"off","depth of field");})];
+ [rows addObject:settings_row(settings_text("锐化","Sharpening"),@[settings_text("关（游戏原样）","Off (as the game has it)"),@"25%",@"50%",@"75%",@"100%"],@[@0,@25,@50,@75,@100],
+  ^int{return dm_gfx_sharpen();},^(int v){dm_gfx_sharpen_set(v);settings_save_int("graphics-sharpen.txt",v,"sharpening");})];
+ for(int i=0;i<dm_gfx_fx_count();i++){
+  if(!strcmp(dm_gfx_fx_id(i),"shadow"))continue;   /* in the shadow resolution row */
+  NSString *t=@(TOTK_UI(dm_gfx_fx_name(i,0),dm_gfx_fx_name(i,1)));
+  if(!dm_gfx_fx_available(i)){[rows addObject:settings_fixed(t,settings_text("这个版本没有","Not in this version"))];continue;}
+  [rows addObject:settings_row(t,nil,nil,^int{return dm_gfx_fx_on(i);},^(int v){dm_gfx_fx_set(i,v);settings_effects_save();})];
+ }
+ if(totk_hdr_available())settings_hdr_rows(rows);
+ return rows;
+}
+#else
+static TOTKSettingRow *settings_botw_shadow_row(void);   /* below: Breath of the Wild 1.9.0's, greyed elsewhere */
+static TOTKSettingRow *settings_botw_fov_row(void);      /* below: Breath of the Wild 1.9.0's, greyed elsewhere */
+#ifdef GAME_BOTW190
+#include "botw_effects.h"   /* Breath of the Wild 1.9.0's page: the effect switches its shaders allow (PR #1602) */
+#else
+static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {   /* other versions: the page says so */
+ NSString *none=settings_text("这个版本没有","Not in this version");
+ return @[settings_botw_shadow_row(),settings_fixed(settings_text("景深","Depth of field"),none),settings_botw_fov_row(),settings_fixed(settings_text("FXAA 抗锯齿","FXAA anti-aliasing"),none),settings_fixed(settings_text("锐化","Sharpening"),none),settings_fixed(settings_text("模型细节距离（LOD）","Model detail distance (LOD)"),none),settings_fixed(settings_text("渲染距离","Render distance"),none),
+          settings_fixed(settings_text("效果开关","Effect switches"),none)];
+}
+#endif
+#endif
+/* Anisotropic filtering: off (the game's 1x) to 16x for the material textures, in force at once (dm_gfx_aniso_set makes
+   the game's samplers again with the new level). */
+static TOTKSettingRow *settings_aniso_row(void) {
+ NSString *t=settings_text("各向异性过滤","Anisotropic filtering");
+ NSString *(^text)(int)=^NSString *(int v){return v<=1?settings_text("关（游戏原样）","Off (as the game has it)"):[NSString stringWithFormat:@"%d×",v];};
+ if(dm_gfx_aniso_locked())return settings_fixed(t,text(dm_gfx_aniso()));
+ return settings_row(t,@[text(0),text(2),text(4),text(8),text(16)],@[@0,@2,@4,@8,@16],^int{return dm_gfx_aniso()<=1?0:dm_gfx_aniso();},^(int v){
+  dm_gfx_aniso_set(v);settings_save_int("graphics-aniso.txt",v,"anisotropic filtering");});
+}
+/* The effects page's "Reset to defaults" (user 2026-10-30): every row of the page back to the game's own, its file removed;
+   a row the environment decides stays. */
+static void settings_effects_reset(void) {
+ if(!getenv("TOTK_TAA")){taa_set(0);runtime_setting_remove("graphics-taa.txt");}
+#ifdef SETTINGS_SSAO
+ if(!dm_gfx_ssao_locked()&&dm_gfx_ssao_live()){settingsSsao=0;dm_gfx_ssao_set(0);runtime_setting_remove("ssao.txt");}
+#endif
+ if(!dm_gfx_aniso_locked()){dm_gfx_aniso_set(0);runtime_setting_remove("graphics-aniso.txt");}
+#ifdef TOTK_GAME_V143
+ if(!runtime_fov_scale_locked())runtime_fov_scale_set(1);
+ if(!runtime_lod_scale_locked())runtime_lod_scale_set(1);
+ if(!runtime_far_scale_locked())runtime_far_scale_set(1);
+ if(!runtime_shadow_scale_locked())runtime_shadow_scale_set(1);
+ dm_gfx_fxaa_set(1);dm_gfx_sharpen_set(0);runtime_dof_set(1);
+ for(int i=0;i<dm_gfx_fx_count();i++)if(!dm_gfx_fx_on(i))dm_gfx_fx_set(i,1);
+ for(const char *const *f=(const char *const[]){"graphics-fov.txt","graphics-lod.txt","graphics-far.txt","graphics-fxaa.txt","graphics-sharpen.txt","graphics-effects.txt","graphics-shadow.txt","graphics-dof.txt",NULL};*f;f++)
+  runtime_setting_remove(*f);
+#endif
+#ifdef GAME_BOTW190
+ if(runtime_shadow_res_available()&&!runtime_shadow_res_locked()){runtime_shadow_res_save(0);runtime_setting_remove("shadows.txt");}
+ if(runtime_fov_available()&&!runtime_fov_scale_locked()){runtime_fov_scale_set(1);runtime_setting_remove("graphics-fov.txt");}
+ settings_botw_effects_reset();
+#endif
+ fprintf(stderr,"[totk] settings: the effects page back to the defaults\n");
+}
+/* Sun shadows (Breath of the Wild 1.9.0, botw_shadow_res.h): the game's sizes or 2048 per cascade. The game sizes its map
+   once, at the start, so the row shows and saves the next launch's choice, never this run's. Where the patch does not act
+   (the iOS export's run) the row offers nothing to save. On the effects page of the other versions (TOTK 1.4.3 has its own). */
+#ifndef TOTK_GAME_V143
+static TOTKSettingRow *settings_botw_shadow_row(void) {
+ NSString *t=settings_text("阴影分辨率","Shadow resolution");
+#ifndef GAME_BOTW190
+ return settings_fixed(t,settings_text("这个版本没有","Not in this version"));
+#else
+ if(!runtime_shadow_res_available())return settings_fixed(t,settings_text("这个版本没有","Not in this version"));
+ if(runtime_shadow_res_locked())return settings_fixed(t,settings_text("由 TOTK_SHADOW_RES 设置","Set by TOTK_SHADOW_RES"));
+ t=[t stringByAppendingString:settings_text("（下次启动生效）"," (from the next launch)")];
+ return settings_row(t,@[settings_text("游戏原样","As the game has it"),settings_text("2048（每级）","2048 per cascade")],@[@0,@2048],
+  ^int{return runtime_shadow_res_saved();},^(int v){runtime_shadow_res_save(v);});
+#endif
+}
+/* The field of view (Breath of the Wild 1.9.0, botw_fov.h): as 1.4.3's row, in hundredths of the game's own, at once; from
+   1x up only (1x to 1.5x is the useful range, PR #1575). A file or TOTK_FOV_SCALE value outside it is still shown. */
+static TOTKSettingRow *settings_botw_fov_row(void) {
+ NSString *t=settings_text("视野（FOV）","Field of view (FOV)");
+#ifndef GAME_BOTW190
+ return settings_fixed(t,settings_text("这个版本没有","Not in this version"));
+#else
+ if(!runtime_fov_available())return settings_fixed(t,settings_text("这个版本没有","Not in this version"));
+ NSString *(^text)(int)=^NSString *(int v){return v==100?settings_text("1×（游戏原样）","1x (as the game has it)"):[NSString stringWithFormat:@"%g×",v/100.0];};
+ int now=(int)lround(runtime_fov_scale()*100);
+ if(runtime_fov_scale_locked())return settings_fixed(t,text(now));
+ NSMutableArray<NSNumber *> *values=[@[@100,@110,@120,@130,@140,@150] mutableCopy];
+ if(![values containsObject:@(now)])[values addObject:@(now)];
+ NSMutableArray<NSString *> *choices=[NSMutableArray array];for(NSNumber *v in values)[choices addObject:text(v.intValue)];
+ return settings_row(t,choices,values,^int{return (int)lround(runtime_fov_scale()*100);},^(int v){runtime_fov_scale_set(v/100.0);settings_save_int("graphics-fov.txt",v,"field of view");});
+#endif
+}
+#endif
 static NSArray<TOTKSettingRow *> *settings_rows(void) {
  NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray array];
  /* Display */
@@ -300,17 +675,22 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
  else { [rows addObject:settings_row(settings_text("锁帧","Frame lock"),lockChoices,lockValues,
   ^int{return nvn_fps_lock();},^(int v){nvn_fps_lock_set(v);if(v)dm_gfx_set_flag("mfx_interp",MFX_OFF);settings_save_frame();})]; }
  [rows addObject:settings_row(settings_text("补帧（MetalFX）","Frame interpolation (MetalFX)"),
-  @[settings_on_off(0),@"30+30",@"40+40",@"50+50",settings_text("不限帧","Unlimited")],
-  @[@(MFX_OFF),@(MFX_30),@(MFX_40),@(MFX_50),@(MFX_MAX)],
-  ^int{return mfx_requested();},^(int v){dm_gfx_set_flag("mfx_interp",v);if(v!=MFX_OFF)nvn_fps_lock_set(0);settings_save_frame();})];
+  @[settings_on_off(0),@"30+30",@"40+40",@"50+50",@"60+60",settings_text("不限帧","Unlimited")],
+  @[@(MFX_OFF),@(MFX_30),@(MFX_40),@(MFX_50),@(MFX_60),@(MFX_MAX)],
+  ^int{return mfx_requested();},^(int v){dm_gfx_set_flag("mfx_interp",v);if(v!=MFX_OFF)nvn_fps_lock_set(0);settings_save_frame();
+   if(v!=MFX_OFF&&front_hdr_enabled())runtime_front_hdr_set(0);})];   /* interpolated frames are SDR: HDR goes off (PR #1129) */
  int modes=runtime_output_modes();
  NSMutableArray<NSString *> *res=[NSMutableArray array];NSMutableArray<NSNumber *> *resModes=[NSMutableArray array];
- static const int order[]={OUTPUT_MODE_720P,OUTPUT_MODE_OFF,OUTPUT_MODE_METALFX,OUTPUT_MODE_NATIVE,OUTPUT_MODE_NATIVE_METALFX,OUTPUT_MODE_NATIVE_4K};
+ static const int order[]={OUTPUT_MODE_720P,OUTPUT_MODE_OFF,OUTPUT_MODE_METALFX,OUTPUT_MODE_NATIVE,OUTPUT_MODE_NATIVE_METALFX,OUTPUT_MODE_NATIVE_4K,OUTPUT_MODE_NATIVE_5K,
+  OUTPUT_MODE_NATIVE_4K_METALFX,OUTPUT_MODE_NATIVE_6K};   /* the last two: VR only (game_patches_v143.c vr_big_mode) */
  for(unsigned i=0;i<sizeof order/sizeof *order;i++){
   int m=order[i];if(!(modes&1<<m))continue;unsigned nw=0,nh=0;runtime_output_native(m,&nw,&nh);
   [res addObject:m==OUTPUT_MODE_720P?@"720p":m==OUTPUT_MODE_OFF?@"1080p":m==OUTPUT_MODE_METALFX?settings_text("1080p + MetalFX 放大","1080p + MetalFX upscaling"):
    m==OUTPUT_MODE_NATIVE_METALFX?settings_text("2K + MetalFX 放大（4K 屏）","2K + MetalFX upscaling (4K screens)"):
+   m==OUTPUT_MODE_NATIVE_5K?settings_text("原生 5K（5120×2880）","Native 5K (5120×2880)"):
    m==OUTPUT_MODE_NATIVE_4K?settings_text("原生 4K（3840×2160）","Native 4K (3840×2160)"):
+   m==OUTPUT_MODE_NATIVE_4K_METALFX?settings_text("4K + MetalFX 8K","4K + MetalFX 8K"):
+   m==OUTPUT_MODE_NATIVE_6K?settings_text("原生 6K（约 20 帧）","Native 6K (about 20 fps)"):
    nw==2560&&nh==1440?settings_text("2K（2560×1440）","2K (2560×1440)"):
    [NSString stringWithFormat:@(TOTK_UI("原生 %u×%u","Native %u×%u")),nw,nh]];
   [resModes addObject:@(m)];}
@@ -329,15 +709,14 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
   [rows addObject:settings_row(aspect,choices,values,^int{
     float now=runtime_aspect_ratio();for(NSUInteger i=0;i<ratios.count;i++)if(aspect_near(now,ratios[i].doubleValue))return (int)i;return -1;},
    ^(int v){float r=ratios[(NSUInteger)v].floatValue;settingsPendingAspect=0;if(runtime_aspect_set_ratio(r)){runtime_front_resize_aspect(r);char word[32];snprintf(word,sizeof word,"%.8g",r);runtime_setting_save("graphics-aspect.txt",word,"aspect ratio");}})];}
- [rows addObject:settings_row(settings_text("边缘平滑（MetalFX 时间性）","Edge smoothing (MetalFX Temporal)"),nil,nil,
-  ^int{return taa_enabled();},^(int v){taa_set(v);settings_save_int("graphics-taa.txt",v,"edge smoothing");})];
- [rows addObject:settings_ssao_row()];
  NSUInteger display=rows.count;
  /* Input */
  TOTKSettingRow *pad=settings_row(settings_text("手柄类型","Controller type"),@[settings_pad_auto_text(),@"Xbox",@"PlayStation",@"Switch"],
   @[@(GAMEPAD_TYPE_AUTO),@(GAMEPAD_TYPE_XBOX),@(GAMEPAD_TYPE_PLAYSTATION),@(GAMEPAD_TYPE_SWITCH)],
   ^int{return runtime_gamepad_type(NULL);},^(int v){runtime_gamepad_type_set(v);});
  pad.firstTitle=^NSString *{return settings_pad_auto_text();};[rows addObject:pad];
+ [rows addObject:settings_row(settings_text("后台手柄输入","Controller input in background"),nil,nil,
+  ^int{return runtime_gamepad_background_enabled();},^(int v){runtime_gamepad_background_set(v);})];
  NSString *bow=settings_text("DualSense 拉弓扳机（R2）","DualSense bow trigger (R2)");
  if(!runtime_triggers_available())[rows addObject:settings_fixed(bow,settings_text("这个版本没有","Not in this version"))];
  else if(runtime_triggers_locked())[rows addObject:settings_fixed(bow,settings_on_off(runtime_triggers_choice()))];
@@ -348,7 +727,39 @@ static NSArray<TOTKSettingRow *> *settings_rows(void) {
  [rows addObject:settings_feedback_row(0)];
  [rows addObject:settings_gain_row()];
  [rows addObject:settings_feedback_row(1)];
- for(NSUInteger i=0;i<rows.count;i++)rows[i].page=i<display?SETTINGS_PAGE_DISPLAY:SETTINGS_PAGE_INPUT;
+ NSUInteger input=rows.count;
+ /* User (runtime/users.h, docs/users.md): the user this run opened with, and the one the next launch gets — the save
+    area is named after the user's id, so another user plays on their own saves. A running game keeps its user. */
+ RuntimeUser usersAll[RUNTIME_USERS_MAX],usersMe,usersNext;
+ int usersCount=runtime_users_get(usersAll,RUNTIME_USERS_MAX);
+ int usersMeOk=!runtime_users_active(&usersMe);runtime_users_next(&usersNext);
+ NSMutableArray<NSString *> *userNames=[NSMutableArray array];NSMutableArray<NSNumber *> *userIndex=[NSMutableArray array];
+ int userPicked=0;
+ for(int i=0;i<usersCount;i++){
+  [userNames addObject:@(usersAll[i].name)];[userIndex addObject:@(i)];
+  if(usersAll[i].lo==usersNext.lo&&usersAll[i].hi==usersNext.hi)userPicked=i;
+ }
+ [rows addObject:settings_fixed(settings_text("本次运行的用户","User this run"),usersMeOk?@(usersMe.name):settings_text("（无）","(none)"))];
+ [rows addObject:settings_row(settings_text("用户（下次启动生效）","User (from the next launch)"),userNames,userIndex,
+  ^int{return userPicked;},^(int v){runtime_users_choose(v);
+   /* the list's order does not change, but the pick does: the row is made again with the new one in force */
+   dispatch_async(dispatch_get_main_queue(),^{settings_rebuild();});})];
+ NSUInteger users=rows.count;
+ /* Effects (user 2026-10-30: edge smoothing, stronger AO and anisotropy moved here from the display page) */
+ [rows addObject:settings_row(settings_text("边缘平滑（MetalFX 时间性）","Edge smoothing (MetalFX Temporal)"),nil,nil,
+  ^int{return taa_enabled();},^(int v){taa_set(v);settings_save_int("graphics-taa.txt",v,"edge smoothing");})];
+ [rows addObject:settings_ssao_row()];
+ [rows addObject:settings_aniso_row()];
+ [rows addObjectsFromArray:settings_effect_rows()];
+ for(NSUInteger i=0;i<rows.count;i++)rows[i].page=i<display?SETTINGS_PAGE_DISPLAY:i<input?SETTINGS_PAGE_INPUT:i<users?SETTINGS_PAGE_USERS:SETTINGS_PAGE_EFFECTS;
+ if(vr_enabled()){   /* zeldaVR, its own page: the game's render resolution again (the display page's setting), camera, VR settings */
+  NSUInteger vr=rows.count;
+  if(res.count>=2)[rows addObject:settings_row(settings_text("游戏渲染分辨率","Game render resolution"),res,resModes,
+   ^int{return runtime_output_mode();},^(int v){settingsPendingOutput=-1;if(runtime_output_mode_set(v)){settings_window_for(v);settings_save_int("graphics-output.txt",v,"resolution");}})];
+  settings_camera_rows(rows);
+  settings_vr_rows(rows);
+  for(NSUInteger i=vr;i<rows.count;i++)rows[i].page=SETTINGS_PAGE_VR;
+ }
  return rows;
 }
 
@@ -457,11 +868,14 @@ static NSString *settings_pad_text(int action, const uint16_t *map, int family) 
 @property double repeatAt;
 @property(strong) NSTimer *timer;
 @property NSPoint grab;   /* where in the panel the drag started */
+@property BOOL dragging;   /* the press being dragged was the panel's own */
 @property(strong) NSSegmentedControl *tabs;
 @property(strong) NSArray<NSView *> *pages;
 @property(strong) NSTextField *versionLabel;   /* the bottom-left corner */
 @property(strong) NSArray<NSButton *> *displayButtons;   /* the display page: contribute shaders, star the project */
+@property(strong) NSArray<NSButton *> *userButtons;   /* the user page: add a user */
 @property(strong) NSArray<NSButton *> *resetButtons;   /* the key bindings page: keyboard and mouse, controller */
+@property(strong) NSArray<NSButton *> *effectsButtons; /* the effects page: reset to defaults */
 @property(strong) NSMutableArray<TOTKBindingButton *> *bindingButtons;
 @property(strong) NSMutableArray<NSView *> *bindingTargets;   /* rows with controller buttons, then the reset buttons */
 @property(strong) NSTextField *padHeader;
@@ -478,6 +892,7 @@ static NSString *settings_pad_text(int action, const uint16_t *map, int family) 
 @property(strong) NSButton *listToggle;   /* "Show as list" / "Show drawings" */
 @property(strong) NSArray<NSNumber *> *padOrder;   /* the controller buttons a controller moves through on the drawing */
 @property(strong) id clickMonitor;   /* any click in the panel hides the controller's highlight */
+@property(strong) NSMutableArray<NSView *> *updatePageTargets;   /* the 更新 page's buttons (update_tab.h) */
 -(void)selectPage:(NSInteger)page;
 -(void)controllerPad:(RuntimeGamepadState)pad time:(double)now active:(BOOL)active;
 -(void)controllerHighlight;
@@ -494,6 +909,8 @@ static NSString *settings_pad_text(int action, const uint16_t *map, int family) 
 @implementation TOTKBindingButton
 -(void)rightMouseDown:(NSEvent *)e{(void)e;if(self.enabled)[self.panel clearBinding:self];}
 @end
+
+#include "update_tab.h"   /* the 更新 page */
 
 /* Where the player dragged the panel (user 2026-10-25: it can be moved), as the fraction of the free room left and below
    it, so a new opening and a resized window keep the spot; -1 = centred. The page shown last opens again. */
@@ -522,10 +939,12 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
        SETTINGS_CELL_W = 118, SETTINGS_CELL_GAP = 6, SETTINGS_BIND_ROW_H = 28, SETTINGS_SECTION_H = 24 };
 -(instancetype)init{
  NSArray<TOTKSettingRow *> *rows=settings_rows();
- NSUInteger perPage[2]={0,0};for(TOTKSettingRow *r in rows)perPage[r.page]++;
+ /* The tallest page decides the panel's height (the key bindings page has its own drawing). */
+ NSUInteger perPage[SETTINGS_PAGES]={0};for(TOTKSettingRow *r in rows)perPage[r.page]++;
+ NSUInteger most=perPage[SETTINGS_PAGE_VR];for(NSUInteger i=0;i<SETTINGS_PAGE_BINDINGS;i++)most=MAX(most,perPage[i]);
  /* The rows close up (down to 24 pt, 2 pt apart: a 26 pt menu then meets the next one's edge) when the panel would not fit the window (21:9 or 32:9 on a laptop
     screen), so its title, close button, tabs and first rows stay in view. */
- CGFloat n=MAX(perPage[0],perPage[1]),rowH=SETTINGS_ROW_H,gap=SETTINGS_GAP,room=window?window.contentView.bounds.size.height-8:CGFLOAT_MAX;
+ CGFloat n=most,rowH=SETTINGS_ROW_H,gap=SETTINGS_GAP,room=window?window.contentView.bounds.size.height-8:CGFLOAT_MAX;
  if(n&&SETTINGS_TOP+n*(rowH+gap)-gap+SETTINGS_BOTTOM>room){gap=2;rowH=fmax(24,floor((room-SETTINGS_TOP-SETTINGS_BOTTOM+gap)/n-gap));}
  /* The key bindings drawings need a wider, taller panel (PR #1210); it is made at that size while they are shown. */
  BOOL drawings=settings_drawings_for(g_settings_page);
@@ -541,11 +960,13 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  title.textColor=NSColor.whiteColor;title.frame=NSMakeRect(18,h-38,300,24);[self addSubview:title];
  NSButton *close=[NSButton buttonWithTitle:@"✕" target:self action:@selector(close:)];close.bordered=NO;close.refusesFirstResponder=YES;
  close.font=[NSFont systemFontOfSize:15 weight:NSFontWeightBold];close.contentTintColor=NSColor.whiteColor;close.frame=NSMakeRect(W-40,h-40,28,28);[self addSubview:close];
- NSSegmentedControl *tabs=[NSSegmentedControl segmentedControlWithLabels:@[settings_text("画面","Display"),settings_text("输入","Input"),settings_text("按键设置","Key bindings")]
+ NSArray<NSString *> *tabNames=@[settings_text("画面","Display"),settings_text("输入","Input"),settings_text("用户","User"),settings_text("画面效果","Effects"),settings_text("按键设置","Key bindings"),settings_text("更新","Update")];
+ if(vr_enabled())tabNames=[tabNames arrayByAddingObject:@"VR"];
+ NSSegmentedControl *tabs=[NSSegmentedControl segmentedControlWithLabels:tabNames
   trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(tabChanged:)];
  tabs.segmentDistribution=NSSegmentDistributionFillEqually;tabs.refusesFirstResponder=YES;tabs.frame=NSMakeRect(14,h-80,W-28,26);[self addSubview:tabs];self.tabs=tabs;
  NSMutableArray<NSView *> *pages=[NSMutableArray array];
- for(NSInteger p=0;p<2;p++){
+ NSView *(^rowPage)(NSInteger)=^NSView *(NSInteger p){   /* the pages of rows: display, input, effects and (zeldaVR) VR */
   NSView *page=[[NSView alloc] initWithFrame:NSMakeRect(0,SETTINGS_BOTTOM,W,body)];NSUInteger k=0;
   for(TOTKSettingRow *r in rows){
    if(r.page!=p)continue;
@@ -564,10 +985,13 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
     pop.enabled=r.set!=nil;r.control=pop;}
    r.control.refusesFirstResponder=YES;r.control.target=r;r.control.action=@selector(changed:);[band addSubview:r.control];
   }
-  [self addSubview:page];[pages addObject:page];
- }
+  [self addSubview:page];return page;
+ };
+ for(NSInteger p=0;p<SETTINGS_PAGE_BINDINGS;p++)[pages addObject:rowPage(p)];
  NSRect bindingsFrame=NSMakeRect(0,SETTINGS_BOTTOM,W,body);
  NSView *bindings=drawings?[self drawingsPageWithFrame:bindingsFrame]:[self bindingsPageWithFrame:bindingsFrame];[self addSubview:bindings];[pages addObject:bindings];
+ NSView *update=[self updatePageWithFrame:bindingsFrame];[self addSubview:update];[pages addObject:update];
+ if(vr_enabled())[pages addObject:rowPage(SETTINGS_PAGE_VR)];
  self.pages=pages;
  /* The bottom line: the version on the left (PR #1210; the overlay keeps it too, user 2026-10-25); the reset buttons on the right
     of the key bindings page. */
@@ -588,6 +1012,15 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  for(NSButton *b in @[contrib,star]){b.controlSize=NSControlSizeSmall;b.font=[NSFont systemFontOfSize:11];b.refusesFirstResponder=YES;[b sizeToFit];
   b.frame=NSMakeRect(0,5,b.frame.size.width,24);b.wantsLayer=YES;[self addSubview:b];}
  self.displayButtons=@[star,contrib];
+ NSButton *resetEffects=[NSButton buttonWithTitle:settings_text("恢复默认","Reset to defaults") target:self action:@selector(resetEffects:)];
+ resetEffects.controlSize=NSControlSizeSmall;resetEffects.font=[NSFont systemFontOfSize:11];resetEffects.refusesFirstResponder=YES;[resetEffects sizeToFit];
+ resetEffects.frame=NSMakeRect(0,5,resetEffects.frame.size.width,24);resetEffects.wantsLayer=YES;[self addSubview:resetEffects];
+ self.effectsButtons=@[resetEffects];
+ /* The user page's bottom right: name a new user in the game's text bar. */
+ NSButton *addUser=[NSButton buttonWithTitle:settings_text("添加用户…","Add User…") target:self action:@selector(addUser:)];
+ addUser.controlSize=NSControlSizeSmall;addUser.font=[NSFont systemFontOfSize:11];addUser.refusesFirstResponder=YES;[addUser sizeToFit];
+ addUser.frame=NSMakeRect(0,5,addUser.frame.size.width,24);addUser.wantsLayer=YES;[self addSubview:addUser];
+ self.userButtons=@[addUser];
  [self selectPage:g_settings_page];[self refresh];
  __weak TOTKSettingsPanel *weak=self;
  self.clickMonitor=[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDown|NSEventMaskRightMouseDown handler:^NSEvent *(NSEvent *e){
@@ -647,7 +1080,7 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
 -(void)tabChanged:(NSSegmentedControl *)tabs{[self selectPage:tabs.selectedSegment];}
 -(void)selectPage:(NSInteger)page{
  [self endCapture];
- page=page<0?0:page>=SETTINGS_PAGES?SETTINGS_PAGES-1:page;
+ page=page<0?0:page>=settings_pages()?settings_pages()-1:page;
  /* the drawings need the panel made at their size: it is made again on the next turn of the run loop (not under this
     method's feet), on that page */
  if(settings_drawings_for(page)!=self.drawings){g_settings_page=page;dispatch_async(dispatch_get_main_queue(),^{settings_rebuild();});return;}
@@ -656,6 +1089,7 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray array];
  for(TOTKSettingRow *r in self.allRows)if(r.page==page)[rows addObject:r];
  self.rows=rows;self.controllerIndex=0;
+ if(page==SETTINGS_PAGE_UPDATE)[self showUpdatePage];   /* a check (update_tab.h) */
  [self layoutFooter];[self updateTargets];[self refreshBindings];
  [self.bindingsScroll.documentView scrollPoint:NSZeroPoint];   /* the list from its top (moving with a controller scrolls) */
  [self.window makeFirstResponder:self.window.contentView];   /* key 1 and Esc keep reaching the window */
@@ -664,8 +1098,10 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
    reset of the device shown (both resets with the list). */
 -(void)layoutFooter{
  BOOL bindings=self.page==SETTINGS_PAGE_BINDINGS;
- NSArray<NSButton *> *shown=self.page==SETTINGS_PAGE_DISPLAY?self.displayButtons:!bindings?@[]:self.drawings?@[self.resetButtons[g_settings_bindings_device?1:0],self.listToggle]:@[self.resetButtons[1],self.resetButtons[0],self.listToggle];
- for(NSButton *b in [@[self.resetButtons[0],self.resetButtons[1],self.listToggle] arrayByAddingObjectsFromArray:self.displayButtons])b.hidden=![shown containsObject:b];
+ NSArray<NSButton *> *shown=self.page==SETTINGS_PAGE_DISPLAY?self.displayButtons:self.page==SETTINGS_PAGE_USERS?self.userButtons:
+  self.page==SETTINGS_PAGE_EFFECTS?self.effectsButtons:!bindings?@[]:self.drawings?@[self.resetButtons[g_settings_bindings_device?1:0],self.listToggle]:@[self.resetButtons[1],self.resetButtons[0],self.listToggle];
+ for(NSButton *b in [[[@[self.resetButtons[0],self.resetButtons[1],self.listToggle] arrayByAddingObjectsFromArray:self.displayButtons]
+   arrayByAddingObjectsFromArray:self.effectsButtons] arrayByAddingObjectsFromArray:self.userButtons])b.hidden=![shown containsObject:b];
  CGFloat right=self.panelW-14;
  for(NSButton *b in shown){b.frame=NSMakeRect(right-b.frame.size.width,5,b.frame.size.width,24);right-=b.frame.size.width+6;}
 }
@@ -677,7 +1113,10 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
   TOTKSettingsPanel *panel=weak;if(!panel||![panel.versionLabel.stringValue isEqualToString:shown])return;
   panel.versionLabel.stringValue=settings_version_text();panel.versionLabel.frame=NSMakeRect(18,9,230,16);});
 }
--(CGFloat)footerButtonsWidth{CGFloat w=0;for(NSButton *b in self.displayButtons)if(!b.hidden)w+=b.frame.size.width+6;return w;}
+-(CGFloat)footerButtonsWidth{
+ NSArray<NSButton *> *shown=self.page==SETTINGS_PAGE_DISPLAY?self.displayButtons:self.page==SETTINGS_PAGE_USERS?self.userButtons:@[];
+ CGFloat w=0;for(NSButton *b in shown)if(!b.hidden)w+=b.frame.size.width+6;return w;
+}
 /* The shaders and pipelines this game met that the shared list lacks (totk_shader_contrib.h): sent with gh off the main
    thread, the issue then opened; without gh (or when it fails) the GitHub form opens and Finder shows the file to drag in. */
 -(void)contribute:(NSButton *)button{
@@ -689,7 +1128,7 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
   NSString *gh=gh_path(),*issue=gh?contrib_submit(gh,path,rows):nil;
   dispatch_async(dispatch_get_main_queue(),^{
    button.enabled=YES;
-   if(issue){totk_contrib_reminded(path,rows);   /* the launcher's reminder counts from here */
+   if(issue){   /* contrib_submit moved the rows sent to the done file: the launcher's reminder counts from here */
     [weak note:[NSString stringWithFormat:@(TOTK_UI("已提交 %lu 条，谢谢你的贡献！","Sent %lu, thank you for contributing!")),(unsigned long)rows]];
     [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:issue]];fprintf(stderr,"[totk] settings: contribution sent, %s\n",issue.UTF8String);return;}
    [weak note:gh?settings_text("自动提交没成功：已打开提交页面，把访达里的文件拖进去","Sending did not work: drag the file Finder shows into the form")
@@ -697,15 +1136,35 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
    [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@TOTK_CONTRIB_ISSUE_URL]];
    [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:path]]];});});
 }
+/* The effects page's reset: every row back to the game's own; the panel is made again so the titles say what is in force. */
+-(void)resetEffects:(id)sender{(void)sender;settings_effects_reset();dispatch_async(dispatch_get_main_queue(),^{settings_rebuild();});}
 /* The project's GitHub page, where the player stars it (as the launcher's star button). */
 -(void)star:(id)sender{(void)sender;[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:@TOTK_REPO_URL]];
  [self note:settings_text("谢谢支持！在打开的 GitHub 页面右上角点 Star","Thank you! Click Star at the top right of the GitHub page")];}
+/* The user page's button: the game's text bar takes the name (the panel closes while it is up, as it does for the
+   game's own keyboards); the user is kept, and the panel comes back with the users read again. */
+-(void)addUser:(NSButton *)button{
+ (void)button;settings_pointer_used();
+ __weak TOTKSettingsPanel *weak=self;
+ dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+  RuntimeTextRequest req={TOTK_UI("给新用户取名（最多 10 个字；回车确认，Esc 取消）","Name the new user (at most 10 characters; Return confirms, Escape cancels)"),"",10,1,0,0,0};
+  char name[128];int named=runtime_front_text_input(&req,name,sizeof name);
+  NSString *typed=named&&name[0]?@(name):nil;   /* a block cannot capture the array itself */
+  dispatch_async(dispatch_get_main_queue(),^{
+   TOTKSettingsPanel *panel=weak;if(!panel)return;   /* the window is gone */
+   settings_user_added(typed);
+  });
+ });
+}
 /* What a controller moves through: the rows; on the list, its rows and the buttons below; on the drawings, the device
    switch, the controller's buttons (the controller drawing) and the buttons below. */
 -(void)updateTargets{
  [self.controllerTargets removeAllObjects];self.padOrder=@[];
- if(self.page!=SETTINGS_PAGE_BINDINGS){for(TOTKSettingRow *r in self.rows)[self.controllerTargets addObject:r.control.superview];
-  for(NSButton *b in self.displayButtons.reverseObjectEnumerator)if(!b.hidden)[self.controllerTargets addObject:b];}
+ if(self.page==SETTINGS_PAGE_UPDATE)[self.controllerTargets addObjectsFromArray:self.updatePageTargets];
+ else if(self.page!=SETTINGS_PAGE_BINDINGS){for(TOTKSettingRow *r in self.rows)[self.controllerTargets addObject:r.control.superview];
+  NSArray<NSButton *> *foot=self.page==SETTINGS_PAGE_DISPLAY?self.displayButtons:self.page==SETTINGS_PAGE_USERS?self.userButtons:@[];
+  for(NSButton *b in foot.reverseObjectEnumerator)if(!b.hidden)[self.controllerTargets addObject:b];
+  for(NSButton *b in self.effectsButtons)if(!b.hidden)[self.controllerTargets addObject:b];}
  else if(!self.drawings){[self.controllerTargets addObjectsFromArray:self.bindingTargets];
   for(NSButton *b in @[self.resetButtons[0],self.resetButtons[1],self.listToggle])if(!b.hidden&&b.enabled)[self.controllerTargets addObject:b];}
  else{
@@ -794,7 +1253,17 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  fprintf(stderr,"[totk] settings: controller %s -> %s\n",controller_physical_names[physical],action<0?"nothing":controller_switch_names[action]);
  [self refreshBindings];
 }
--(void)refresh{for(TOTKSettingRow *r in self.allRows)[r refresh];[self refreshBindings];}
+/* A new document can change the 更新 page's buttons with no input from the player, and A acts at once. The place stays on
+   its button; when that goes, the next A only shows the new place. */
+-(void)refreshUpdateTargets{
+ NSInteger at=self.controllerIndex;NSView *place=at>=0&&at<(NSInteger)self.controllerTargets.count?self.controllerTargets[(NSUInteger)at]:nil;
+ [self refreshUpdatePage];
+ NSUInteger now=place?[self.updatePageTargets indexOfObject:place]:NSNotFound;
+ if(now!=NSNotFound)self.controllerIndex=(NSInteger)now;
+ else if(place){self.controllerIndex=0;g_settings_controller_active=NO;}
+ [self updateTargets];
+}
+-(void)refresh{for(TOTKSettingRow *r in self.allRows)[r refresh];[self refreshBindings];if(self.page==SETTINGS_PAGE_UPDATE)[self refreshUpdateTargets];}
 -(void)refreshBindings{
  if(self.page!=SETTINGS_PAGE_BINDINGS)return;
  if(self.drawings){[self.keyboardDiagram setNeedsDisplay:YES];[self.padDiagram setNeedsDisplay:YES];return;}
@@ -890,7 +1359,8 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
 -(BOOL)controllerEnabled:(NSInteger)i{
  if(i<0||i>=(NSInteger)self.controllerTargets.count)return NO;
  if(self.page==SETTINGS_PAGE_BINDINGS)return YES;
- TOTKSettingRow *r=self.rows[i];return r.set!=nil&&r.control.enabled;
+ if(i<(NSInteger)self.rows.count){TOTKSettingRow *r=self.rows[i];return r.set!=nil&&r.control.enabled;}
+ return ((NSControl *)self.controllerTargets[i]).enabled;   /* a button after the rows */
 }
 /* The controller's place: drawn only once a controller has moved in the panel (g_settings_controller_active). On the
    controller drawing it is the picked button (outlined there), not a border. */
@@ -913,6 +1383,7 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
  return self.padOrder[i-1].intValue;
 }
 -(void)controllerMove:(int)step{
+ if(self.page==SETTINGS_PAGE_UPDATE){[self scrollUpdatePage:step];return;}   /* up / down read on; left / right pick the button */
  NSInteger count=self.controllerTargets.count;
  for(NSInteger n=0;n<count;n++){
   self.controllerIndex=(self.controllerIndex+step+count)%count;
@@ -939,6 +1410,11 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
   if(!select)return;
   if([target isKindOfClass:NSButton.class]){[(NSButton *)target performClick:nil];return;}
   for(TOTKBindingButton *box in self.bindingButtons)if(box.superview==target&&box.slot==2){[self beginCapture:box];return;}
+  return;
+ }
+ if(i>=(NSInteger)self.rows.count){   /* a button after the rows */
+  if(select)[(NSButton *)self.controllerTargets[i] performClick:nil];
+  else if(self.page==SETTINGS_PAGE_UPDATE){self.controllerIndex=(i+step+(NSInteger)self.controllerTargets.count)%(NSInteger)self.controllerTargets.count;[self controllerHighlight];}
   return;
  }
  TOTKSettingRow *r=self.rows[i];
@@ -970,8 +1446,8 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
   g_settings_controller_active=YES;[self controllerHighlight];
   self.previousDirection=direction;self.repeatAt=now+0.4;return;
  }
- if(edges&(1ull<<6)){[self selectPage:(self.page+SETTINGS_PAGES-1)%SETTINGS_PAGES];return;}   /* L1 / R1: the tabs */
- if(edges&(1ull<<7)){[self selectPage:(self.page+1)%SETTINGS_PAGES];return;}
+ if(edges&(1ull<<6)){[self selectPage:(self.page+settings_pages()-1)%settings_pages()];return;}   /* L1 / R1: the tabs */
+ if(edges&(1ull<<7)){[self selectPage:(self.page+1)%settings_pages()];return;}
  if(edges&cancel){settings_show(0);return;}
  if(direction&&(direction!=self.previousDirection||now>=self.repeatAt)){
   if(direction<=2)[self controllerMove:direction==1?-1:1];else [self controllerChange:direction==3?-1:1 select:NO];
@@ -984,9 +1460,11 @@ enum { SETTINGS_W = 600, SETTINGS_ROW_H = 34, SETTINGS_GAP = 6, SETTINGS_TOP = 9
 -(void)center{if(!self.superview)return;NSSize s=self.superview.bounds.size,p=self.frame.size;
  CGFloat fx=g_settings_at.x<0?0.5:g_settings_at.x,fy=g_settings_at.y<0?0.5:g_settings_at.y;
  [self setFrameOrigin:NSMakePoint(floor(fmax(0,s.width-p.width)*fx),floor(fmax(0,s.height-p.height)*fy))];}
-/* Dragging the panel's background (not its controls) moves it, kept inside the window. */
--(void)mouseDown:(NSEvent *)e{self.grab=[self convertPoint:e.locationInWindow fromView:nil];}
--(void)mouseDragged:(NSEvent *)e{if(!self.superview)return;
+/* Dragging the panel's background (not its controls) moves it, kept inside the window. A drag that started on a view
+   keeping its press (the drawings) still reaches the panel: it moves only for a press it saw, or it jumps to a stale grab. */
+-(void)mouseDown:(NSEvent *)e{self.grab=[self convertPoint:e.locationInWindow fromView:nil];self.dragging=YES;}
+-(void)mouseUp:(NSEvent *)e{(void)e;self.dragging=NO;}
+-(void)mouseDragged:(NSEvent *)e{if(!self.superview||!self.dragging)return;
  NSPoint at=[self.superview convertPoint:e.locationInWindow fromView:nil];NSSize s=self.superview.bounds.size,p=self.frame.size;
  CGFloat x=fmin(fmax(0,at.x-self.grab.x),fmax(0,s.width-p.width)),y=fmin(fmax(0,at.y-self.grab.y),fmax(0,s.height-p.height));
  [self setFrameOrigin:NSMakePoint(floor(x),floor(y))];
@@ -1007,10 +1485,31 @@ static void settings_rebuild(void) {
  if(!window||!settingsOpen)return;
  settings_panel_replace();[settingsPanel center];[settingsPanel refresh];
 }
+/* The panel in the headset (zeldaVR, "按建议 都做", 2026-10-30: hold the left X on a Quest controller to open it, the
+   Quest buttons then work it by name): while it is open with VR on, its layers are drawn into a bitmap ten times a
+   second (twice the size, for the headset's pixels) and handed to the VR thread (gfx/nvn/totk_vr.m vr_panel_image),
+   which shows it in the middle of the view; NULL when it closes. */
+void vr_panel_image(const void *bgra, int w, int h, int stride);
+int vr_panel_in_headset(void);   /* off by default (user 2026-10-30: "先 关闭 设置在 vr里的效果") */
+static NSTimer *settingsVRTimer;
+static void settings_vr_capture(void) {
+ if(!settingsOpen||!settingsPanel||settingsPanel.hidden||!vr_panel_in_headset()){vr_panel_image(NULL,0,0,0);return;}
+ const CGFloat k=2;NSSize z=settingsPanel.bounds.size;int w=(int)(z.width*k),h=(int)(z.height*k);if(w<=0||h<=0)return;
+ static uint8_t *buf;static size_t cap;size_t need=(size_t)w*h*4;
+ if(need>cap){uint8_t *nb=realloc(buf,need);if(!nb)return;buf=nb;cap=need;}
+ CGColorSpaceRef cs=CGColorSpaceCreateDeviceRGB();
+ CGContextRef ctx=CGBitmapContextCreate(buf,(size_t)w,(size_t)h,8,(size_t)w*4,cs,kCGImageAlphaPremultipliedFirst|kCGBitmapByteOrder32Little);   /* BGRA in memory */
+ CGColorSpaceRelease(cs);if(!ctx)return;
+ CGContextClearRect(ctx,CGRectMake(0,0,w,h));CGContextScaleCTM(ctx,k,k);[settingsPanel.layer renderInContext:ctx];CGContextRelease(ctx);
+ vr_panel_image(buf,w,h,w*4);
+}
 static void settings_show(int open) {   /* main thread */
  open=!!open;
  if(!window||open==settingsOpen||(open&&textEntryOpen))return;
  /* Made again at every opening: what the game offers (aspect ratio, resolution) is known only once its code is in. */
+ /* With VR running, the first opening shows the VR page (user 2026-10-30: "启动vr的时候 打开设置 默认打开vr tab"); later ones
+    the page left last. */
+ {static int vrPageShown;if(open&&!vrPageShown&&vr_enabled()){vrPageShown=1;g_settings_page=SETTINGS_PAGE_VR;}}
  if(open){g_settings_controller_active=NO;settings_panel_replace();}else [settingsPanel endCapture];
  settingsOpen=open;
  runtime_gamepad_text_capture(open);
@@ -1018,9 +1517,25 @@ static void settings_show(int open) {   /* main thread */
  else{[window makeFirstResponder:window.contentView];
   if(window.isKeyWindow&&(window.styleMask&NSWindowStyleMaskFullScreen))[(TOTKInputView *)window.contentView setCursorAutoHideEnabled:YES];}
  settingsPanel.hidden=!open;
+ [settingsVRTimer invalidate];settingsVRTimer=nil;
+ if(open&&vr_enabled()&&vr_panel_in_headset())settingsVRTimer=[NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *t){(void)t;settings_vr_capture();}];
+ settings_vr_capture();   /* the first picture now, or the headset's copy gone */
  front_mouse_update();
  fprintf(stderr,"[totk] settings panel %s\n",open?"open":"closed");
  if(totk_sr_settings)totk_sr_settings(open);   /* TOTK_STATE_REPORTING: the game gets no input while it is open */
+}
+/* A user named in the game's text bar (main queue, from addUser:): kept before the panel is made again, so its list
+   has it, and the result shows for a few seconds where the version is. nil: the bar was cancelled — just come back. */
+static void settings_user_added(NSString *name) {
+ if(!window||!settingsPanel)return;
+ if(name){
+  int added=runtime_users_add(name.UTF8String);
+  settings_show(1);
+  [settingsPanel note:added>=0
+   ?[NSString stringWithFormat:@(TOTK_UI("已添加用户“%s”，从下次启动开始玩自己的存档","User \"%s\" added; their saves start from the next launch")),name.UTF8String]
+   :settings_text("最多 8 个用户，且名字不能为空","At most 8 users, and the name cannot be empty")];
+  fprintf(stderr,"[totk] settings: user \"%s\" %s\n",name.UTF8String,added>=0?"added":"not added (the console is full, or the name is empty)");
+ }else settings_show(1);
 }
 /* A single window-lifetime timer owns settings input. It never consumes the text keyboard's edges. */
 static NSTimer *settingsControllerTimer;

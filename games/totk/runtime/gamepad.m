@@ -5,6 +5,7 @@
 #if TARGET_OS_OSX
 #import <IOKit/hid/IOHIDManager.h>
 #include <IOKit/hid/IOHIDUsageTables.h>
+#import <IOKit/pwr_mgt/IOPMLib.h>
 #endif
 #include <math.h>
 #include <pthread.h>
@@ -33,6 +34,7 @@ static int settingsShortcutDown, settingsShortcutPending;
    soon as it is all down; from there the game gets no controller input until everything is released. A picked button
    drives nothing in the game. (Until 2026-10-29: L2 + R2 + L3 held for a second, user 2026-10-27.) */
 #define SETTINGS_CHORD ((1ull << 4) | (1ull << 5))
+extern void (*runtime_vr_recenter)(void);
 static _Atomic int settingsButton = -1;   /* physical button (controller_map.h), -1 the chord */
 static uint64_t settings_trigger(void) { int b = atomic_load(&settingsButton); return b >= 0 ? 1ull << b : SETTINGS_CHORD; }
 static uint16_t controllerMap[CONTROLLER_BUTTONS];
@@ -46,6 +48,9 @@ static SwitchLeftFallback rawLeft, rawRight;
 static uint64_t gamepadRawLeftAt, gamepadRawRightAt;
 static int32_t gamepadNativeLx, gamepadNativeLy, gamepadNativeRx, gamepadNativeRy;   /* the sticks as GameController reads them */
 static void refresh_gamepads(void);
+#if TARGET_OS_OSX
+static _Atomic int gamepadBackground, gamepadFocused = 1;
+#endif
 
 /* Called on the main run loop by the already-open Switch HID motion stream. */
 void runtime_gamepad_switch_left(void *source, int x, int y) {
@@ -177,6 +182,51 @@ void runtime_setting_remove(const char *name) {
     if (setting_path(name, path, sizeof path)) unlink(path);
 }
 
+/* macOS normally routes controllers to the frontmost app. Opting in also lets a foreground app receive the same
+   controller, so this is a saved, default-off choice rather than an unconditional policy. Main thread only. */
+int runtime_gamepad_background_enabled(void) {
+#if TARGET_OS_OSX
+    return atomic_load(&gamepadBackground);
+#else
+    return 0;
+#endif
+}
+#if TARGET_OS_OSX
+static void gamepad_background_apply(int on) {
+    atomic_store(&gamepadBackground, !!on);
+    GCController.shouldMonitorBackgroundEvents = !!on;
+    if (!on && !atomic_load(&gamepadFocused)) runtime_gamepad_clear();
+    else refresh_gamepads();
+}
+static void load_gamepad_background(void) {
+    char path[4096], word[64] = {0}, value[16], extra;
+    int on = 0;
+    if (setting_read("controller-background.txt", word, sizeof word, path, sizeof path)) {
+        if (sscanf(word, "%15s %c", value, &extra) == 1 && (!strcmp(value, "on") || !strcmp(value, "off")))
+            on = !strcmp(value, "on");
+        else fprintf(stderr, "[totk-input] %s: expected on or off; background controller input stays off\n", path);
+    }
+    gamepad_background_apply(on);
+}
+#endif
+void runtime_gamepad_background_set(int on) {
+#if TARGET_OS_OSX
+    gamepad_background_apply(on);
+    setting_write("controller-background.txt", on ? "on" : "off", "background controller input");
+#else
+    (void)on;
+#endif
+}
+void runtime_gamepad_focus(int on) {
+#if TARGET_OS_OSX
+    atomic_store(&gamepadFocused, !!on);
+    if (!on && !runtime_gamepad_background_enabled()) runtime_gamepad_clear();
+    else refresh_gamepads();
+#else
+    (void)on;
+#endif
+}
+
 /* The settings panel's key bindings (main thread, as refresh_gamepads): the layout in force, a new one (saved in the
    TOTK_CONTROLS file with only what differs from the default), or the default (the file removed). */
 void runtime_controller_map_get(uint16_t *map, uint8_t *modes) {
@@ -271,8 +321,9 @@ static uint64_t gamepad_buttons(GCExtendedGamepad *pad, int by_position) {
    handles is not read twice, and feeds the same physical button bits and stick values as the GameController path. From
    there the player's layout file (controller_map.h) applies unchanged, so face buttons, modes and remapping work the same.
 
-   Usages come from the pad's own descriptor, so nothing here is specific to one model: button usages 1-15, the hat switch,
-   and the X/Y/Z/Rz axes. A pad whose buttons sit elsewhere simply leaves those bits unused. */
+   Usages come from the pad's own descriptor: button usages 1-15 (in the order gamepad_hid_order picks from the pad's
+   name), the hat switch, and the X/Y axes with Z/Rz for the right stick, or Rx/Ry when the pad has those and no Z/Rz (a
+   Switch Pro Controller's simple report). A pad whose buttons sit elsewhere simply leaves those bits unused. */
 typedef struct { int present; uint64_t buttons; int32_t lx, ly, rx, ry; } HIDPadState;
 static HIDPadState hidPad;
 static IOHIDManagerRef hidManager;
@@ -281,6 +332,10 @@ static BOOL hidRefreshPending;
 static unsigned char hidButtons[16];          /* usage 1..15, 1 = pressed */
 static int hidHat = 8;                        /* 0 N, 1 NE, 2 E ... 7 NW; 8 centred */
 static float hidX, hidY, hidZ, hidRz;         /* -1..1, 0 centred */
+static int hidOrder;                          /* gamepad_hid_order of the attached pad */
+static int hidRightRxRy;                      /* its right stick is Rx/Ry */
+static GamepadHidReach hidReach[4];           /* X, Y, right X, right Y; used in the Switch Pro order */
+static float hidReachLogged[4][2];
 
 /* Axes and the hat are scaled from the element's own logical range (after PR #190): pads report 8-bit sticks (0..255),
    16-bit ones (0..65535 or -32768..32767) or a hat numbered from 1. A range the descriptor leaves empty counts as 0..255. */
@@ -296,20 +351,23 @@ static int hid_hat(IOHIDElementRef element, int v) {   /* 8 positions (or 4, eve
     return (int)(v - lo) * (n == 4 ? 2 : 1);
 }
 
+/* The furthest each stick direction has reached, in the log whenever one grew by 0.05 (Switch Pro order only). */
+static void hid_reach_note(void) {
+    int grown = 0;
+    for (int a = 0; a < 4; a++)
+        if (hidReach[a].neg >= hidReachLogged[a][0] + 0.05f || hidReach[a].pos >= hidReachLogged[a][1] + 0.05f) grown = 1;
+    if (!grown) return;
+    for (int a = 0; a < 4; a++) { hidReachLogged[a][0] = hidReach[a].neg; hidReachLogged[a][1] = hidReach[a].pos; }
+    fprintf(stderr, "[totk-input] HID stick reach: left -%.2f/+%.2f, -%.2f/+%.2f; right -%.2f/+%.2f, -%.2f/+%.2f (1 = the HID range's end)\n",
+            hidReach[0].neg, hidReach[0].pos, hidReach[1].neg, hidReach[1].pos, hidReach[2].neg, hidReach[2].pos, hidReach[3].neg, hidReach[3].pos);
+}
+
 /* The same physical bits gamepad_buttons() produces, so the layout file cannot tell the two sources apart. */
 static void hid_pad_compute(void) {
-    /* The usages are Switch-style: B at the bottom (1), A on the right (2), Y on the left (4), X at the top (5). Those are
-       positions, so they go in as GameController's buttonA (bottom), buttonB (right), buttonX (left), buttonY (top) and
-       are always taken by position, whatever the maker's name says. */
-    uint64_t buttons = gamepad_face_positions(hidButtons[1], hidButtons[2], hidButtons[4], hidButtons[5], 1);
-    if (hidButtons[14]) buttons |= 1ULL << 4;    /* l3 */
-    if (hidButtons[15]) buttons |= 1ULL << 5;    /* r3 */
-    if (hidButtons[7]) buttons |= 1ULL << 6;     /* l1 */
-    if (hidButtons[8]) buttons |= 1ULL << 7;     /* r1 */
-    if (hidButtons[9]) buttons |= 1ULL << 8;     /* l2 = ZL */
-    if (hidButtons[10]) buttons |= 1ULL << 9;    /* r2 = ZR */
-    if (hidButtons[12]) buttons |= 1ULL << 10;   /* menu = plus (start) */
-    if (hidButtons[11]) buttons |= 1ULL << 11;   /* view = minus (select) */
+    /* The face buttons are Switch-style positions (B bottom, A right, Y left, X top), so they go in as GameController's
+       buttonA (bottom), buttonB (right), buttonX (left), buttonY (top) and are always taken by position, whatever the
+       maker's name says; which usage is which comes from gamepad_hid_order. */
+    uint64_t buttons = gamepad_hid_buttons(hidButtons, hidOrder);
     switch (hidHat) {
     case 0: buttons |= 1ULL << 13; break;
     case 1: buttons |= (1ULL << 13) | (1ULL << 14); break;
@@ -321,12 +379,18 @@ static void hid_pad_compute(void) {
     case 7: buttons |= (1ULL << 12) | (1ULL << 13); break;
     default: break;
     }
+    float lx = hidX, ly = hidY, rx = hidZ, ry = hidRz;
+    if (hidOrder == GAMEPAD_HID_SWITCH_PRO) {   /* sticks that stop short of the HID range (gamepad_hid_reach) */
+        lx = gamepad_hid_reach(&hidReach[0], lx); ly = gamepad_hid_reach(&hidReach[1], ly);
+        rx = gamepad_hid_reach(&hidReach[2], rx); ry = gamepad_hid_reach(&hidReach[3], ry);
+        hid_reach_note();
+    }
     hidPad.present = 1;
     hidPad.buttons = buttons;
-    hidPad.lx = stick_axis(hidX);
-    hidPad.ly = stick_axis(-hidY);    /* HID Y grows downwards, the game's grows upwards */
-    hidPad.rx = stick_axis(hidZ);
-    hidPad.ry = stick_axis(-hidRz);
+    hidPad.lx = stick_axis(lx);
+    hidPad.ly = stick_axis(-ly);    /* HID Y grows downwards, the game's grows upwards */
+    hidPad.rx = stick_axis(rx);
+    hidPad.ry = stick_axis(-ry);
 }
 
 static void hid_value(void *context, IOReturn result, void *sender, IOHIDValueRef value) {
@@ -346,6 +410,10 @@ static void hid_value(void *context, IOReturn result, void *sender, IOHIDValueRe
         hidZ = hid_axis(element, v);
     } else if (page == kHIDPage_GenericDesktop && usage == kHIDUsage_GD_Rz) {
         hidRz = hid_axis(element, v);
+    } else if (hidRightRxRy && page == kHIDPage_GenericDesktop && usage == kHIDUsage_GD_Rx) {
+        hidZ = hid_axis(element, v);
+    } else if (hidRightRxRy && page == kHIDPage_GenericDesktop && usage == kHIDUsage_GD_Ry) {
+        hidRz = hid_axis(element, v);
     } else {
         return;
     }
@@ -361,7 +429,24 @@ static void hid_pad_reset(void) {
     memset(hidButtons, 0, sizeof hidButtons);
     hidHat = 8;
     hidX = hidY = hidZ = hidRz = 0;
+    memset(hidReach, 0, sizeof hidReach);
+    memset(hidReachLogged, 0, sizeof hidReachLogged);
     hidPad = (HIDPadState){0};
+}
+
+/* 1: the pad's right stick is Rx/Ry (it has both and neither Z nor Rz). */
+static int hid_right_rx_ry(IOHIDDeviceRef device) {
+    CFArrayRef elements = IOHIDDeviceCopyMatchingElements(device, NULL, kIOHIDOptionsTypeNone);
+    if (!elements) return 0;
+    int rx = 0, ry = 0, z = 0;
+    for (CFIndex i = 0; i < CFArrayGetCount(elements); i++) {
+        IOHIDElementRef e = (IOHIDElementRef)CFArrayGetValueAtIndex(elements, i);
+        if (IOHIDElementGetUsagePage(e) != kHIDPage_GenericDesktop) continue;
+        uint32_t u = IOHIDElementGetUsage(e);
+        rx |= u == kHIDUsage_GD_Rx; ry |= u == kHIDUsage_GD_Ry; z |= u == kHIDUsage_GD_Z || u == kHIDUsage_GD_Rz;
+    }
+    CFRelease(elements);
+    return rx && ry && !z;
 }
 
 static void hid_pad_detach(void) {
@@ -375,18 +460,26 @@ static void hid_pad_detach(void) {
     refresh_gamepads();
 }
 
-static void hid_pad_attach(IOHIDDeviceRef device) {
-    if (hidDevice) return;
+/* Why a pad was not taken: HID_LEFT for good (GameController's, or another pad is in use), HID_NOT_READY may change
+   (2026-10-28: a PowerA that reconnected while Super Smash Bros. Ultimate ran was never taken again and the log said nothing, because every early
+   return here was silent; the GameController flag read No at once, so the reason is named now instead of guessed). */
+enum { HID_TAKEN, HID_LEFT, HID_NOT_READY };
+static int hid_pad_attach(IOHIDDeviceRef device, char *why, size_t n) {
+    if (hidDevice) { snprintf(why, n, "another HID gamepad is in use"); return HID_LEFT; }
     /* Absent means GameController may well own it; only a definite No says the pad is unreachable otherwise. The flag also
        reads No on pads GameController does adopt (a Bluetooth Switch Pro Controller), so Nintendo, Sony and Microsoft
        devices are left to it. */
     CFTypeRef vendorId = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDVendorIDKey));
     int vid = 0;
     if (vendorId && CFGetTypeID(vendorId) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)vendorId, kCFNumberIntType, &vid);
-    if (vid == 0x057e || vid == 0x054c || vid == 0x045e) return;
+    if (vid == 0x057e || vid == 0x054c || vid == 0x045e) { snprintf(why, n, "vendor 0x%04x is left to GameController", vid); return HID_LEFT; }
     CFTypeRef supported = IOHIDDeviceGetProperty(device, CFSTR("GameControllerSupportedHIDDevice"));
-    if (!supported || CFGetTypeID(supported) != CFBooleanGetTypeID() || CFBooleanGetValue((CFBooleanRef)supported)) return;
-    if (IOHIDDeviceOpen(device, kIOHIDOptionsTypeNone) != kIOReturnSuccess) return;
+    if (!supported) { snprintf(why, n, "GameControllerSupportedHIDDevice not set"); return HID_NOT_READY; }
+    if (CFGetTypeID(supported) != CFBooleanGetTypeID() || CFBooleanGetValue((CFBooleanRef)supported)) {
+        snprintf(why, n, "GameController takes it"); return HID_LEFT;
+    }
+    IOReturn opened = IOHIDDeviceOpen(device, kIOHIDOptionsTypeNone);
+    if (opened != kIOReturnSuccess) { snprintf(why, n, "IOHIDDeviceOpen 0x%08x", opened); return HID_NOT_READY; }
 
     hidDevice = (IOHIDDeviceRef)CFRetain(device);
     const char *name = NULL, *manufacturer = NULL;
@@ -399,20 +492,47 @@ static void hid_pad_attach(IOHIDDeviceRef device) {
         manufacturer = [(__bridge NSString *)vendor UTF8String];
     }
     hid_pad_reset();
+    hidOrder = gamepad_hid_order(name);
+    hidRightRxRy = hid_right_rx_ry(device);
     IOHIDDeviceRegisterInputValueCallback(device, hid_value, NULL);
     IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), kCFRunLoopDefaultMode);
     hidPad.present = 1;
     fprintf(stderr, "[totk-input] HID gamepad connected: %s (%s)\n", name ? name : "unknown", manufacturer ? manufacturer : "unknown");
+    fprintf(stderr, "[totk-input] HID gamepad buttons in the %s order, right stick %s", hidOrder == GAMEPAD_HID_SWITCH_PRO ?
+            "Switch Pro Controller" : "generic", hidRightRxRy ? "Rx/Ry" : "Z/Rz");
+    if (hidOrder == GAMEPAD_HID_SWITCH_PRO) fprintf(stderr, ", sticks scaled to their reach, full at %.0f%%", GAMEPAD_HID_FULL_AT * 100);
+    fprintf(stderr, "\n");
     refresh_gamepads();
     if (getenv("TOTK_BUTTON_ICONS")) {   /* Switch-style (runtime_gamepad_type): Switch icons at the next start in auto */
         setting_write("controller-detected.txt", gamepad_type_name(GAMEPAD_TYPE_SWITCH), "connected controller");
         button_icons_report("controller connected");
     }
+    return HID_TAKEN;
+}
+
+/* Offers a pad that appeared: one not ready yet is tried again after 0.25, 0.5, 1, 2 and 4 s, then given up; the log
+   names the reason at the first try and at the last. */
+enum { HID_TRIES = 6 };
+static void hid_pad_offer(IOHIDDeviceRef device, int attempt) {
+    char why[128] = "";
+    int taken = hid_pad_attach(device, why, sizeof why);
+    if (taken == HID_TAKEN) { if (attempt) fprintf(stderr, "[totk-input] HID gamepad taken at try %d\n", attempt + 1); return; }
+    CFTypeRef product = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDProductKey));
+    const char *name = product && CFGetTypeID(product) == CFStringGetTypeID() ? [(__bridge NSString *)product UTF8String] : "unknown";
+    if (taken == HID_LEFT) { fprintf(stderr, "[totk-input] HID gamepad not taken: %s: %s\n", name, why); return; }
+    if (attempt + 1 >= HID_TRIES) { fprintf(stderr, "[totk-input] HID gamepad not taken: %s: %s (gave up after %d tries)\n", name, why, HID_TRIES); return; }
+    if (!attempt) fprintf(stderr, "[totk-input] HID gamepad not ready: %s: %s; trying again\n", name, why);
+    CFRetain(device);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * (1 << attempt) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        hid_pad_offer(device, attempt + 1);
+        CFRelease(device);
+    });
 }
 
 static void hid_matched(void *context, IOReturn result, void *sender, IOHIDDeviceRef device) {
     (void)context; (void)sender;
-    if (result == kIOReturnSuccess) hid_pad_attach(device);
+    if (result != kIOReturnSuccess) fprintf(stderr, "[totk-input] HID gamepad matched with result 0x%08x\n", result);
+    hid_pad_offer(device, 0);
 }
 
 static void hid_removed(void *context, IOReturn result, void *sender, IOHIDDeviceRef device) {
@@ -615,7 +735,55 @@ void runtime_mouse_release(void) {   /* main thread: the window let the pointer 
     }
 }
 
+#if TARGET_OS_OSX
+/* macOS counts the keyboard and the mouse as the user's activity, not a game controller: a player using only the
+   controller got the screen saver in the middle of a fight (2026-10-28, in Super Smash Bros. Ultimate; pmset listed no display-sleep assertion from
+   the game). While the controller's state keeps changing, the game holds a PreventUserIdleDisplaySleep assertion; it is
+   let go once the controller has been still for the Mac's own screen saver time (System Settings, read from
+   com.apple.screensaver idleTime of this host; 300 s when none is set), so the screen saver then comes as it would after
+   the last key press, and a Mac left alone still sleeps. A stick resting in its dead zone reads 0 and changes nothing. */
+enum { AWAKE_DEFAULT_IDLE_S = 300, AWAKE_CHECK_S = 15 };
+static _Atomic uint64_t awakeLastInput;   /* ns */
+static _Atomic int awakeWanted;           /* set by the first input, cleared when the assertion is let go */
+static IOPMAssertionID awakeAssertion;    /* main queue */
+static int awakeHeld;                     /* main queue */
+static int awakeIdleS;                    /* main queue: the screen saver time read when the assertion was taken */
+static int awake_screen_saver_s(void) {
+    CFPropertyListRef v = CFPreferencesCopyValue(CFSTR("idleTime"), CFSTR("com.apple.screensaver"), kCFPreferencesCurrentUser, kCFPreferencesCurrentHost);
+    int s = 0;
+    if (v && CFGetTypeID(v) == CFNumberGetTypeID()) CFNumberGetValue((CFNumberRef)v, kCFNumberIntType, &s);
+    if (v) CFRelease(v);
+    return s > 0 ? s : AWAKE_DEFAULT_IDLE_S;
+}
+static void awake_check(void) {
+    if (runtime_now_ns() - atomic_load(&awakeLastInput) < (uint64_t)awakeIdleS * 1000000000ull) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)AWAKE_CHECK_S * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ awake_check(); });
+        return;
+    }
+    if (awakeHeld) { IOPMAssertionRelease(awakeAssertion); awakeHeld = 0; }
+    atomic_store(&awakeWanted, 0);
+    fprintf(stderr, "[totk-input] display may sleep again: no controller input for %d s\n", awakeIdleS);
+}
+static void awake_take(void) {
+    awakeIdleS = awake_screen_saver_s();
+    IOReturn r = IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleDisplaySleep, kIOPMAssertionLevelOn,
+                                             CFSTR("MacNativeGames: controller in use"), &awakeAssertion);
+    awakeHeld = r == kIOReturnSuccess;
+    if (awakeHeld) fprintf(stderr, "[totk-input] display kept awake while the controller is in use (let go after %d s without input)\n", awakeIdleS);
+    else fprintf(stderr, "[totk-input] display-sleep assertion failed: 0x%08x\n", r);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)AWAKE_CHECK_S * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ awake_check(); });
+}
+static void awake_note_input(void) {   /* any thread */
+    atomic_store(&awakeLastInput, runtime_now_ns());
+    if (!atomic_exchange(&awakeWanted, 1)) dispatch_async(dispatch_get_main_queue(), ^{ awake_take(); });
+}
+#endif
+
 static void refresh_gamepads(void) {
+#if TARGET_OS_OSX
+    /* The raw HID fallback must obey the same focus policy as GameController. Do not latch background presses. */
+    if (!atomic_load(&gamepadFocused) && !runtime_gamepad_background_enabled()) return;
+#endif
     RuntimeGamepadState next = {0};
     uint64_t physical = (uint64_t)mouseButtons << CONTROLLER_MOUSE_FIRST;
     int32_t nativeLx = 0, nativeLy = 0, nativeRx = 0, nativeRy = 0;
@@ -694,7 +862,19 @@ static void refresh_gamepads(void) {
     next.buttons |= controller_map_apply(controllerMap, held) | synthetic;
     pthread_mutex_lock(&gamepadLock);
     int chord = settingsShortcutEnabled && (physical & trigger) == trigger;
-    if (chord && !settingsShortcutDown) {
+    void (*recenter)(void) = __atomic_load_n(&runtime_vr_recenter, __ATOMIC_ACQUIRE);
+    if (recenter) {
+        /* zeldaVR, VR running (user 2026-10-30: "同时 按下 l3 r3 就自动 “对准正前方”"): the chord tapped recentres the headset
+           (straight ahead and the 6DoF origin); held 0.8 s it opens the settings. The game gets nothing from the press either way. */
+        static uint64_t chordAt; static int chordLong;
+        if (chord && !settingsShortcutDown) {
+            chordAt = now; chordLong = 0;
+            if (!textCapture) textCapture = 2;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(850 * NSEC_PER_MSEC)), dispatch_get_main_queue(), ^{ refresh_gamepads(); });
+        }
+        if (chord && !chordLong && now - chordAt >= 800000000ULL) { chordLong = 1; settingsShortcutPending = 1; }
+        if (!chord && settingsShortcutDown && !chordLong) recenter();
+    } else if (chord && !settingsShortcutDown) {
         settingsShortcutPending = 1;
         if (!textCapture) textCapture = 2;   /* from here the game no longer gets the controller, until it is released */
     }
@@ -702,10 +882,17 @@ static void refresh_gamepads(void) {
     textEdges |= (physical & 0x1ffffu) & ~textPad.buttons;
     textPad = next; textPad.buttons = physical & 0x1ffffu;
     pressedEdges |= next.buttons & ~gamepadState.buttons;
+    int changed = next.buttons != gamepadState.buttons || next.lx != gamepadState.lx || next.ly != gamepadState.ly ||
+                  next.rx != gamepadState.rx || next.ry != gamepadState.ry;
     gamepadState = next;
     gamepadRawLeftAt = rawAt; gamepadRawRightAt = rawRightAt;
     gamepadNativeLx = nativeLx; gamepadNativeLy = nativeLy; gamepadNativeRx = nativeRx; gamepadNativeRy = nativeRy;
     pthread_mutex_unlock(&gamepadLock);
+#if TARGET_OS_OSX
+    if (changed && next.connected) awake_note_input();
+#else
+    (void)changed;
+#endif
 }
 
 static void attach_gamepad(GCController *controller) {
@@ -850,6 +1037,9 @@ void runtime_gamepad_start(void) {
     load_controller_type();
     load_settings_button();
     load_mouse_mode();
+#if TARGET_OS_OSX
+    load_gamepad_background();
+#endif
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     [center addObserverForName:GCControllerDidConnectNotification object:nil queue:NSOperationQueue.mainQueue
                    usingBlock:^(NSNotification *notification) { attach_gamepad(notification.object); }];
@@ -935,9 +1125,20 @@ static RuntimeGamepadState text_state_locked(void) {
     }
     return state;
 }
+void (*runtime_vr_recenter)(void);   /* zeldaVR: set by gfx/nvn/totk_vr.m while VR runs: the L3 + R3 tap recentres */
+int (*runtime_vr_pad)(int plain, uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);   /* zeldaVR: the VR thread's controllers */
+static void vr_pad_merge(RuntimeGamepadState *out, int plain) {   /* zeldaVR: the Quest 3 controllers (gfx/nvn/totk_vr.m vr_gamepad, set while VR runs) */
+    uint64_t vb; int32_t vlx, vly, vrx, vry;
+    int (*pad)(int, uint64_t *, int32_t *, int32_t *, int32_t *, int32_t *) = __atomic_load_n(&runtime_vr_pad, __ATOMIC_ACQUIRE);
+    if (!pad || !pad(plain, &vb, &vlx, &vly, &vrx, &vry)) return;
+    out->buttons |= vb; out->connected = 1;
+    out->lx = stronger_axis(out->lx, vlx); out->ly = stronger_axis(out->ly, vly);
+    out->rx = stronger_axis(out->rx, vrx); out->ry = stronger_axis(out->ry, vry);
+}
 void runtime_gamepad_text_read(RuntimeGamepadState *out) {
     pthread_mutex_lock(&gamepadLock);
     *out = text_state_locked(); out->buttons |= textEdges; textEdges = 0;
+    vr_pad_merge(out, 1);   /* the settings panel and the text keyboard: the Quest buttons by name */
     pthread_mutex_unlock(&gamepadLock);
 }
 void runtime_gamepad_read(RuntimeGamepadState *out) {
@@ -954,6 +1155,7 @@ void runtime_gamepad_read(RuntimeGamepadState *out) {
     out->rx = stronger_axis(out->rx, touchState.rx); out->ry = stronger_axis(out->ry, touchState.ry);
     out->rx = stronger_axis(out->rx, mouseRX); out->ry = stronger_axis(out->ry, mouseRY);
     if (touchState.connected) out->connected = 1;
+    vr_pad_merge(out, 0);   /* zeldaVR: the Quest 3 controllers, merged like the touch screen */
     pressedEdges = 0;
     if (textCapture) {
         RuntimeGamepadState held = text_state_locked();

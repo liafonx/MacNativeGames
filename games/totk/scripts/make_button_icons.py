@@ -543,7 +543,7 @@ def main():
     romfs = args.romfs
     if args.app:
         if not version:
-            parser.error('name the game version with --version (or name the mod folder v0, v112, v121 or v143)')
+            parser.error('name the game version with --version (or name the mod folder v0, v121 or v143)')
         romfs = args.app / f'Contents/Resources/totk/extracted/{version}/romfs'
     controls = None
     if args.controls and not args.face_buttons:

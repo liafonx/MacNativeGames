@@ -44,6 +44,15 @@ void settings_test_output_size(unsigned w, unsigned h) {
     assert(runtime_output_size_current() == pack_size(w, h));
 #endif
 }
+/* A swapchain as if the app carried the 4K heap overlay, for the native-4K mode tests; restore before the rows matter. */
+void settings_test_output_4k(int on) {
+#ifndef GAME_BOTW
+    if (on) { output_w = 3840; output_h = 2160; }
+    else { output_w = 2560; output_h = 1440; }
+#else
+    (void)on;
+#endif
+}
 /* The aspect ratio as runtime/aspect_patch.h sets it (production code), with a synthetic data-page slot and a window of
    ratio view instead of the stubs aspect_install writes into the game. */
 void settings_test_aspect_init(double view) {
@@ -61,6 +70,14 @@ void settings_test_aspect_init(double view) {
     runtime_aspect_view(view * 1080, 1080);
 }
 
+#ifdef GAME_BOTW190
+/* The field of view's row as it is when patch_fov found the camera code not as shipped (it never runs here). */
+void settings_test_fov_refused(int refused) { g_fov_refused = refused; }
+/* The factor's word as the stub reads it, on a synthetic data-page slot (patch_fov never runs here). */
+static _Atomic uint32_t testFovFactor;
+void settings_test_fov_init(void) { g_fov_factor = &testFovFactor; }
+uint32_t settings_test_fov_word(void) { return atomic_load(&testFovFactor); }
+#endif
 void settings_test_aspect_frame(void) {
 #ifdef GAME_BOTW
     if (!g_uw_main) return;

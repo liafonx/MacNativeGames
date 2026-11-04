@@ -55,6 +55,10 @@ void runtime_keymap_reset(void){
    once a minute. In an agent's test session (TOTK_SLOT_OWNER other than user) the line says the user is playing it: its
    save is a copy, its scripted measurement is void, and its script must not close the game under the user
    (2026-10-15: the user played 12 minutes in a test window and the script closed it at its time limit). */
+/* TOTK_IGNORE_USER_INPUT=1 (unattended test runs): the window's keys and mouse buttons and the controllers do not reach
+   the game, so typing elsewhere while a test window pops up neither plays it nor stops TOTK_AUTOLOAD (2026-10-31: two
+   survey runs sat at the title after a stray key cancelled the auto-load). Scripted input still drives it. */
+static int ignore_user(void){static int v=-1;if(v<0){const char *e=getenv("TOTK_IGNORE_USER_INPUT");v=e&&atoi(e);if(v)fprintf(stderr,"[input] TOTK_IGNORE_USER_INPUT: keyboard, mouse and controllers ignored (scripted input only)\n");}return v;}
 static void user_input(const char *what){
  runtime_survey_cancel_user();
  runtime_autoload_user_input();
@@ -67,19 +71,36 @@ static void user_input(const char *what){
    layout above). Key 1 (Mac key code 18) opens and closes the settings panel (frontend.m) from either; held-key repeats do
    not toggle it. Keys 2-7 are no shortcuts any more (user 2026-10-25: the panel replaces them). */
 enum { KEY_SETTINGS = KEYMAP_SETTINGS_KEY };
+/* zeldaVR: P (Mac key code 35) switches VR between first and third person (user 2026-11-01: "添加 一个按钮 ... 切换 第一人称和
+   第三人称", P chosen: V is the game's R3); the same switch as the settings panel's row (gfx/nvn/totk_vr.m). Only with VR
+   on; P is in no default layout. */
+enum { KEY_VR_VIEW = 35, KEY_VR_RECENTER = 31 };
+extern int vr_first_person(void) __attribute__((weak_import));
+extern void vr_set_first_person(int on) __attribute__((weak_import));
+extern void vr_recenter(void) __attribute__((weak_import));
+static int vr_on(void){const char *c=getenv("TOTK_VR_CONTROL");return c&&*c;}
+static void vr_view_key(void){if(!vr_on()||!vr_first_person||!vr_set_first_person)return;vr_set_first_person(!vr_first_person());}
+/* O (Mac key code 31) recentres VR (user 2026-11-01: "添加一个键 o把 摆正 重置 vr 镜头"): straight ahead becomes where the head
+   looks now and the head's position starts from here, as both stick clicks do (gfx/nvn/totk_vr.m vr_recenter). */
+static void vr_recenter_key(void){if(vr_on()&&vr_recenter){vr_recenter();fprintf(stderr,"[totk-input] O: VR recentred\n");}}
 void runtime_input_key_synthetic(unsigned code,int down){if(code>=128)return;pthread_mutex_lock(&inputLock);int press=down&&!keys[code];if(down&&!keys[code])pending|=button(code);keys[code]=(unsigned char)!!down;held_buttons_locked();pthread_mutex_unlock(&inputLock);
- if(press&&code==KEY_SETTINGS)runtime_settings_toggle();}
+ if(press&&code==KEY_SETTINGS)runtime_settings_toggle();
+ if(press&&code==KEY_VR_VIEW)vr_view_key();
+ if(press&&code==KEY_VR_RECENTER)vr_recenter_key();}
 void runtime_input_key(unsigned code,int down){
- if(code>=128)return;if(down)user_input("keyboard");
+ if(code>=128||ignore_user())return;if(down)user_input("keyboard");
  pthread_mutex_lock(&inputLock);int press=down&&!held[code];held[code]=(unsigned char)!!down;held_changed_locked();pthread_mutex_unlock(&inputLock);
  if(press&&code==KEY_SETTINGS)runtime_settings_toggle();
+ if(press&&code==KEY_VR_VIEW)vr_view_key();
+ if(press&&code==KEY_VR_RECENTER)vr_recenter_key();
 }
 /* A mouse button in mouse mode (runtime/gamepad.m: 0 left, 1 right, 2 middle, 3 and 4 the side buttons). */
 void runtime_input_mouse(int button,int down){
- if(button<0||button>=KEYMAP_MOUSE_BUTTONS)return;if(down)user_input("mouse");
+ if(button<0||button>=KEYMAP_MOUSE_BUTTONS||ignore_user())return;if(down)user_input("mouse");
  pthread_mutex_lock(&inputLock);held[KEYMAP_MOUSE_FIRST+button]=(unsigned char)!!down;held_changed_locked();pthread_mutex_unlock(&inputLock);
 }
-void runtime_input_clear(void){pthread_mutex_lock(&inputLock);memset(keys,0,sizeof(keys));memset(held,0,sizeof held);heldOut=(KeyMapOutput){0};pending=0;held_buttons_locked();pthread_mutex_unlock(&inputLock);runtime_gamepad_clear();}
+void runtime_input_clear_window(void){pthread_mutex_lock(&inputLock);memset(keys,0,sizeof(keys));memset(held,0,sizeof held);heldOut=(KeyMapOutput){0};pending=0;held_buttons_locked();pthread_mutex_unlock(&inputLock);}
+void runtime_input_clear(void){runtime_input_clear_window();runtime_gamepad_clear();}
 static void initialize(void){pthread_mutex_lock(&inputLock);enabled=true;pthread_mutex_unlock(&inputLock);fprintf(stderr,"[totk] native keyboard controller initialized\n");}
 /* Docked: one full-key controller as player 1 (id 0, style bit 0). Handheld (TOTK_OPERATION_MODE=handheld, the iPhone):
    the same input is the handheld controller (id 0x20, style bit 1, joy-cons attached) and player 1 is not connected;
@@ -95,19 +116,29 @@ static void supported_ids(const uint32_t *ids,uint64_t n){if(n>10||(!ids&&n))run
 static void supported_styles(uint32_t value){pthread_mutex_lock(&inputLock);styles=value;pthread_mutex_unlock(&inputLock);}
 static uint32_t style(const uint32_t *id){if(!id)runtime_fail("controller id pointer");input_log("style set",*id);pthread_mutex_lock(&inputLock);uint32_t v=enabled&&allowed&&*id==pad_id()?(styles&pad_style()):0;pthread_mutex_unlock(&inputLock);return v;}
 static int pad_states(NpadState *out,int max,const uint32_t *id,uint32_t want_style);
+__attribute__((weak)) int runtime_vr_stick_pitch_locked(void){return 0;}   /* zeldaVR: game_patches_v143.c's when VR locks the pitch */
 static int full_states(NpadState *out,int max,const uint32_t *id){return pad_states(out,max,id,1);}
 static int handheld_states(NpadState *out,int max,const uint32_t *id){return pad_states(out,max,id,2);}
 static int pad_states(NpadState *out,int max,const uint32_t *id,uint32_t want_style){if(max<=0)return 0;if(id)input_log(want_style==2?"handheld state":"full-key state",*id);if(!out||!id)runtime_fail("controller output pointer");pthread_mutex_lock(&inputLock);NpadState state={.sampling=++sample};if(enabled&&allowed&&*id==pad_id()&&want_style==pad_style()&&(styles&want_style)){
  state.attributes=1;for(unsigned i=0;i<128;i++)if(keys[i])state.buttons|=button(i);state.buttons|=heldOut.buttons|pending;pending=0;
  state.lx=32767*((int)keys[2]-(int)keys[0]);state.ly=32767*((int)keys[13]-(int)keys[1]);state.rx=32767*((int)keys[124]-(int)keys[123]);state.ry=32767*((int)keys[126]-(int)keys[125]);
  if(heldOut.lx)state.lx=heldOut.lx;if(heldOut.ly)state.ly=heldOut.ly;if(heldOut.rx)state.rx=heldOut.rx;if(heldOut.ry)state.ry=heldOut.ry;
- RuntimeGamepadState pad;runtime_gamepad_read(&pad);state.buttons|=pad.buttons;
+ RuntimeGamepadState pad;runtime_gamepad_read(&pad);if(ignore_user())pad=(RuntimeGamepadState){0};state.buttons|=pad.buttons;
  if(pad.buttons&~padSeen||abs(pad.lx)>16384||abs(pad.ly)>16384||abs(pad.rx)>16384||abs(pad.ry)>16384)user_input("controller");padSeen=pad.buttons;
  if(abs(pad.lx)>abs(state.lx))state.lx=pad.lx;if(abs(pad.ly)>abs(state.ly))state.ly=pad.ly;
  if(abs(pad.rx)>abs(state.rx))state.rx=pad.rx;if(abs(pad.ry)>abs(state.ry))state.ry=pad.ry;
+ if(runtime_vr_stick_pitch_locked())state.ry=0;   /* zeldaVR: up / down is the headset's (game_patches_v143.c) */
  }*out=state;pthread_mutex_unlock(&inputLock);return 1;}
 static int disconnected_states(NpadState *out,int max,const uint32_t *id){if(id)input_log("joy-con state",*id);if(max<=0)return 0;if(!out)runtime_fail("controller output pointer");pthread_mutex_lock(&inputLock);*out=(NpadState){.sampling=++sample};pthread_mutex_unlock(&inputLock);return 1;}
 static void hold_type(int type){if(type<0||type>1)runtime_fail("invalid joy hold type");holdType=type;(void)holdType;}
+#ifdef GAME_NS2
+/* SDK 20's single-state forms (Pokemon Pokopia): the latest state, as the plural forms give it with a count of 1. */
+static void full_state(NpadState *out,const uint32_t *id){pad_states(out,1,id,1);}
+static void handheld_state(NpadState *out,const uint32_t *id){pad_states(out,1,id,2);}
+static void disconnected_state(NpadState *out,const uint32_t *id){disconnected_states(out,1,id);}
+static int get_hold_type(void){return holdType;}
+static void handheld_activation(int mode){if(mode<0||mode>2)runtime_fail("invalid handheld activation mode");}
+#endif
 static void disconnect(const uint32_t *id){if(!id)runtime_fail("disconnect id");input_log("disconnect",*id);if(*id==pad_id()){   /* only the pad in use: in handheld mode TOTK disconnects player 1 */pthread_mutex_lock(&inputLock);allowed=false;pthread_mutex_unlock(&inputLock);runtime_input_clear();}}
 /* Mouse and keyboard devices: the Mac keyboard drives the full-key controller, so the game sees no mouse
    (not connected) and a keyboard with no keys, avoiding duplicated input. Layouts follow the SDK (0x28 / 0x30 bytes). */
@@ -138,9 +169,21 @@ static uint32_t seven_axis_init(void *work,unsigned long size){(void)work;(void)
 static uint32_t seven_axis_ok(void){return 0;}
 static void seven_axis_reset(void){}
 static int seven_axis_states(void *out,int count){(void)out;(void)count;return 0;}
+static uint32_t show_controller_support_v1(const void *arg){return show_controller_support(NULL,arg);}
+#endif
+#if defined(GAME_BOTW) || defined(GAME_NS2)
 static void zero_drift_mode(const void *handle,const int *mode){(void)handle;(void)mode;}
 static void joy_dual(const uint32_t *id){(void)id;}
-static uint32_t show_controller_support_v1(const void *arg){return show_controller_support(NULL,arg);}
+#endif
+#ifdef GAME_NS2
+/* SDK 20 (Donkey Kong Bananza): single / merged Joy-Con assignment and the touch screen. The host's pads are whole
+   controllers and have no touch screen, so the assignment changes nothing; the touch screen reports no touches. */
+static void joy_single(const uint32_t *id, int type) { (void)id; (void)type; }
+static uint32_t joy_merge(const uint32_t *a, const uint32_t *b) { (void)a; (void)b; return 0; }
+static void touch_init(void) {}
+/* TouchScreenState<1>: sampling number, touch count, then one 0x28-byte TouchState. The SDK reads it from the hid shared
+   memory the host does not map and aborts (Donkey Kong Bananza, sdk GetTouchScreenState<2> from main): no touches. */
+static void touch_state1(uint8_t *out) { static _Atomic int64_t sample; memset(out, 0, 0x10 + 0x28); int64_t n = ++sample; memcpy(out, &n, 8); }
 #endif
 void *runtime_input_override(const char *name){
  void *feedback=runtime_hid_feedback_override(name);if(feedback)return feedback;
@@ -158,9 +201,19 @@ void *runtime_input_override(const char *name){
  {"_ZN2nn3hid23StartSevenSixAxisSensorEv",seven_axis_ok},{"_ZN2nn3hid22StopSevenSixAxisSensorEv",seven_axis_ok},
  {"_ZN2nn3hid32ResetSevenSixAxisSensorTimestampEv",seven_axis_reset},
  {"_ZN2nn3hid27GetSevenSixAxisSensorStatesEPNS0_23SevenSixAxisSensorStateEi",seven_axis_states},
- {"_ZN2nn3hid25SetGyroscopeZeroDriftModeERKNS0_19SixAxisSensorHandleERKNS0_22GyroscopeZeroDriftModeE",zero_drift_mode},
- {"_ZN2nn3hid28SetNpadJoyAssignmentModeDualERKj",joy_dual},
  {"_ZN2nn3hid21ShowControllerSupportERKNS0_20ControllerSupportArgE",show_controller_support_v1}
+#endif
+#if defined(GAME_BOTW) || defined(GAME_NS2)
+ ,{"_ZN2nn3hid25SetGyroscopeZeroDriftModeERKNS0_19SixAxisSensorHandleERKNS0_22GyroscopeZeroDriftModeE",zero_drift_mode},
+ {"_ZN2nn3hid28SetNpadJoyAssignmentModeDualERKj",joy_dual}
+#endif
+#ifdef GAME_NS2
+ ,{"_ZN2nn3hid30SetNpadJoyAssignmentModeSingleERKjNS0_17NpadJoyDeviceTypeE",joy_single},{"_ZN2nn3hid23MergeSingleJoyAsDualJoyERKjS2_",joy_merge},
+ {"_ZN2nn3hid12GetNpadStateEPNS0_16NpadFullKeyStateERKj",full_state},{"_ZN2nn3hid12GetNpadStateEPNS0_17NpadHandheldStateERKj",handheld_state},
+ {"_ZN2nn3hid12GetNpadStateEPNS0_16NpadJoyDualStateERKj",disconnected_state},{"_ZN2nn3hid12GetNpadStateEPNS0_16NpadJoyLeftStateERKj",disconnected_state},
+ {"_ZN2nn3hid12GetNpadStateEPNS0_17NpadJoyRightStateERKj",disconnected_state},{"_ZN2nn3hid18GetNpadJoyHoldTypeEv",get_hold_type},
+ {"_ZN2nn3hid29SetNpadHandheldActivationModeENS0_26NpadHandheldActivationModeE",handheld_activation},
+ {"_ZN2nn3hid21InitializeTouchScreenEv",touch_init},{"_ZN2nn3hid19GetTouchScreenStateILm1EEEvPNS0_16TouchScreenStateIXT_EEE",touch_state1}
 #endif
  };
  for(unsigned i=0;i<sizeof(entries)/sizeof(*entries);i++)if(!strcmp(name,entries[i].name))return entries[i].fn;return NULL;
@@ -266,11 +319,96 @@ static void *input_file(void *arg) {
             char *end; double ms = strtod(line + 10, &end); if (end == line + 10 || ms < 0 || ms > 100) runtime_fail("framestep takes milliseconds (0 = real time)");
             runtime_frame_step_pin(ms);
 #if defined(TOTK_GAME_V143) && !TARGET_OS_IPHONE   /* high-frame-rate diagnostics (game_patches_v143.c) */
+        } else if (!strncmp(line, "lodscale ", 9)) {   /* "lodscale <K>": model detail distance x K (the settings panel's effects page, game_patches_v143.c) */
+            extern void runtime_lod_scale_set(double k);
+            char *end; double k = strtod(line + 9, &end); if (end == line + 9 || !(k >= 0.1 && k <= 1e6)) runtime_fail("lodscale takes 0.1 to 1000000 (1000000: always the finest)");
+            runtime_lod_scale_set(k);
+        } else if (!strncmp(line, "farscale ", 9)) {   /* "farscale <K>": render distance (camera far plane) x K, as the effects page */
+            extern void runtime_far_scale_set(double k);
+            char *end; double k = strtod(line + 9, &end); if (end == line + 9 || !(k >= 0.001 && k <= 100)) runtime_fail("farscale takes 0.001 to 100");
+            runtime_far_scale_set(k);
+        } else if (!strncmp(line, "shadowscale ", 12)) {   /* "shadowscale <K>": the sun's shadow maps x K per side, as the effects page */
+            extern void runtime_shadow_scale_set(double k);
+            char *end; double k = strtod(line + 12, &end); if (end == line + 12 || !(k >= 0.25 && k <= 8)) runtime_fail("shadowscale takes 0.25 to 8");
+            runtime_shadow_scale_set(k);
+        } else if (!strncmp(line, "fovscale ", 9)) {   /* "fovscale <K>": the game camera's field of view x K, as the effects page */
+            extern void runtime_fov_scale_set(double k);
+            char *end; double k = strtod(line + 9, &end); if (end == line + 9 || !(k >= 0.5 && k <= 2)) runtime_fail("fovscale takes 0.5 to 2");
+            runtime_fov_scale_set(k);
         } else if (!strncmp(line, "frmwatch ", 9) || !strncmp(line, "frmwatchx ", 10)) {   /* "frmwatch[x] <seconds> [hex offset]": who reads a time value */
             extern void runtime_diag_frm_watch(double secs, unsigned off, int in_x);
             int in_x = line[8] == 'x'; double secs; unsigned off = 0x10;
             if (sscanf(line + 9 + in_x, "%lf %x", &secs, &off) < 1 || secs <= 0 || off > 0x400 || off % 4) runtime_fail("frmwatch[x] <seconds> [hex offset, a multiple of 4]");
             runtime_diag_frm_watch(secs, off, in_x);
+        } else if (!strncmp(line, "linkwatch ", 10)) {   /* "linkwatch <seconds>": who writes his body's palette buffer field (VR) */
+            extern void runtime_diag_link_watch(double secs);
+            double secs = atof(line + 10); if (!(secs > 0 && secs <= 60)) runtime_fail("linkwatch takes 1 to 60 seconds");
+            runtime_diag_link_watch(secs);
+        } else if (!strncmp(line, "linkup", 6)) {   /* "linkup": who owns his palette buffers' descriptors, up to his actor (VR) */
+            extern void runtime_diag_link_up(void);
+            runtime_diag_link_up();
+        } else if (!strncmp(line, "linkheap", 8)) {   /* "linkheap": his actor's heap range and the palette buffers named in it (VR) */
+            extern void runtime_diag_link_heap(void);
+            runtime_diag_link_heap();
+        } else if (!strncmp(line, "linkscan", 8)) {   /* "linkscan": the pointers from the player's actor to his palette buffers (VR) */
+            extern void runtime_diag_link_scan(void);
+            runtime_diag_link_scan();
+        } else if (!strncmp(line, "camsrc ", 7)) {   /* "camsrc <seconds>": which cameras the per-view record copies (VR) */
+            extern void runtime_diag_cam_src(double secs);
+            double secs = atof(line + 7); if (!(secs > 0 && secs <= 120)) runtime_fail("camsrc takes 1 to 120 seconds");
+            runtime_diag_cam_src(secs);
+        } else if (!strncmp(line, "watchw ", 7) || !strncmp(line, "watchr ", 7)) {   /* "watchw|watchr <hex address> <seconds>": who writes / reads those 4 bytes (VR stereo RE) */
+            extern void runtime_diag_watch_write(uint64_t addr, int secs, int load);
+            char *e; uint64_t a = strtoull(line + 7, &e, 16); runtime_diag_watch_write(a, (int)strtol(e, NULL, 10), line[5] == 'r');
+        } else if (!strncmp(line, "bpvals ", 7)) {   /* "bpvals <hex main offset> <register> <seconds>": the register's values there (VR stereo RE) */
+            extern void runtime_diag_bp_vals(uint64_t off, int reg, double secs);
+            char *e; uint64_t o = strtoull(line + 7, &e, 16); char *e2; long r = strtol(e, &e2, 10); runtime_diag_bp_vals(o, (int)r, strtod(e2, NULL));
+        } else if (!strncmp(line, "bpregs ", 7)) {   /* "bpregs <hex main offset>": registers at the first hit (VR stereo RE) */
+            extern void runtime_diag_bp_regs(uint64_t off);
+            extern void runtime_diag_bp_regs_if(uint64_t off, int reg, uint64_t lo, uint64_t hi);
+            char *e; uint64_t o = strtoull(line + 7, &e, 16); char *e2; long r = strtol(e, &e2, 10);
+            if (e2 != e) { char *e3; uint64_t lo = strtoull(e2, &e3, 16); runtime_diag_bp_regs_if(o, (int)r, lo, strtoull(e3, NULL, 16)); }   /* "bpregs <off> <reg> <lo> <hi>": only when x<reg> is in [lo, hi) */
+            else runtime_diag_bp_regs(o);
+        } else if (!strncmp(line, "b2pair", 6)) {   /* "b2pair": first / second run recordings paired by identity (stereo B2 diagnostic) */
+            extern void runtime_vr_b2_pair(void);
+            runtime_vr_b2_pair();
+        } else if (!strncmp(line, "b2slots", 7)) {   /* "b2slots": where the game keeps the runs' handles (stereo B2 diagnostic) */
+            extern void runtime_vr_b2_slots(void);
+            runtime_vr_b2_slots();
+        } else if (!strncmp(line, "b2calls", 7)) {   /* "b2calls": the next frame's calls of the runs' recordings (stereo B2 diagnostic) */
+            extern void runtime_vr_b2_calls(void);
+            runtime_vr_b2_calls();
+        } else if (!strncmp(line, "b2eye ", 6)) {   /* "b2eye <mm>": half the eye distance for stereo B2 (diagnostic until the VR thread sets it) */
+            extern void runtime_vr_b2_eye(float mm);
+            runtime_vr_b2_eye((float)atof(line + 6));
+        } else if (!strncmp(line, "b2 ", 3)) {   /* "b2 <0|1|2|3> [mask]": zeldaVR stereo B2, the second render run per game update (game_patches_v143.c) */
+            extern void runtime_vr_b2(int on);
+            extern void runtime_vr_b2_mask(unsigned m);
+            char *e; long mode = strtol(line + 3, &e, 10); if (*e == ' ') runtime_vr_b2_mask((unsigned)strtoul(e, NULL, 0));
+            runtime_vr_b2((int)mode);
+        } else if (!strncmp(line, "dumpmain ", 9)) {   /* "dumpmain <file>": main's loaded image, relocated (VR stereo RE) */
+            extern void runtime_diag_dump_main(const char *path);
+            char path[1024]; snprintf(path, sizeof path, "%s", line + 9); path[strcspn(path, "\r\n")] = 0;
+            runtime_diag_dump_main(path);
+        } else if (!strncmp(line, "peek", 4) && (line[4] == ' ' || (line[4] == 'm' && line[5] == ' '))) {   /* "peek <hex addr> [n]" / "peekm <hex main offset> [n]" */
+            extern void runtime_diag_peek(uint64_t a, int n, int rel);
+            const int rel = line[4] == 'm'; char *e; uint64_t a = strtoull(line + (rel ? 6 : 5), &e, 16);
+            runtime_diag_peek(a, (int)strtol(e, NULL, 10), rel);
+        } else if (!strncmp(line, "calctree", 8)) {   /* "calctree": the method tree the frame's calc walks (VR stereo) */
+            extern void runtime_diag_calc_tree(void);
+            runtime_diag_calc_tree();
+        } else if (!strncmp(line, "jobdump", 7)) {   /* "jobdump": the jobs of the frame's render job lists (VR stereo) */
+            extern void runtime_diag_job_dump(void);
+            runtime_diag_job_dump();
+        } else if (!strncmp(line, "frametrace ", 11)) {   /* "frametrace <seconds> <hex offset>...": threads and call chains per frame (VR) */
+            extern void runtime_diag_frame_trace(double secs, const char *offs);
+            char *rest; double secs = strtod(line + 11, &rest); if (!(secs > 0 && secs <= 30)) runtime_fail("frametrace takes 1 to 30 seconds and up to 4 hex offsets in main");
+            while (*rest == ' ') rest++;
+            runtime_diag_frame_trace(secs, rest);
+        } else if (!strncmp(line, "camwatch ", 9)) {   /* "camwatch <seconds>": who writes the main camera's matrix (VR) */
+            extern void runtime_diag_cam_watch(double secs, int src);   /* "camwatch <seconds> src": camsrc's copy source instead */
+            double secs = atof(line + 9); if (!(secs > 0 && secs <= 120)) runtime_fail("camwatch takes 1 to 120 seconds [src]");
+            runtime_diag_cam_watch(secs, strstr(line + 9, "src") != NULL);
         } else if (!strncmp(line, "xpoke ", 6)) {   /* "xpoke <hex offset> <value>": a float into the game's time object */
             extern void runtime_diag_xpoke(unsigned off, float value);
             unsigned off; float value; if (sscanf(line + 6, "%x %f", &off, &value) != 2 || off > 0x400 || off % 4) runtime_fail("xpoke <hex offset, a multiple of 4> <value>");

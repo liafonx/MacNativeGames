@@ -173,9 +173,10 @@ void fps_overlay_text(const fps_overlay_info *info, char *text, size_t n) {
     const char *res = "";
     if (w == 2560 && h == 1440) res = "  1440p";
     else if (e && !strcmp(e, "screen") && w == big_w && h == big_h && w > 1920) res = "  screen";
+    else res = info->big == 3 ? "  5K" : info->big == 2 ? "  4K" : "";   // upstream's native 4K / 5K labels (no "2K": the size above says it)
     snprintf(text, n, "FPS %s%s  %s%s%s%s", fps, gen, ss, sc, info->mfx ? TOTK_UI("  MetalFX已开启", "  MetalFX on") : "", res);
 #else
-    snprintf(text, n, "FPS %s%s  %s%s%s%s", fps, gen, ss, sc, info->mfx ? TOTK_UI("  MetalFX已开启", "  MetalFX on") : "", info->big == 2 ? "  4K" : info->big ? "  2K" : "");
+    snprintf(text, n, "FPS %s%s  %s%s%s%s", fps, gen, ss, sc, info->mfx ? TOTK_UI("  MetalFX已开启", "  MetalFX on") : "", info->big == 3 ? "  5K" : info->big == 2 ? "  4K" : info->big ? "  2K" : "");
 #endif
 }
 
