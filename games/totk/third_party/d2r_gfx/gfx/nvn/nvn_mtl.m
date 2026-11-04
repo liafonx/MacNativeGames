@@ -19931,9 +19931,6 @@ int mtl_probe_pipeline_archive(void) {
     [NSFileManager.defaultManager removeItemAtPath:dir error:nil];
     return cleanup_checks + atomic_load(&built) + from_archive + 2 * N + 3;
 }
-#ifdef GAME_BOTW
-#include "../../../../../botw/gfx/botw_texpack.h"   // sharp UI art (BOTW_TP_* in nvn_obj.h)
-#endif
 
 /* seed-shaders <corpus> (loader.c; docs/ns2-port.md): every shader a Switch 2 game ships, as
    scripts/ns2_shader_corpus.py found them in its files, translated before the game runs. Each goes through
@@ -20000,3 +19997,6 @@ void runtime_shader_seed(const char *path, const char *list) { @autoreleasepool 
     if (list) { unsigned lok = 0; for (NSArray *j in listed_jobs) if (totk_rt_variant_cached(j[0], j[1])) lok++;
         MLOG("[seed] the shader list's bind states: %u of %u translated (%lu shaders of the list are in the corpus)", lok, listed_n, (unsigned long)listed.count); }
 }}
+#ifdef GAME_BOTW
+#include "../../../../../botw/gfx/botw_texpack.h"   // sharp UI art (BOTW_TP_* in nvn_obj.h)
+#endif
