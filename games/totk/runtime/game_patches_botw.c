@@ -833,9 +833,14 @@ static const PchtxtSite g_pchtxt_reserved[] = {
     {0x1266114, 0xc}, {0x1281080, 0x8}, {0x151d484, 0x10}, {0x15a01a0, 0x4}, {0x1d78198, 0x8}, {0x10edae0, 0x34},
     /* the camera blend's first step (patch_blend_first_step) */
     {0xc33678, 0xc}, {0xc33694, 0x8}, {0xc336a4, 0x4}, {0xc33724, 0x4}, {0xc33730, 0x8},
+    /* upstream's sun shadow size (botw_shadow_res.h: the four moves) and field of view (botw_fov.h: the load and its checked
+       neighbours, setFovy's store; the stub is in the padding) */
+    {0x124eef8, 0x10}, {0x10edad0, 0x10}, {0xeb48ac, 0x4},
     /* the native-size block's sites (native_word, patch_output_res) */
     {0x71c, 0x4}, {0xc617c0, 0x4}, {0xc61b14, 0x4}, {0xc61ee8, 0x4}, {0xc61ef4, 0x4}, {0xc61f1c, 0x4}, {0xc61f28, 0x4},
     {0x1261704, 0x4}, {0x12618b8, 0x4}, {0x12618c4, 0x4}, {0x12660d0, 0x8}, {0x12660f0, 0x4}, {0x1266104, 0x4},
+    /* the docked branch patch_output_res checks whole: 20 words */
+    {0x12660bc, 0x50},
     /* the HD heaps (patch_hd_heaps): StarterPackMgr, texture compaction, ForResourceL / S of the three modes */
     {0x1209a8c, 0x8}, {0x127b6e0, 0x4}, {0x127b72c, 0x8}, {0x127b738, 0x8}, {0x127b744, 0x8},
     /* the font raster sites (patch_font_size, PR #608): the language tables, each row's size and face, the reference sizes, their two reads, the TextScaleOn width, the glyph cache height and the font heap */
