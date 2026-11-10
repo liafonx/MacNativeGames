@@ -94,6 +94,12 @@ compare-and-swap loops that retry inside the window. `prepare_runtime.py`, `prep
 - While a movie plays (movie player instance main+0x1e565a8), the pacing holds 30 fps. Every movie frame is shown
   (`MOVIE_PACE_DEFAULT` 0 for both BOTW versions, upstream's value). The first tower's movie plays at 31.7 fps, and the
   game goes on after it.
+- Master Kohga's entrance in the Yiga Clan Hideout runs as the event `Electric_Relic` or `Demo347_0`. While it runs,
+  the pacing holds 30 fps and the frame step is exactly 1/30 s. Above 30 fps the entrance froze at one of Kohga's lines.
+  Its `Demo_WaitForASTriggerEvent` can start one update after the animation trigger, and the trigger never comes again.
+  Savage Wind Recomp found this cause (its issue #196). Event map: `ksys::evt::Manager` pointer main+0x1e3a638 (GOT slot main+0x1d66758),
+  active event at +0x1d2b8, its name string at +0x68 (buffer at +0x74). Not run in game. `TOTK_BOTW_EVENT_30=0` turns
+  it off.
 - MetalFX keys 2 and 3: 1.9.0 upscales the 1600x900 picture into the 1920x1080 canvas with its own fragment shader
   (`bd7ffdd4`, nine texel reads). `BOTW_MFXUP_KEY` in `nvn_obj.h` is the upscale key of the version that is built. In
   docked play at 1920x1080 that draw is no upscale, so key 3 upscales the window output only.

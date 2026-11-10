@@ -150,6 +150,7 @@ static void frame_step_report(uint64_t now_ns) {
             ratio, delta * 1e3, report_short, report_short_ms, report_long, report_long_ms, ticks);
     report_ns = now_ns; report_frames = report_ticks = 0; report_seconds = report_game = report_short_ms = report_long_ms = 0; report_short = report_long = 0;
 }
+static const char *event_held_at_30(void);
 static void frame_step_measure(uint64_t now_ns) {
     frame_step_report(now_ns);
     uint64_t prev = last_present_ns;
@@ -161,6 +162,11 @@ static void frame_step_measure(uint64_t now_ns) {
     if (dt < 1.0 / 120.0) { report_short++; report_short_ms += (1.0 / 120.0 - dt) * 1e3; }
     if (dt > 1.0 / 15.0) { report_long++; report_long_ms += (dt - 1.0 / 15.0) * 1e3; }
     if (atomic_load_explicit(&pinned_step_us, memory_order_relaxed)) return;
+    if (event_held_at_30()) {   /* the console's step, exactly 1/30 s; the average starts again after the event */
+        frame_sample_count = frame_sample_next = 0; report_game += 1.0 / 30.0;
+        atomic_store_explicit(frame_step_data, frame_step_bits(1.0f / 30.0f), memory_order_release);
+        return;
+    }
     /* The raw intervals are averaged and the average is clamped, not each interval: at about 95 fps under the 120 Hz
        clock, intervals shorter than 1/120 s alternate with longer ones, and raising each short one to 1/120 s made the
        game run 6% fast (measured: botw.md). Averaged, the steps add up to the real time at any frame rate (no lower bound:
@@ -1936,12 +1942,42 @@ enum { MOVIE_WORD = 0x2cbef40 };
 #else
 enum { MOVIE_WORD = 0x1e565a8 };
 #endif
+/* Master Kohga's entrance (the Thunder Helm quest, Yiga Clan Hideout) froze above 30 fps at one of his lines: the picture
+   went on, the cutscene never ended (owner 2026-11-10, twice at 58 fps). Savage Wind Recomp, a recompilation of the same
+   1.9.0 code, found the cause (its issue #196: frozen at 55-70 and 120 fps, every run at 30 passed). The hideout's event
+   Electric_Relic calls Demo347_0, which waits for a trigger in Kohga's animation (Demo_WaitForASTriggerEvent; both names
+   are in the game's Electric_Relic and Demo347_0 flows). The trigger exists only in the update in which the animation
+   crosses its frame, so a wait that starts one update later never ends. With steps other than 1/30 s the two can fall
+   into different updates. While such an event runs, the pacing holds 30 fps and the step is exactly 1/30 s
+   (frame_step_measure), as on the console. Electric_Relic also runs the quest's talks in Gerudo Town at 30 fps.
+   1.9.0: main+0x1e3a638 holds the ksys::evt::Manager pointer (the GOT slot main+0x1d66758 that 37 readers of the active
+   event at +0x1d2b8 load). The event's name is a sead::FixedSafeString: the check requires its string pointer at +0x68
+   to point at its own buffer at +0x74. 1.6.0's addresses are not known. TOTK_BOTW_EVENT_30=0 turns it off. */
+#ifdef GAME_BOTW160
+static const char *event_held_at_30(void) { return NULL; }
+#else
+enum { EVT_MGR_WORD = 0x1e3a638, EVT_ACTIVE = 0x1d2b8, EVT_NAME = 0x68, EVT_NAME_BUF = 0x74 };
+static const char *event_held_at_30(void) {
+    static int on = -1; if (on < 0) { const char *e = getenv("TOTK_BOTW_EVENT_30"); on = !(e && !strcmp(e, "0")); }
+    if (!on || !frame_step_main) return NULL;
+    uint64_t mgr, ev = 0, name = 0;
+    memcpy(&mgr, frame_step_main + EVT_MGR_WORD, 8);
+    if (mgr) memcpy(&ev, (const void *)(uintptr_t)(mgr + EVT_ACTIVE), 8);
+    if (ev) memcpy(&name, (const void *)(uintptr_t)(ev + EVT_NAME), 8);
+    if (!ev || name != ev + EVT_NAME_BUF) return NULL;
+    const char *s = (const char *)(uintptr_t)name;
+    return !strcmp(s, "Electric_Relic") ? "Electric_Relic" : !strcmp(s, "Demo347_0") ? "Demo347_0" : NULL;
+}
+#endif
 int runtime_game_fps_limit(void) {
+    const char *event = event_held_at_30();
+    static const char *event_was;
+    if (event != event_was) { event_was = event; fprintf(stderr, "[botw] event %s: frame pacing %s\n", event ? event : "ends", event ? "held at 30 fps, step 1/30 s (an animation trigger wait)" : "back to normal"); }
     static int on = -1; if (on < 0) { const char *e = getenv("TOTK_MOVIE_30"); on = !(e && !strcmp(e, "0")); }
-    if (!on || !frame_step_main) return 0;
+    if (!on || !frame_step_main) return event ? 30 : 0;
     uint64_t movie; memcpy(&movie, frame_step_main + MOVIE_WORD, 8);
     static int was; if (!!movie != was) { was = !!movie; fprintf(stderr, "[botw] movie %s: frame pacing %s\n", was ? "starts" : "ends", was ? "held at 30 fps" : "back to normal"); }
-    return movie ? 30 : 0;
+    return movie || event ? 30 : 0;
 }
 /* The settings panel's picture (runtime.h OUTPUT_MODE_*). MetalFX 2K: MetalFX replaces the game's own upscale of the
    scene into the 1080p canvas (nvn_mtl.m mfxup_dock, BOTW_MFXUP_DOCK_KEY) and upscales the canvas into a window or full
