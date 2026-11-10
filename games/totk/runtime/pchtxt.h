@@ -39,7 +39,7 @@ static void pchtxt_apply(Module *m, const char *tag, const PchtxtSite *reserved,
         if (fseek(n, 0x40, SEEK_SET) || fread(id, 1, sizeof id, n) != sizeof id) runtime_fail("TOTK_PCHTXT: cannot read main's build id from extracted/<version>/exefs/main");
         fclose(n);
         for (int i = 0; i < 20; i++) snprintf(want + 2 * i, 3, "%02X", id[i]);
-    } else {   /* the game app keeps only the id (build_app.py write_main_build_id), not the extracted main */
+    } else {
         snprintf(nso, sizeof nso, "extracted/%s/exefs/main.build-id", TOTK_GAME_DIR);
         FILE *b = fopen(nso, "r");
         if (!b || fscanf(b, "%40[0-9A-Fa-f]", want) != 1 || strlen(want) != 40) runtime_fail("TOTK_PCHTXT: cannot read main's build id from extracted/<version>/exefs/main or main.build-id");

@@ -51,7 +51,7 @@ def card_image(folder):
     return xci
 
 
-def run_main(case, folder, base, update=None, dlcs=(), game='botw', stop='step_code_botw', fonts=True, version='botw190', extra=(), card='botw160'):
+def run_main(case, folder, base, update=None, dlcs=(), game='botw', stop='step_code_botw', fonts=True, version='botw190', card='botw160', extra=()):
     """build_app.main with the long steps mocked: it stops at `stop` (Stop) or at the first BuildError, which it returns
     with the started mocks. fonts=False leaves out --firmware; version is what the update is identified as."""
     keys = folder / 'prod.keys'

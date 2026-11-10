@@ -278,7 +278,7 @@ class Updates(unittest.TestCase):
             with self.subTest(version=version):
                 tree=self.root/version;out=self.root/f'{version}.app'
                 files=[f'build/totk-native-{version}','build/pso_manifest.tsv','build/pso_title.tsv','build/spirv-cross/spirv-cross',
-                       'prebuilt/macos-arm64/totk_xlate','build/app-launcher',f'extracted/{version}/romfs/romfs.bin',
+                       'prebuilt/macos-arm64/totk_xlate',f'extracted/{version}/romfs/romfs.bin',
                        f'extracted/{version}/romfs/runtime-index.bin',
                        f'build/shader-seed/{version}/seed-manifest.json',
                        f'build/shader-seed/{version}/pso_manifest.tsv']+[f'rewritten/{version}/{n}.patched.bin' for n in ('main','sdk','subsdk0')]
@@ -290,7 +290,8 @@ class Updates(unittest.TestCase):
                     version=version, chain='totk-native-v9-unverified', shaders=8000,
                     files={'pso_manifest.tsv':hashlib.sha256(b'test').hexdigest()})))
                 with patch.object(build_app, 'app_seal_valid', return_value=True), patch.object(build_app, 'sign_app') as signing, \
-                     patch.object(build_app, 'resolve_lists', side_effect=fake_lists):
+                     patch.object(build_app, 'resolve_lists', side_effect=fake_lists), \
+                     patch.object(build_app, 'prepare_prompt_assets'):
                     build_app.step_app(tree,out,self.root/'logs',version=version)
                 signing.assert_called_once_with(out.with_name(out.name+'.partial'),self.root/'logs')
                 info=plistlib.loads((out/'Contents/Info.plist').read_bytes())
@@ -301,6 +302,7 @@ class Updates(unittest.TestCase):
                 res=out/'Contents/Resources/totk'
                 self.assertFalse((res/'build'/f'totk-native-{version}').exists())
                 self.assertTrue((res/'build/totk-native').exists())
+                self.assertTrue((out/'Contents/MacOS/TOTK').is_file())   # the game binary is the app's executable
                 self.assertTrue((res/f'rewritten/{version}/main.patched.bin').exists())
                 self.assertTrue((res/'build/shader-seed/seed-manifest.json').exists())
                 self.assertTrue((res/'build/pso_title.tsv').exists())   # the list the first frame waits for
@@ -323,7 +325,7 @@ class Updates(unittest.TestCase):
             target.parent.mkdir(parents=True,exist_ok=True)
             target.write_bytes(b'synthetic payload')
         with patch.object(build_app,'data_bundle',side_effect=fake_data_bundle),patch.object(build_app,'clone',side_effect=fake_clone), \
-             patch.object(build_app,'sign_app',side_effect=build_app.BuildError('seal rejected')),patch.object(build_app,'resolve_lists'):
+             patch.object(build_app,'sign_app',side_effect=build_app.BuildError('seal rejected')),patch.object(build_app,'resolve_lists'),patch.object(build_app,'prepare_prompt_assets'):
             with self.assertRaisesRegex(build_app.BuildError,'seal rejected'):
                 build_app.step_app(tree,out,self.root/'logs',version='v143')
         self.assertEqual((out/'keep.txt').read_text(),'previous working app')
@@ -357,12 +359,15 @@ class Updates(unittest.TestCase):
         def processes(args,*_args,**_kwargs):
             if args[0]=='git':   # build_app.source_commit: the commit the app records (MNGSourceCommit)
                 return SimpleNamespace(returncode=0,stdout='abc1234\n')
+            if args[:2]==['ps','-ww']:   # build_app.wait_until_closed: the matching process's own command line
+                return SimpleNamespace(returncode=0,stdout=str(old.resolve())+'\n',check_returncode=lambda:None)
             self.assertEqual(old.read_bytes(),b'old running app')
             checks.append(True)
-            return SimpleNamespace(stdout=str(old.resolve())+'\n' if len(checks)==1 else '')
+            return SimpleNamespace(stdout=f'  101 {old.resolve()}\n' if len(checks)==1 else '')
         with patch.object(build_app,'data_bundle',side_effect=fake_data_bundle),patch.object(build_app,'shader_bundle',side_effect=fake_shader_bundle),patch.object(build_app,'clone',side_effect=fake_clone),patch.object(build_app,'sign_app'),patch.object(build_app,'mac_pipelines'),patch.object(build_app,'app_seal_valid',return_value=True),patch.object(build_app,'resolve_lists'), \
              patch.object(build_app.subprocess,'check_output',return_value='a'*40), \
-             patch.object(build_app.subprocess,'run',side_effect=processes),patch.object(build_app.time,'sleep') as pause:
+             patch.object(build_app.subprocess,'run',side_effect=processes),patch.object(build_app.time,'sleep') as pause, \
+             patch.object(build_app,'prepare_prompt_assets'):
             build_app.step_app(tree,out,self.root/'logs',version='v143')
         self.assertEqual(len(checks),2);pause.assert_called_once_with(2)
         self.assertEqual(old.read_bytes(),b'new app')

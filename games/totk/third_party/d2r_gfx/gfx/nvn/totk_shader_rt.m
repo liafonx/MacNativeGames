@@ -83,6 +83,8 @@ static _Atomic int64_t g_cached_variants = -1;
 
 static NSString *root_dir(void) {   // native-port/ (the executable lives in native-port/build/)
     if (g_root) return g_root;
+    const char *native = getenv("TOTK_NATIVE_DIR");   // the Mac app: its executable is Contents/MacOS/<name> (app/launcher.m)
+    if (native && *native) return g_root = [@(native) stringByDeletingLastPathComponent];
     char path[4096]; uint32_t n = sizeof path;
     if (_NSGetExecutablePath(path, &n)) die("executable path too long");
     g_root = [[[@(path) stringByResolvingSymlinksInPath] stringByDeletingLastPathComponent] stringByDeletingLastPathComponent];
@@ -94,12 +96,23 @@ static NSString *seed_dir(void) {   // the prepared startup shaders that come wi
 }
 NSString *totk_rt_dir(void) {
     static dispatch_once_t once;
-    dispatch_once(&once, ^{
+    // Guest threads may keep their outer pool for the whole run; release import metadata now.
+    dispatch_once(&once, ^{ @autoreleasepool {
         const char *e = getenv("TOTK_SHADER_CACHE");
+        NSString *cacheChain = @DMSH_CHAIN;
+        NSData *manifest = [NSData dataWithContentsOfFile:[seed_dir() stringByAppendingPathComponent:@"seed-manifest.json"]];
+        NSDictionary *metadata = manifest ? [NSJSONSerialization JSONObjectWithData:manifest options:0 error:nil] : nil;
+        NSString *context = [metadata isKindOfClass:NSDictionary.class] ? metadata[@"translation_context_sha256"] : nil;
+        if ([context isKindOfClass:NSString.class] && context.length == 64 &&
+            [context rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"] invertedSet]].location == NSNotFound)
+            cacheChain = [cacheChain stringByAppendingFormat:@"-%@", context];
+#ifdef GAME_NS2
+        else cacheChain = [cacheChain stringByAppendingString:@"-nvn-default-depth-v1-predicated-writes"];   // development runs without a seed; the suffix names the translator semantics such caches hold
+#endif
 #if TARGET_OS_IPHONE
-        g_dir = e ? @(e) : [NSString stringWithFormat:@"shader-cache/rt-%s", DMSH_CHAIN];   // in Documents (the app's working directory)
+        g_dir = e ? @(e) : [NSString stringWithFormat:@"shader-cache/rt-%@", cacheChain];   // in Documents (the app's working directory)
 #else
-        g_dir = e ? @(e) : [root_dir() stringByAppendingFormat:@"/build/shader-cache/rt-%s", DMSH_CHAIN];
+        g_dir = e ? @(e) : [root_dir() stringByAppendingFormat:@"/build/shader-cache/rt-%@", cacheChain];
 #endif
         [NSFileManager.defaultManager createDirectoryAtPath:g_dir withIntermediateDirectories:YES attributes:nil error:nil];
         const char *seedMode = getenv("TOTK_SHADER_SEED");
@@ -151,7 +164,7 @@ NSString *totk_rt_dir(void) {
             (unsigned long)[fill[@"packs"] unsignedIntegerValue], (unsigned long)[fill[@"imported_files"] unsignedIntegerValue]);
         for (NSString *why in fill[@"rejected"]) LOG("【红】[shader-fill] 丢弃不完整的着色器包 %s（请在 Mac 上重新运行 fill_shaders.py）", why.UTF8String);
 #endif
-    });
+    } });
     return g_dir;
 }
 

@@ -3,6 +3,7 @@ and 1.6.0 share) reads a pchtxt the way the build's --mod does (games/totk/scrip
 applied, @flag print_values is accepted, and "@flag offset_shift 0x100" is required before the first patch line; a line outside main or with a byte that is not
 two hex digits stops the start."""
 from pathlib import Path
+import build_app
 import os
 import re
 import shutil
@@ -10,7 +11,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-import build_app
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_ID = bytes(range(0x10, 0x24))       # 20 bytes at 0x40 of the extracted main
@@ -113,6 +113,21 @@ class PchtxtCases:
         self.assertIn('main.build-id', out)
 
 
+    def test_packaged_app_reads_main_build_id(self):
+        app = self.dir / 'app'
+        build_id = app / f'extracted/{self.GAME_DIR}/exefs/main.build-id'
+        build_id.parent.mkdir(parents=True)
+        build_id.write_text(BUILD_ID.hex().upper() + '\n')
+        code, out = self.run_patch(HEADER + '@enabled\n40 aabbccdd\n@stop\n', app)
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.splitlines()[-1].startswith('aabbccdd'), out)
+
+        build_id.write_text('not a build id\n')
+        code, out = self.run_patch(HEADER + '@enabled\n40 aabbccdd\n@stop\n', app)
+        self.assertEqual(code, 3, out)
+        self.assertIn('main.build-id', out)
+
+
 @unittest.skipUnless(sys.platform == 'darwin', 'the runtime builds on macOS only')
 class RuntimePchtxt(PchtxtCases, unittest.TestCase):
     pass
@@ -145,7 +160,7 @@ class BotwChecks:
     def test_reserved_table_matches_patch_sites(self):
         sys.path.insert(0, str(ROOT / 'games/totk/scripts'))
         import patch_sites
-        text = patch_sites.compiled_text((ROOT / 'games/totk/runtime/game_patches_botw.c').read_text(),
+        text = patch_sites.compiled_text((ROOT / 'games/totk/runtime/botw_pchtxt_sites.h').read_text(),
                                          patch_sites.BOTW_DEFINED[self.VERSION])
         table = re.search(r'g_pchtxt_reserved\[\] = \{(.*?)\n\};', text, re.S).group(1)
         runtime = {o + i for o, n in ((int(a, 16), int(b, 16)) for a, b in re.findall(r'\{(0x[0-9a-f]+), (0x[0-9a-f]+)\}', table))
@@ -191,7 +206,6 @@ class MainBuildIdFile(unittest.TestCase):
         target = self.dir / 'app/extracted/v121/exefs/main.build-id'
         build_app.write_main_build_id(self.dir / 'tree/extracted/v121/exefs/main', target)
         self.assertFalse(target.exists())
-
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,9 +1,15 @@
 /* Native keyboard and macOS gamepad backed full-key controller. State ABI follows libnx HID. */
 #include <TargetConditionals.h>
 #include "runtime.h"
+#include "game_version.h"
 #include "autoload.h"
 #include "world_survey.h"
 #include "keyboard_map.h"
+#include "input_prompts.h"
+/* Input-only probes do not link the platform renderer. */
+extern void runtime_prompt_keyboard(const KeyMap *) __attribute__((weak_import));
+extern void runtime_prompt_note_input(PromptDevice) __attribute__((weak_import));
+#include "../zeldaVR/gfx/vr_labo.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,10 +33,11 @@ static KeyMap keyMap;static int keyMapLoaded;
 static unsigned char held[KEYMAP_INPUTS];static KeyMapOutput heldOut;
 static void keymap_load_locked(void){
  if(keyMapLoaded)return;keyMapLoaded=1;keymap_default(&keyMap);
- char text[8192];if(!runtime_setting_word("keyboard.txt",text,sizeof text)){fprintf(stderr,"[totk-input] keyboard layout: default\n");return;}
+ char text[8192];if(!runtime_setting_word("keyboard.txt",text,sizeof text)){fprintf(stderr,"[totk-input] keyboard layout: default\n");if(runtime_prompt_keyboard)runtime_prompt_keyboard(&keyMap);return;}
  const char *error=NULL;int line=keymap_parse(text,&keyMap,&error);
  if(line)fprintf(stderr,"[totk-input] keyboard.txt line %d: %s; using the default keyboard layout\n",line,error);
  else fprintf(stderr,"[totk-input] keyboard layout: keyboard.txt\n");
+ if(runtime_prompt_keyboard)runtime_prompt_keyboard(&keyMap);
 }
 /* The Switch buttons the held keys drive, for runtime_keyboard_buttons, which takes no lock (the mouse ticks under the
    gamepad's lock, which is taken inside inputLock): the script keys' fixed layout and the player's (after PR #1210). */
@@ -45,11 +52,13 @@ void runtime_keymap_set(const KeyMap *map){
  char text[8192];int n=keymap_format(map,text,sizeof text);
  pthread_mutex_lock(&inputLock);keyMapLoaded=1;keyMap=*map;held_changed_locked();pthread_mutex_unlock(&inputLock);
  if(n>0)runtime_setting_save("keyboard.txt",text,"keyboard layout");
+ if(runtime_prompt_keyboard)runtime_prompt_keyboard(map);
 }
 void runtime_keymap_reset(void){
  KeyMap map;keymap_default(&map);
  pthread_mutex_lock(&inputLock);keyMapLoaded=1;keyMap=map;held_changed_locked();pthread_mutex_unlock(&inputLock);
  runtime_setting_remove("keyboard.txt");fprintf(stderr,"[totk-input] keyboard layout: default (reset)\n");
+ if(runtime_prompt_keyboard)runtime_prompt_keyboard(&map);
 }
 /* Real user input (a window key, a controller button, a stick pushed past half) stops TOTK_AUTOLOAD and is logged at most
    once a minute. In an agent's test session (TOTK_SLOT_OWNER other than user) the line says the user is playing it: its
@@ -89,6 +98,7 @@ void runtime_input_key_synthetic(unsigned code,int down){if(code>=128)return;pth
  if(press&&code==KEY_VR_RECENTER)vr_recenter_key();}
 void runtime_input_key(unsigned code,int down){
  if(code>=128||ignore_user())return;if(down)user_input("keyboard");
+ if(down&&runtime_prompt_note_input)runtime_prompt_note_input(PROMPT_KEYBOARD);
  pthread_mutex_lock(&inputLock);int press=down&&!held[code];held[code]=(unsigned char)!!down;held_changed_locked();pthread_mutex_unlock(&inputLock);
  if(press&&code==KEY_SETTINGS)runtime_settings_toggle();
  if(press&&code==KEY_VR_VIEW)vr_view_key();
@@ -97,6 +107,7 @@ void runtime_input_key(unsigned code,int down){
 /* A mouse button in mouse mode (runtime/gamepad.m: 0 left, 1 right, 2 middle, 3 and 4 the side buttons). */
 void runtime_input_mouse(int button,int down){
  if(button<0||button>=KEYMAP_MOUSE_BUTTONS||ignore_user())return;if(down)user_input("mouse");
+ if(down&&runtime_prompt_note_input)runtime_prompt_note_input(PROMPT_KEYBOARD);
  pthread_mutex_lock(&inputLock);held[KEYMAP_MOUSE_FIRST+button]=(unsigned char)!!down;held_changed_locked();pthread_mutex_unlock(&inputLock);
 }
 void runtime_input_clear_window(void){pthread_mutex_lock(&inputLock);memset(keys,0,sizeof(keys));memset(held,0,sizeof held);heldOut=(KeyMapOutput){0};pending=0;held_buttons_locked();pthread_mutex_unlock(&inputLock);}
@@ -162,10 +173,11 @@ static uint32_t show_controller_support(ControllerSupportResult *out,const void 
 }
 /* Vibration devices and the six-axis sensor: runtime/hid_feedback.c (none unless TOTK_RUMBLE=1 / TOTK_GYRO=1). */
 #ifdef GAME_BOTW
-/* SDK 7 (Breath of the Wild 1.6.0, botw.md). The console's own seven-axis sensor (Labo VR) is absent on a Mac: it starts and
-   stops without states. Gyroscope zero-drift mode and the dual Joy-Con assignment change nothing for the host controller.
+/* SDK 7 (Breath of the Wild 1.6.0, botw.md). The console sensor is absent;
+   our camera consumes Quest tracking through its own native controller.
+   Gyroscope zero-drift mode and the dual Joy-Con assignment change nothing for the host controller.
    The one-argument controller applet returns at once, as the two-argument one does (one player). */
-static uint32_t seven_axis_init(void *work,unsigned long size){(void)work;(void)size;fprintf(stderr,"[botw] seven-axis sensor: not present\n");return 0;}
+static uint32_t seven_axis_init(void *work,unsigned long size){(void)work;(void)size;return 0;}
 static uint32_t seven_axis_ok(void){return 0;}
 static void seven_axis_reset(void){}
 static int seven_axis_states(void *out,int count){(void)out;(void)count;return 0;}
@@ -281,6 +293,20 @@ static void *input_file(void *arg) {
             extern void dm_gfx_anomdump(void); dm_gfx_anomdump();
         } else if (sscanf(line, "querylog %u %n", &code, &used) == 1 && used && !line[used] && code > 0 && code <= 600) {
             extern void dm_gfx_querylog_next(long n); dm_gfx_querylog_next((long)code);   /* occlusion query results of the next n frames */
+#if defined(GAME_BOTW160) || defined(TOTK_GAME_V143)
+        } else if (!strncmp(line,"vr_resolution ",14)) {
+            int w,h,n=0;extern int vr_set_resolution(int w,int h);
+            if(sscanf(line+14,"%dx%d %n",&w,&h,&n)==2&&n&&!line[14+n]) {
+                if(!vr_set_resolution(w,h))fprintf(stderr,"[totk] live VR render resolution rejected: %dx%d\n",w,h);
+            } else fprintf(stderr,"[totk] vr_resolution command needs widthxheight per eye\n");
+#endif
+#if defined(GAME_DKB) || defined(GAME_POKOPIA)
+        } else if (!strncmp(line,"resolution ",11)) {
+            unsigned w,h;int n=0;
+            if(sscanf(line+11,"%ux%u %n",&w,&h,&n)==2&&n&&!line[11+n]) {
+                if(!runtime_output_size_set(w,h))fprintf(stderr,"[totk] " GAME_NAME " live resolution rejected: %ux%u\n",w,h);
+            } else fprintf(stderr,"[totk] resolution command needs widthxheight\n");
+#endif
         } else if (!strncmp(line, "flag ", 5)) {
             /* "flag <name> <0|1>": switch a graphics behaviour while the game runs (A/B without restarting); rumble / gyro mute and unmute those */
             char name[64]; int v; if (sscanf(line + 5, "%63s %d", name, &v) != 2) runtime_fail("diagnostic flag needs <name> <0|1>");
@@ -369,23 +395,6 @@ static void *input_file(void *arg) {
             char *e; uint64_t o = strtoull(line + 7, &e, 16); char *e2; long r = strtol(e, &e2, 10);
             if (e2 != e) { char *e3; uint64_t lo = strtoull(e2, &e3, 16); runtime_diag_bp_regs_if(o, (int)r, lo, strtoull(e3, NULL, 16)); }   /* "bpregs <off> <reg> <lo> <hi>": only when x<reg> is in [lo, hi) */
             else runtime_diag_bp_regs(o);
-        } else if (!strncmp(line, "b2pair", 6)) {   /* "b2pair": first / second run recordings paired by identity (stereo B2 diagnostic) */
-            extern void runtime_vr_b2_pair(void);
-            runtime_vr_b2_pair();
-        } else if (!strncmp(line, "b2slots", 7)) {   /* "b2slots": where the game keeps the runs' handles (stereo B2 diagnostic) */
-            extern void runtime_vr_b2_slots(void);
-            runtime_vr_b2_slots();
-        } else if (!strncmp(line, "b2calls", 7)) {   /* "b2calls": the next frame's calls of the runs' recordings (stereo B2 diagnostic) */
-            extern void runtime_vr_b2_calls(void);
-            runtime_vr_b2_calls();
-        } else if (!strncmp(line, "b2eye ", 6)) {   /* "b2eye <mm>": half the eye distance for stereo B2 (diagnostic until the VR thread sets it) */
-            extern void runtime_vr_b2_eye(float mm);
-            runtime_vr_b2_eye((float)atof(line + 6));
-        } else if (!strncmp(line, "b2 ", 3)) {   /* "b2 <0|1|2|3> [mask]": zeldaVR stereo B2, the second render run per game update (game_patches_v143.c) */
-            extern void runtime_vr_b2(int on);
-            extern void runtime_vr_b2_mask(unsigned m);
-            char *e; long mode = strtol(line + 3, &e, 10); if (*e == ' ') runtime_vr_b2_mask((unsigned)strtoul(e, NULL, 0));
-            runtime_vr_b2((int)mode);
         } else if (!strncmp(line, "dumpmain ", 9)) {   /* "dumpmain <file>": main's loaded image, relocated (VR stereo RE) */
             extern void runtime_diag_dump_main(const char *path);
             char path[1024]; snprintf(path, sizeof path, "%s", line + 9); path[strcspn(path, "\r\n")] = 0;
@@ -422,7 +431,12 @@ static void *input_file(void *arg) {
     }
     fclose(f); return NULL;
 }
-__attribute__((constructor)) static void input_file_start(void) {
+/* loader.c has the real one; the input and autoload probes link this file without it and are never the app. */
+__attribute__((weak)) int runtime_app_mode(void) { return 0; }
+void runtime_input_file_start(void) {
+    static int started; if (started) return;
     const char *e = getenv("TOTK_INPUT_FILE"); if (!e || !*e) return;
-    pthread_t t; if (pthread_create(&t, NULL, input_file, (void *)e)) runtime_fail("diagnostic input thread"); pthread_detach(t);
+    started = 1; pthread_t t; if (pthread_create(&t, NULL, input_file, (void *)e)) runtime_fail("diagnostic input thread"); pthread_detach(t);
 }
+/* Started as the Mac app, the launcher part (runtime_app_launch) names the file only later: main starts it then. */
+__attribute__((constructor)) static void input_file_start(void) { if (!runtime_app_mode()) runtime_input_file_start(); }
