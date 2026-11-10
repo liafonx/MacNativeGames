@@ -96,6 +96,14 @@ compare-and-swap loops that retry inside the window. `prepare_runtime.py`, `prep
   the arrow turned down at 18.7 deg/s at 15, 30 and 60 fps patched and at 36.5 deg/s at 60 fps shipped. Its drop 40 m
   after the fall began was 9.29 m at 30 fps, 8.96 m at 60 fps patched and 18.9 m at 60 fps shipped. 120 fps was not
   reached: the scene held 60.
+- Sound timers follow the measured step too (2026-11-10). The sound frame update floored the VFR ratio at 0.5 (one 60
+  fps frame) before it sets the sound clock and the xlink2 rate (main+0x155100c `fcsel` -> `fmov s8, s0`;
+  `TOTK_SLINK_REALTIME=0` keeps the floor). Measured with the 30 s report's sound-clock sum: shipped, 1.20x real time at
+  a steady 72 fps and 2.00x game time with the step pinned at 8.333 ms (120 fps); fixed, 1.00x.
+  `verify_sound_step_patch.py` runs it in Unicorn at 30-240 fps, with the shipped floor as the negative control. Not
+  checked: a field battle by ear and the Cryonis marker.
+  1.6.0 floors the same ratio at 1.0 (main+0x1c59fb0 `fmax` -> `nop`, in `patch_slink_rate`): shipped 4.00x, fixed
+  1.00x game time (pinned 8.333 ms, title screen); `verify_sound_step_patch.py --version botw160`.
 - Docked play renders at 1920x1080, as upstream's 1.6.0 port does: the display-mode routine main+0x1266074, `movk` at
   main+0x12660c8. `TOTK_RENDER_RES=900` keeps 1600x900.
 - While a movie plays (movie player instance main+0x1e565a8), the pacing holds 30 fps. Every movie frame is shown
