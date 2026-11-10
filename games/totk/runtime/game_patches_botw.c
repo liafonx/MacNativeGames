@@ -94,7 +94,7 @@ static double frame_samples[5], report_seconds, report_game, report_short_ms, re
 static unsigned frame_sample_count, frame_sample_next, report_short, report_long;
 static _Atomic uint32_t pinned_step_us;
 #ifdef GAME_BOTW160
-enum { VFR_INSTANCE = 0x2d1e170, VFR_RATIO = 0x3c, VFR_DELTA_TIME = 0x138, SOUND_CLOCK = 0 };   /* sound clock not mapped */
+enum { VFR_INSTANCE = 0x2d1e170, VFR_RATIO = 0x3c, VFR_DELTA_TIME = 0x138, SOUND_CLOCK = 0x2cc19f8 };   /* see patch_slink_rate */
 #else   /* 1.9.0: the singleton pointer is main+0x1e93890, the object's layout is the same */
 enum { VFR_INSTANCE = 0x1e93890, VFR_RATIO = 0x3c, VFR_DELTA_TIME = 0x138, SOUND_CLOCK = 0x1e36488 };   /* see patch_sound_step */
 #endif
@@ -333,13 +333,18 @@ static void patch_pad_repeat(Module *m, uint64_t page) {
    which is the ratio on the Switch, where a frame is never shorter than 1/30 s. Above 30 fps the 1.0 made every SLink
    timer count rendered frames: Cryonis' placement marker, emitted again when its sound event ends after about 24
    frames, restarted 4-5 times a second at 120 fps instead of about 1.3, so the ice block preview never grew (measured
-   2026-10-23; 1.3 a second at 120 fps after the fix). The store now takes the unclamped ratio from the frame-step page;
-   the audio frame values computed from the clamped number just before it are unchanged. x9 and s0 are free there (a call follows):
+   2026-10-23; 1.3 a second at 120 fps after the fix). The store now takes the unclamped ratio from the frame-step page.
+   x9 and s0 are free there (a call follows):
      main+0x1c5a014  str s0, [x8, #0x84]  -> b <veneer>
-     veneer          adrp x9, <page> / ldr s0, [x9] / str s0, [x8, #0x84] / b main+0x1c5a018 */
+     veneer          adrp x9, <page> / ldr s0, [x9] / str s0, [x8, #0x84] / b main+0x1c5a018
+   The same clamped ratio sets the sound clock [[main+0x2cc19f8]+0x38] (main+0x1c59fc8..0x1c5a008: +0x20 = ratio, +0x24 =
+   ratio / the VFR's 30 at +0x154, the seconds the sound timers and fades add each frame, as in 1.9.0's patch_sound_step).
+   With the 1.0 floor it added 4.00 s per second of game time with the step pinned at 8.333 ms (2026-11-10; 1.00 after). It is gone,
+   so the clock and the store both get the measured ratio (30 fps and slower give the shipped values):
+     main+0x1c59fb0  fmax s0, s0, s1  -> nop */
 static void patch_slink_rate(Module *m, uint64_t page) {
     const char *e = getenv("TOTK_SLINK_REALTIME");
-    if (!ios_code() && e && !strcmp(e, "0")) { fprintf(stderr, "[botw] sound-link timers at least one 30 fps frame per frame, as shipped (TOTK_SLINK_REALTIME=0)\n"); return; }
+    if (!ios_code() && e && !strcmp(e, "0")) { fprintf(stderr, "[botw] sound-link timers and the sound clock at least one 30 fps frame per frame, as shipped (TOTK_SLINK_REALTIME=0)\n"); return; }
     enum { SITE = 0x1c5a014, BACK = 0x1c5a018 };
     static const struct { uint32_t off, original; } check[] = {
         {0x1c59fa8u, 0xbd400100u}, {0x1c59facu, 0x1e2e1001u}, {0x1c59fb0u, 0x1e214800u},
@@ -363,7 +368,11 @@ static void patch_slink_rate(Module *m, uint64_t page) {
     for (size_t i = 0; !CODE_PATCHED_AT_BUILD && i < sizeof veneer; i++) if (m->base[stub + i]) runtime_fail("sound-link veneer padding not empty");
     put_words(m, stub, veneer, sizeof veneer / sizeof *veneer, "sound-link veneer");
     put_word(m, SITE, branch_to(SITE, stub), "sound-link rate");
-    fprintf(stderr, "[botw] sound-link timers follow the measured frame ratio (veneer +%#llx; TOTK_SLINK_REALTIME=0: as shipped)\n",
+    const struct { uint32_t off, word; } put[] = {
+        {0x1c59fb0u, 0xd503201fu},   /* nop: no 1.0 floor on the sound clock */
+    };
+    for (size_t i = 0; i < sizeof put / sizeof *put; i++) put_word(m, put[i].off, put[i].word, "sound clock");
+    fprintf(stderr, "[botw] sound-link timers and the sound clock follow the measured frame ratio (veneer +%#llx; TOTK_SLINK_REALTIME=0: as shipped)\n",
             (unsigned long long)stub);
 }
 /* Blends start with one 30 fps frame (#1266; TOTK_BLEND_FIRST_STEP=0: as shipped). The camera's blend timer

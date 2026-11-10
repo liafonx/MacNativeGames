@@ -95,6 +95,8 @@ compare-and-swap loops that retry inside the window. `prepare_runtime.py`, `prep
   a steady 72 fps and 2.00x game time with the step pinned at 8.333 ms (120 fps); fixed, 1.00x.
   `verify_sound_step_patch.py` runs it in Unicorn at 30-240 fps, with the shipped floor as the negative control. Not
   checked: a field battle by ear and the Cryonis marker.
+  1.6.0 floors the same ratio at 1.0 (main+0x1c59fb0 `fmax` -> `nop`, in `patch_slink_rate`): shipped 4.00x, fixed
+  1.00x game time (pinned 8.333 ms, title screen); `verify_sound_step_patch.py --version botw160`.
 - Docked play renders at 1920x1080, as upstream's 1.6.0 port does: the display-mode routine main+0x1266074, `movk` at
   main+0x12660c8. `TOTK_RENDER_RES=900` keeps 1600x900.
 - While a movie plays (movie player instance main+0x1e565a8), the pacing holds 30 fps. Every movie frame is shown

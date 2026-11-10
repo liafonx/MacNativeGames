@@ -21,10 +21,11 @@ def adrp(rd, site, target):
     return 0x90000000 | ((imm & 3) << 29) | ((imm >> 2) << 5) | rd
 
 
-def c_190(function):
-    """The check[] and put[] tables of `function` in the 1.9.0 branch of game_patches_botw.c: (check {off: original word},
-    put {off: ("adrp", register, site) | ("word", value)}). Nothing about the patch words is restated in this script."""
-    c = (ROOT / "runtime/game_patches_botw.c").read_text().split("Breath of the Wild 1.9.0", 1)[1]
+def c_190(function, version="botw190"):
+    """The check[] and put[] tables of `function` in the 1.9.0 branch of game_patches_botw.c (version "botw160": the 1.6.0
+    branch before it): (check {off: original word}, put {off: ("adrp", register, site) | ("word", value)}). Nothing about
+    the patch words is restated in this script."""
+    c = (ROOT / "runtime/game_patches_botw.c").read_text().split("Breath of the Wild 1.9.0", 1)[version == "botw190"]
     body = c[c.index(f"static void {function}("):]
     body = body[:body.index("\n}\n")]
     tables = {}
