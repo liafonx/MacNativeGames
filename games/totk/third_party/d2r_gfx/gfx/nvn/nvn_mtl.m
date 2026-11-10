@@ -1670,9 +1670,8 @@ void *mtl_ucap_dup(const void *basev) {
 }
 /* Stereo replay, the eye's projection (vr开发.md section 23). The game renders with one camera whose frustum covers both
    eyes; a replay for one eye uses that camera's view matrix unchanged and, wherever a uniform of this submission holds
-   the camera's projection P, its inverse, P*V or (P*V)^-1 (row-major or transposed), the eye's: P_eye * T, P_eye the
-   headset's rays for that eye with the 1.06 overscan and P's own depth terms, T the shift of half the eye distance in
-   view space. View-space quantities stay the centre camera's and positions rebuilt from depth through the eye's inverse
+   the camera's projection P, its inverse, P*V or (P*V)^-1 (row-major or transposed), the eye's: P * T, T the shift of half the eye distance in view space (the frustum
+   itself stays the game's, see below). View-space quantities stay the centre camera's and positions rebuilt from depth through the eye's inverse
    land in that same view space. V and P are this submission's own bytes of the main scene camera's block
    (runtime_vr_camera_block). Only the capture (our copy) is written. Returns the matrices replaced. */
 static int m4_inv(const double *m, double *o) {
@@ -1711,10 +1710,14 @@ int mtl_ucap_eye(void *capv, int eye) {
     int ok = P[0] > 0.05 && P[5] > 0.05 && P[14] == -1 && P[15] == 0 && P[1] == 0 && P[4] == 0 && P[12] == 0 && P[13] == 0;
     for (int r = 0; r < 3 && ok; r++) { double n2 = V[r * 4] * V[r * 4] + V[r * 4 + 1] * V[r * 4 + 1] + V[r * 4 + 2] * V[r * 4 + 2]; if (!(fabs(n2 - 1) < 1e-3)) ok = 0; }
     if (!ok) { atomic_fetch_add(&g_eye_fix[2], 1); return 0; }
-    const double l = tan(hv.fov[eye][0]) * 1.06, r_ = tan(hv.fov[eye][1]) * 1.06, u = tan(hv.fov[eye][2]) * 1.06, d = tan(hv.fov[eye][3]) * 1.06;
-    if (!(r_ > l && u > d)) { atomic_fetch_add(&g_eye_fix[2], 1); return 0; }
+    /* The eye keeps the game's own frustum (the one that covers both eyes) and only moves sideways. An eye's own
+       asymmetric frustum was tried first (st-07) and gave each eye its own lighting and HUD: the game also hands the
+       projection to its shaders as loose parameters (1/P00, 1/P11, the aspect, the field of view, P02/P00, per-light
+       values: cb-01 / cb-02, about ten kinds of blocks), all computed for the centre camera's frustum; with the same
+       frustum for both eyes every one of them stays right, and the HUD keeps one direction for both eyes. */
+    float pf[16], rays[4]; for (int i = 0; i < 16; i++) pf[i] = (float)P[i];
+    if (!vr_projection_fov(pf, rays)) { atomic_fetch_add(&g_eye_fix[2], 1); return 0; }
     memcpy(Pe, P, sizeof Pe);
-    Pe[0] = 2 / (r_ - l); Pe[2] = (r_ + l) / (r_ - l); Pe[5] = 2 / (u - d); Pe[6] = (u + d) / (u - d);
     const double shift = (eye ? -0.5 : 0.5) * hv.ipd;   // the left eye sits at -ipd/2: the scene moves by +ipd/2 in its view space
     for (int r = 0; r < 4; r++) Pe[r * 4 + 3] += Pe[r * 4] * shift;   // Pe * T(shift, 0, 0)
     m4_mul(P, V, PV); m4_mul(Pe, V, PVe);
@@ -1745,7 +1748,7 @@ int mtl_ucap_eye(void *capv, int eye) {
         ranges += here;
     }
     memcpy(g_eye_view, cam, sizeof g_eye_view); g_eye_have[eye] = 1;
-    for (int j = 0; j < 4; j++) g_eye_fov[eye][j] = atanf(tanf(hv.fov[eye][j]) * 1.06f);
+    memcpy(g_eye_fov[eye], rays, sizeof rays);   // the picture's rays: the game's frustum, the same for both eyes
     atomic_fetch_add(&g_eye_fix[0], 1); atomic_fetch_add(&g_eye_fix[1], (uint64_t)replaced); atomic_fetch_add(&g_eye_fix[3], clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - t0);
     atomic_fetch_add(&g_eye_fix[4], bytes); atomic_fetch_add(&g_eye_fix[5], (uint64_t)ranges);
     { static uint64_t said; const uint64_t n = atomic_load(&g_eye_fix[0]);
@@ -2901,6 +2904,7 @@ void dm_gfx_set_flag(const char *name, int v) {
     if (!strcmp(name, "vr_quest_fov")) { atomic_store(&g_vr_quest_fov_on,v!=0); MLOG("[flag] Quest native projection %s",v?"on":"off"); return; }
     if (!strcmp(name, "vr_ui_layout")) { atomic_store(&g_vr_ui_layout_on,v!=0); MLOG("[flag] native UI camera viewport fitting %s",v?"on":"off"); return; }
     if (!strcmp(name,"vr_packet_log")){vr_packet_trace(v);return;}
+    if (!strcmp(name,"vr_head_only")){extern void vr_head_only_set(int on);vr_head_only_set(v!=0);return;}
     if (!strcmp(name, "vr_fp")) { vr_set_first_person(v); return; }    // first person 1 / third person 0
     if (!strcmp(name, "vr_eye")) { vr_set_eye_cm(v); return; }         // first person: eye height in cm
     if (!strcmp(name, "vr_pitch")) { vr_set_pitch_lock(v); return; }   // 1: up / down only from the headset
@@ -14683,6 +14687,7 @@ void mtl_eye_capture(int eye) {
     float rotation[2][9];
     for (int k = 0; k < 2; k++) for (int i = 0; i < 3; i++) memcpy(rotation[k] + 3 * i, g_eye_view + 4 * i, 3 * sizeof(float));
     vr_source_native_frame();
+    { extern void vr_source_stereo_view(const float view[12]); vr_source_stereo_view(g_eye_view); }   // the head seq this frame was rendered with
     int slot = vr_source_encode_stereo(g_cb, d, g_eye_fov, rotation);
     { static int said; if (said < 12) { said++; MLOG("[vr] stereo replay capture: the pair's source slot %d", slot); } }
     if (slot >= 0) {
