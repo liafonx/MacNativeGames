@@ -46,6 +46,45 @@ def c_190(function):
     return check, tables["put"]
 
 
+def branch(site, target):
+    delta = target - site
+    assert delta & 3 == 0 and -(1 << 27) <= delta < (1 << 27)
+    return 0x14000000 | ((delta >> 2) & 0x3ffffff)
+
+
+def c_190_veneer(function):
+    """A veneer patch of the 1.9.0 branch of game_patches_botw.c (patch_arrow_gravity): (check {off: original word}, its
+    enum {name: value}, words(stub, page, **switches) -> the veneer words the C writes, the C's own expressions evaluated)."""
+    c = (ROOT / "runtime/game_patches_botw.c").read_text().split("Breath of the Wild 1.9.0", 1)[1]
+    body = c[c.index(f"static void {function}("):]
+    body = re.sub(r"/\*.*?\*/", "", body[:body.index("\n}\n")], flags=re.S)
+    names = {k: int(v, 16) for k, v in re.findall(r"(\w+) = (0x[0-9a-f]+)", re.search(r"enum \{(.*?)\};", body).group(1))}
+    check = {}
+    for off, value in re.findall(r"\{(0x[0-9a-f]+u|[A-Z]+),\s*(0x[0-9a-f]+)u\}", re.search(r"check\[\] = \{(.*?)\};", body, re.S).group(1)):
+        check[names[off] if off in names else int(off.rstrip("u"), 16)] = int(value, 16)
+    entries, depth, cur = [], 0, ""
+    for ch in re.search(r"veneer\[\] = \{(.*?)\};", body, re.S).group(1):
+        depth += ch == "(" ; depth -= ch == ")"
+        if ch == "," and depth == 0:
+            entries.append(cur.strip()); cur = ""
+        else:
+            cur += ch
+    entries = [e for e in entries + [cur.strip()] if e]
+    py = []
+    for e in entries:   # the C forms: a word, adrp_reg(...), branch_to(...), switch ? word : word
+        e = re.sub(r"(0x[0-9a-f]+)u\b", r"\1", e).replace("(uintptr_t)m->base + ", "")
+        e = re.sub(r"^(\w+) \? (0x[0-9a-f]+) : (0x[0-9a-f]+)$", r"(\2 if \1 else \3)", e)
+        assert re.fullmatch(r"0x[0-9a-f]+|\(0x[0-9a-f]+ if \w+ else 0x[0-9a-f]+\)|adrp_reg\(\d+, stub \+ \d+, page\)|branch_to\(stub \+ \d+, [A-Z]+\)", e), \
+            f"{function}: a veneer word of game_patches_botw.c is in a form this script cannot read: {e}"
+        py.append(e)
+
+    def words(stub, page, **switches):
+        env = dict(names, stub=stub, page=page, adrp_reg=adrp, branch_to=branch, **switches)
+        return [eval(e, {"__builtins__": {}}, env) for e in py]
+    assert f"put_word(m, SITE, branch_to(SITE, stub)" in body, f"{function}: the site's branch is not the form this script expects"
+    return check, names, words
+
+
 def patch_words(put, offsets, data_off):
     """The words the C writes at `offsets` (all of them, nothing dropped), the adrp ones aimed at the data page."""
     assert set(put) == set(offsets), f"game_patches_botw.c writes {sorted(map(hex, put))}, expected {sorted(map(hex, offsets))}"

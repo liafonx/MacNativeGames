@@ -89,6 +89,13 @@ compare-and-swap loops that retry inside the window. `prepare_runtime.py`, `prep
   (29-30 FPS) gave the same speed, within one 30 fps frame, for the inventory tab animations (R, L), the typed item
   text and the jump poses (X, 100 ms steps). A frame-driven animation would be 4 times slower. At 30 fps the inventory
   opens about 80-120 ms later (about 3 frames), then runs at the same rate.
+- Arrows fall by real time (`patch_arrow_gravity`; Savage Wind Recomp issue #144 found the fault). The fall update
+  main+0x5ee668 adds the gravity (+0x108, which main+0x5ee4ec sets to (0, ArrowGravity, 0)) once per frame with no
+  time step, so arrows turned down twice as fast at 60 fps and landed short. A veneer now multiplies the load at
+  main+0x5ee734 by the frame ratio. In game runs on 2026-11-10 (Sheikah tower top, 3 shots a run, `TOTK_ARROW_LOG=1`),
+  the arrow turned down at 18.7 deg/s at 15, 30 and 60 fps patched and at 36.5 deg/s at 60 fps shipped. Its drop 40 m
+  after the fall began was 9.29 m at 30 fps, 8.96 m at 60 fps patched and 18.9 m at 60 fps shipped. 120 fps was not
+  reached: the scene held 60.
 - Docked play renders at 1920x1080, as upstream's 1.6.0 port does: the display-mode routine main+0x1266074, `movk` at
   main+0x12660c8. `TOTK_RENDER_RES=900` keeps 1600x900.
 - While a movie plays (movie player instance main+0x1e565a8), the pacing holds 30 fps. Every movie frame is shown

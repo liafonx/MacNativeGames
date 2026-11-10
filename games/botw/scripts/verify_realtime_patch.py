@@ -9,7 +9,8 @@ it stays at the interval's ratio 1.0 (33.3 ms) whatever the frame time.
 --version botw190 runs the 1.9.0 version of the same checks (ksys::VFR::calc at main+0x151d3d0, the fade at main+0x125f108
 and the UI animation step at main+0x1280ebc, the words of the `#else` branch of game_patches_botw.c) on the 1.9.0 image,
 with the same negative controls, and the physics substeps (the frame loop from main+0x1281050 into the physics step
-main+0x156f8e8: six at every rate patched, round(6 x ratio) shipped).
+main+0x156f8e8: six at every rate patched, round(6 x ratio) shipped), and arrows (the fall update main+0x5ee668 with
+patch_arrow_gravity's veneer: the same drop at 10-40 m from 30 to 240 fps patched, 2x and 4x shipped at 60 and 120 fps).
 usage: verify_realtime_patch.py [--version {botw160,botw190}] [main.patched.bin]
        (default botw160; the image defaults to totk/rewritten/<version>/main.patched.bin)"""
 import argparse
@@ -23,8 +24,96 @@ from unicorn import arm64_const as A
 from unicorn.arm64_const import UC_ARM64_REG_PC, UC_ARM64_REG_SP, UC_ARM64_REG_W1, UC_ARM64_REG_X0
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from botw190_unicorn import ROOT, VFR as VFR_190, adrp, c_190, f32, patch_words, sreg, vfr_object
+from botw190_unicorn import ROOT, VFR as VFR_190, adrp, branch, c_190, c_190_veneer, f32, patch_words, sreg, vfr_object
 from botw190_unicorn import machine as machine_190
+
+TEXT_END_190 = 0x15a1c64    # 1.9.0 main's text end (the ELF's first segment); the veneers sit in the zero padding after it
+
+
+def verify_arrow_190(image, data_off):
+    """1.9.0 arrows (patch_arrow_gravity): an arrow flies off level at 45 m/s and falls; the fall update main+0x5ee668 runs
+    once per frame as the game runs it, with the VFR's delta frames at the frame's ratio, and the velocity it hands the
+    rigid body (main+0x12d3210, stubbed) moves the arrow for the frame's time. Patched, the drop at a given distance is the
+    same at every frame rate; shipped (the negative control), it grows with the frame rate. TOTK_ARROW_LOG's veneer keeps
+    the shipped drop with TOTK_ARROW_GRAVITY_STEP=0 and stores the movement object on the data page."""
+    word = lambda a: struct.unpack_from("<I", image, a)[0]
+    check, names, words = c_190_veneer("patch_arrow_gravity")
+    for offset, original in check.items():
+        if word(offset) != original:
+            raise SystemExit(f"original instruction mismatch at main+{offset:#x}: {word(offset):08x} != {original:08x}")
+    stub = ((TEXT_END_190 + 15) & ~15) + 104                          # game_patches_botw.c patch_realtime's place for it
+    assert not any(image[TEXT_END_190:(TEXT_END_190 + 0xfff) & ~0xfff]), "main's text padding is not empty"
+    FN, RET, SET_VELOCITY, SLOT = 0x5ee668, 0x5ee7b0, 0x12d3210, 0x58
+    assert word(RET) == 0xd65f03c0
+    mover, actor, body = VFR_190 + 0x20000, VFR_190 + 0x21000, VFR_190 + 0x22000
+
+    def patched(**switches):
+        v = words(stub, data_off, **switches)
+        assert len(v) * 4 <= 128 - 104, "the arrow veneer runs into the VR camera's (+128)"
+        p = {stub + 4 * i: w for i, w in enumerate(v)}
+        p[names["SITE"]] = branch(names["SITE"], stub)
+        return p
+
+    def flight(patches, hz, speed=1.5, gravity=-0.01, accel=-0.02, fall_speed=1.0, distances=(10, 20, 40)):
+        """The drop (m) at each horizontal distance (m) from where the fall began."""
+        mu = machine_190(image, data_off, patches)
+        ratio = f32(30 / hz)
+        mu.mem_write(data_off, struct.pack("<ff", ratio, 1 / hz))
+        mu.mem_write(VFR_190 + 0x98, struct.pack("<f", ratio))            # core 0's delta frames (time speed 1)
+        mu.mem_write(mover + 8, struct.pack("<Q", actor))
+        mu.mem_write(actor + 0x190, struct.pack("<Q", body))
+        mu.mem_write(mover + 0xb4, struct.pack("<fff", speed, speed, 0))  # the speed, as main+0x5ee4ec leaves it
+        mu.mem_write(mover + 0xfc, struct.pack("<ff", accel, fall_speed))
+        mu.mem_write(mover + 0x104, struct.pack("<fff", 0, gravity, 0))
+        mu.mem_write(mover + 0x110, struct.pack("<fff", speed, 0, 0))     # level, along x
+        sent = []
+
+        def set_velocity(uc, addr, size, _):                              # the rigid body takes the velocity per second
+            sent.append(struct.unpack("<fff", uc.mem_read(uc.reg_read(A.UC_ARM64_REG_X1), 12)))
+            uc.reg_write(UC_ARM64_REG_PC, uc.reg_read(A.UC_ARM64_REG_LR))
+        from unicorn import UC_HOOK_CODE
+        mu.hook_add(UC_HOOK_CODE, set_velocity, begin=SET_VELOCITY, end=SET_VELOCITY)
+        x = y = 0.0
+        out, want = {}, list(distances)
+        for _ in range(hz * 20):
+            mu.reg_write(UC_ARM64_REG_X0, mover)
+            mu.reg_write(UC_ARM64_REG_SP, VFR_190 + 0x80000)
+            mu.reg_write(A.UC_ARM64_REG_LR, 0)
+            mu.emu_start(FN, RET, count=400)
+            assert mu.reg_read(UC_ARM64_REG_PC) == RET and len(sent) == 1
+            vx, vy, _vz = sent.pop()
+            nx, ny = x + vx / hz, y + vy / hz
+            while want and nx >= want[0]:                                  # the drop where the arrow passes the distance
+                out[want[0]] = -(y + (ny - y) * (want[0] - x) / (nx - x)); want.pop(0)
+            x, y = nx, ny
+            if not want:
+                return out, struct.unpack("<Q", mu.mem_read(data_off + SLOT, 8))[0]
+        raise AssertionError(f"the arrow did not pass {want} m at {hz} fps")
+
+    # Patched, a higher rate drops a little less than 30 fps (12% at 10 m, 4% at 40 m at 240 fps): the game moves the arrow
+    # with the velocity it just added that frame's gravity to, so a longer frame adds more drop (30 fps itself does);
+    # shipped, the drop doubles at 60 fps and grows 3.6-5x at 120 fps.
+    near = lambda drop: all(0.85 * base[d] <= drop[d] <= base[d] + 1e-6 for d in base)
+    on, shipped, shipped_log = patched(step=1, log=0), {}, patched(step=0, log=1)
+    base, slot = flight(on, 30)
+    assert slot == 0                                                   # no diagnostics: the page slot stays empty
+    assert flight(shipped, 30)[0] == base                              # at 30 fps the factor is exactly 1.0: the shipped flight
+    rows = []
+    for hz in (30, 60, 90, 120, 144, 165, 240):
+        drop = flight(on, hz)[0]
+        assert near(drop), (hz, drop, base)
+        rows.append({"hz": hz, "drop_m": {d: round(drop[d], 3) for d in drop}})
+    negative = {}
+    for hz in (60, 120):                                               # shipped: the gravity is added per frame
+        drop, slot = flight(shipped, hz)
+        assert all(drop[d] > 1.7 * (hz / 60) * base[d] for d in base), (hz, drop, base)
+        log_drop, slot = flight(shipped_log, hz)
+        assert log_drop == drop and slot == mover, (hz, log_drop, drop, hex(slot))   # the log keeps the shipped flight
+        negative[hz] = {d: round(drop[d], 3) for d in drop}
+    log_drop, slot = flight(patched(step=1, log=1), 120)
+    assert slot == mover and near(log_drop), (log_drop, hex(slot))
+    return {"veneer": hex(stub), "drop_m_at_30fps": {d: round(base[d], 3) for d in base}, "patched": rows,
+            "negative_control_shipped": negative}
 
 
 def verify_190(image_path):
@@ -136,10 +225,12 @@ def verify_190(image_path):
     assert abs(negative[0] - 1.0) < 1e-6 and abs(negative[2] - 1 / 30) < 1e-7, negative
     negative_fade = fade({}, 1 / 120)[0]
     assert abs(negative_fade - 0.2) < 1e-6, negative_fade
+    arrows = verify_arrow_190(image, data_off)
     print(json.dumps({"status": "pass", "version": "botw190", "image": str(image_path), "data_page": hex(data_off),
                       "patched": checks, "negative_control_at_120hz": {"ratio": negative[0], "delta_time_ms": negative[2] * 1e3,
                                                                       "fade_step": negative_fade, "ui_step": negative_ui,
-                                                                      "physics_substeps": negative_substeps}}, indent=2))
+                                                                      "physics_substeps": negative_substeps},
+                      "arrow_gravity": arrows}, indent=2))
 
 
 parser = argparse.ArgumentParser(description="Unicorn check of the real-time frame-step patch")
