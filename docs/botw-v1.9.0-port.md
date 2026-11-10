@@ -89,6 +89,12 @@ compare-and-swap loops that retry inside the window. `prepare_runtime.py`, `prep
   (29-30 FPS) gave the same speed, within one 30 fps frame, for the inventory tab animations (R, L), the typed item
   text and the jump poses (X, 100 ms steps). A frame-driven animation would be 4 times slower. At 30 fps the inventory
   opens about 80-120 ms later (about 3 frames), then runs at the same rate.
+- Sound timers follow the measured step too (2026-11-10). The sound frame update floored the VFR ratio at 0.5 (one 60
+  fps frame) before it sets the sound clock and the xlink2 rate (main+0x155100c `fcsel` -> `fmov s8, s0`;
+  `TOTK_SLINK_REALTIME=0` keeps the floor). Measured with the 30 s report's sound-clock sum: shipped, 1.20x real time at
+  a steady 72 fps and 2.00x game time with the step pinned at 8.333 ms (120 fps); fixed, 1.00x.
+  `verify_sound_step_patch.py` runs it in Unicorn at 30-240 fps, with the shipped floor as the negative control. Not
+  checked: a field battle by ear and the Cryonis marker.
 - Docked play renders at 1920x1080, as upstream's 1.6.0 port does: the display-mode routine main+0x1266074, `movk` at
   main+0x12660c8. `TOTK_RENDER_RES=900` keeps 1600x900.
 - While a movie plays (movie player instance main+0x1e565a8), the pacing holds 30 fps. Every movie frame is shown

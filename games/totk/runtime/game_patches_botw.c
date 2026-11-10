@@ -94,10 +94,11 @@ static double frame_samples[5], report_seconds, report_game, report_short_ms, re
 static unsigned frame_sample_count, frame_sample_next, report_short, report_long;
 static _Atomic uint32_t pinned_step_us;
 #ifdef GAME_BOTW160
-enum { VFR_INSTANCE = 0x2d1e170, VFR_RATIO = 0x3c, VFR_DELTA_TIME = 0x138 };
+enum { VFR_INSTANCE = 0x2d1e170, VFR_RATIO = 0x3c, VFR_DELTA_TIME = 0x138, SOUND_CLOCK = 0 };   /* sound clock not mapped */
 #else   /* 1.9.0: the singleton pointer is main+0x1e93890, the object's layout is the same */
-enum { VFR_INSTANCE = 0x1e93890, VFR_RATIO = 0x3c, VFR_DELTA_TIME = 0x138 };
+enum { VFR_INSTANCE = 0x1e93890, VFR_RATIO = 0x3c, VFR_DELTA_TIME = 0x138, SOUND_CLOCK = 0x1e36488 };   /* see patch_sound_step */
 #endif
+static double report_sound;
 static _Atomic uint32_t *pad_tick;   /* data page +8: 1 when the next frame's game time crosses a 1/30 s boundary */
 static double pad_phase;
 static uint64_t report_ticks;
@@ -138,13 +139,22 @@ static void frame_step_report(uint64_t now_ns) {
     char game[96];
     if (atomic_load(&pinned_step_us)) snprintf(game, sizeof game, "step pinned");
     else snprintf(game, sizeof game, "steps add up to %.2f s (%.4f of the frames' time)", report_game, report_seconds > 0 ? report_game / report_seconds : 0);
-    char ticks[64] = "";
+    char ticks[96] = "";
     if (pad_tick) snprintf(ticks, sizeof ticks, "; pad counts %.1f ticks/s", report_ticks / span);
+    if (SOUND_CLOCK) snprintf(ticks + strlen(ticks), sizeof ticks - strlen(ticks), "; the sound clock adds up to %.2f s", report_sound);
     fprintf(stderr, "[botw] real-time frame step: %llu frames in %.1f s (%.1f fps, %.2f ms apart on average), %s; the game's VFR ratio "
                     "%.3f, delta time %.2f ms; %u intervals under 1/120 s (clamping each: +%.0f ms), %u over 1/15 s (-%.0f ms)%s\n",
             (unsigned long long)report_frames, span, report_frames / span, report_frames ? report_seconds / report_frames * 1e3 : 0, game,
             ratio, delta * 1e3, report_short, report_short_ms, report_long, report_long_ms, ticks);
-    report_ns = now_ns; report_frames = report_ticks = 0; report_seconds = report_game = report_short_ms = report_long_ms = 0; report_short = report_long = 0;
+    report_ns = now_ns; report_frames = report_ticks = 0; report_seconds = report_game = report_sound = report_short_ms = report_long_ms = 0; report_short = report_long = 0;
+}
+/* The seconds the sound clock adds this frame: +0x24 of [[main+SOUND_CLOCK]+0x38] (patch_sound_step), 0 before it exists. */
+static float sound_clock_step(void) {
+    uint64_t mgr = SOUND_CLOCK ? *(const uint64_t *)(const void *)(frame_step_main + SOUND_CLOCK) : 0;
+    uint64_t clock = mgr ? *(const uint64_t *)(uintptr_t)(mgr + 0x38) : 0;
+    float step = 0;
+    if (clock) memcpy(&step, (const void *)(uintptr_t)(clock + 0x24), 4);
+    return step;
 }
 static void frame_step_measure(uint64_t now_ns) {
     frame_step_report(now_ns);
@@ -153,7 +163,7 @@ static void frame_step_measure(uint64_t now_ns) {
     if (!prev) return;
     double dt = (double)(now_ns - prev) * 1e-9;
     if (dt > 0.25 || dt < 0.001) { frame_sample_count = frame_sample_next = 0; return; }
-    report_frames++; report_seconds += dt;
+    report_frames++; report_seconds += dt; report_sound += sound_clock_step();
     if (dt < 1.0 / 120.0) { report_short++; report_short_ms += (1.0 / 120.0 - dt) * 1e3; }
     if (dt > 1.0 / 15.0) { report_long++; report_long_ms += (dt - 1.0 / 15.0) * 1e3; }
     if (atomic_load_explicit(&pinned_step_us, memory_order_relaxed)) return;
@@ -539,6 +549,39 @@ static void patch_blend_first_step(Module *m, uint64_t stub) {
     fprintf(stderr, "[botw] camera blends start with one 30 fps frame, then follow the measured ratio (veneer +%#llx; TOTK_BLEND_FIRST_STEP=0: as shipped)\n",
             (unsigned long long)stub);
 }
+/* Sound timers by real time (TOTK_SLINK_REALTIME=0: as shipped), the 1.9.0 form of 1.6.0's patch_slink_rate. The sound
+   frame update main+0x1550fcc takes the VFR's ratio (main+0x59c788) and floors it at 0.5, one 60 fps frame (1.6.0: 1.0):
+     main+0x1551004  fmov s1, #0.5 / fcmp s0, s1 / fcsel s8, s1, s0, mi
+   s8 then sets the sound clock [[main+0x1e36488]+0x38] (main+0xf07808: +0x20 = s8, +0x24 = s8 / the VFR's 30 at +0x154,
+   the seconds that about twenty sound timers and fades add or take off each frame, for example main+0xf01d2c and
+   main+0xf0ca68) and the xlink2 sound system's rate [main+0x1e37038]+0x84 (main+0x1551040), by which SLink asset timers
+   step. Above 60 fps the floor made all of them run fast: the 30 s frame-step report's sound clock added 1.20 s per second
+   at 72 fps and 2.00 s per second of game time with the step pinned at 8.333 ms (2026-11-10); in Savage Wind Recomp, on
+   the same 1.9.0 code, field battle music started its next segment before the last one ended (its issue #145). The fcsel
+   now keeps the ratio, the measured frame time on the data page (30 and 60 fps give the shipped values):
+     main+0x155100c  fcsel s8, s1, s0, mi  -> fmov s8, s0 */
+static void patch_sound_step(Module *m) {
+    const char *e = getenv("TOTK_SLINK_REALTIME");
+    if (!ios_code() && e && !strcmp(e, "0")) { fprintf(stderr, "[botw] sound timers at least one 60 fps frame per frame, as shipped (TOTK_SLINK_REALTIME=0)\n"); return; }
+    static const struct { uint32_t off, original; } check[] = {
+        {0x1550ffcu, 0xaa1303e0u}, {0x1551000u, 0x97c12de2u}, {0x1551004u, 0x1e2c1001u}, {0x1551008u, 0x1e212000u},
+        {0x155100cu, 0x1e204c28u}, {0x1551010u, 0x97e6e0f8u}, {0x1551028u, 0x1e204100u}, {0x1551030u, 0x97e6d9f6u},
+        {0x1551040u, 0xbd008508u},
+    };
+    for (size_t i = 0; !CODE_PATCHED_AT_BUILD && i < sizeof check / sizeof *check; i++) {
+        uint32_t w; memcpy(&w, m->base + check[i].off, 4);
+        if (w != check[i].original) {
+            fprintf(stderr, "[botw] sound step main+%#x: found %08x expected %08x\n", check[i].off, w, check[i].original);
+            runtime_fail("sound timers by real time require the 1.9.0 sound frame update instructions");
+        }
+    }
+    const struct { uint32_t off, word; } put[] = {
+        {0x155100cu, 0x1e204008u},   /* fmov s8, s0: the measured ratio, no 0.5 floor */
+    };
+    for (size_t i = 0; i < sizeof put / sizeof *put; i++) put_word(m, put[i].off, put[i].word, "sound step");
+    fprintf(stderr, "[botw] sound timers follow the measured frame ratio, no 60 fps floor (%zu instruction, %zu verified; TOTK_SLINK_REALTIME=0: as shipped)\n",
+            sizeof put / sizeof *put, sizeof check / sizeof *check);
+}
 static void patch_realtime(Module *m) {
     uint64_t data_off = (m->file_size + 0x3fff) & ~0x3fffULL;
     if (data_off + 0x4000 != m->size || data_off & 0xfff) runtime_fail("real-time frame-step page layout");
@@ -575,6 +618,7 @@ static void patch_realtime(Module *m) {
                     "(%zu instructions, %zu verified); initial 33.33 ms, sampled at each present (TOTK_REALTIME=0: as shipped)\n",
             sizeof put / sizeof *put, sizeof check / sizeof *check);
     patch_pad_repeat(m, page);
+    patch_sound_step(m);
     patch_blend_first_step(m, ((m->text_end + 15) & ~15ULL) + 80);   /* after the FOV stub (+32, 11 words) */
 }
 #endif
