@@ -7294,6 +7294,12 @@ static id<MTLSamplerState> samp_by_id(int sid) {   // 调用方持 g_rmu | Calle
     if (p.cmp_mode) d.compareFunction = atomic_load(&g_shadow_cmp_off) ? MTLCompareFunctionAlways : (MTLCompareFunction)(p.cmp_func - 1);   // shadows off: dm_gfx_shadow_samplers_off
     d.borderColor = p.border[3] > 0.5f ? (p.border[0] > 0.5f ? MTLSamplerBorderColorOpaqueWhite : MTLSamplerBorderColorOpaqueBlack) : MTLSamplerBorderColorTransparentBlack;
     if (p.reduction > 2) die("sampler reduction filter %u unsupported", p.reduction);
+#ifdef TOTK_GAME_V143
+    /* The game's own LOD bias (nvnSamplerBuilderSetLodBias), as nxnative passes it: Tears of the Kingdom 1.4.3 sets -1
+       on 84 of about 2,090 samplers (DM_NVN_SAMPLOG, prologue cave under Hyrule Castle, 2026-11-11), the rest 0. It adds to
+       the temporal mip bias above. Metal takes -16..15.99. */
+    { float b = d.lodBias + p.lod_bias; d.lodBias = b < -16.f ? -16.f : b > 15.99f ? 15.99f : b; }
+#endif
     d.reductionMode = (MTLSamplerReductionMode)p.reduction;   // TOTK: NVN AVERAGE/MIN/MAX = Metal WeightedAverage/Minimum/Maximum
     d.supportArgumentBuffers = YES;
     id<MTLSamplerState> s = [g_dev newSamplerStateWithDescriptor:d];
