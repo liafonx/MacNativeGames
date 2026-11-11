@@ -188,7 +188,7 @@ static void bias_sample(const double acc[3], const double gyro[3], uint64_t now)
 }
 void runtime_motion_feed(const double raw_acc[3], const double raw_gyro[3], uint64_t now) {
     double acc[3], gyro[3];
-#ifdef GAME_BOTW   /* a NaN or infinite sample would poison the orientation, the angle and the bias window for good: drop it (nxnative e2ab03aa) */
+#if defined(GAME_BOTW) || defined(TOTK_GAME_V143)   /* a NaN or infinite sample would poison the orientation, the angle and the bias window for good: drop it (nxnative e2ab03aa) */
     for (int i = 0; i < 3; i++) if (!isfinite(raw_acc[i]) || !isfinite(raw_gyro[i])) return;
 #endif
     pthread_mutex_lock(&lock);

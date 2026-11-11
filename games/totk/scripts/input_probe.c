@@ -188,8 +188,8 @@ static void feedback_checks(void){
   runtime_motion_deadzone_default(0);feed(50,0,0,-1,0,0,0);probe_now+=1000000;sstates(&n,buf.s,1,&six);
   need(near3(buf.s[0].gyro,0,0,0,0.002),"another controller: the learned bias starts over");
   runtime_motion_live(0);}
-#ifdef GAME_BOTW
- /* A non-finite sample is dropped (motion_fusion.c, GAME_BOTW): one NaN or infinity must not poison the orientation or the angle for good. */
+#if defined(GAME_BOTW) || defined(TOTK_GAME_V143)
+ /* A non-finite sample is dropped (motion_fusion.c, GAME_BOTW, TOTK_GAME_V143): one NaN or infinity must not poison the orientation or the angle for good. */
  {runtime_motion_live(1);sstart(&six);feed(50,0,0,-1,0,0,0);feed(1,NAN,0,-1,0,0,0);feed(1,0,0,-1,INFINITY,0,0);feed(50,0,0,-1,0,0,0);probe_now+=1000000;
   need(!sstates(&n,buf.s,16,&six)&&n==16,"non-finite samples: states still read");
   for(int i=0;i<n;i++){int ok=1;for(int j=0;j<3;j++)ok&=isfinite(buf.s[i].acc[j])&&isfinite(buf.s[i].gyro[j])&&isfinite(buf.s[i].angle[j]);for(int j=0;j<9;j++)ok&=isfinite(buf.s[i].dir[j]);need(ok,"non-finite samples: every state stays finite");}
