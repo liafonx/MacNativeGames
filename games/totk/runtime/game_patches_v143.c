@@ -1659,6 +1659,13 @@ int runtime_output_res(unsigned *w,unsigned *h){
                 output_screen_w=cw=16*k;output_screen_h=ch=9*k;on=1;output_full_at_start=1;
                 for(unsigned i=0;!overlay_carried(cw,ch)&&i<sizeof bigger/sizeof *bigger;i++)
                     if(bigger[i][0]>=output_screen_w&&overlay_carried(bigger[i][0],bigger[i][1])){cw=bigger[i][0];ch=bigger[i][1];}
+                if(!overlay_carried(cw,ch)){   /* no overlay of the screen size or larger (a 5K screen, a 4K-only app): the largest smaller one the app carries */
+                    static const unsigned smaller[][2]={{3840,2160},{2560,1440}};unsigned w0=output_screen_w,h0=output_screen_h;on=0;
+                    for(unsigned i=0;!on&&i<sizeof smaller/sizeof *smaller;i++)
+                        if(smaller[i][0]<w0&&overlay_carried(smaller[i][0],smaller[i][1])){output_screen_w=cw=smaller[i][0];output_screen_h=ch=smaller[i][1];on=1;}
+                    fprintf(stderr,"[totk] native size from the screen: the app carries no heap overlay for %ux%u or larger; %s\n",w0,h0,on?"the largest smaller one it carries":"the game's own size");
+                    if(!on){output_screen_w=output_screen_h=0;output_full_at_start=0;}
+                }
                 fprintf(stderr,"[totk] native size from the screen: main display %ux%u (native mode) -> %ux%u, swapchain %ux%u\n",pw,ph,output_screen_w,output_screen_h,cw,ch);
             }
         }else{
