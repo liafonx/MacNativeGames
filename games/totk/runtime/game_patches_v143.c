@@ -15,6 +15,7 @@
 #include <math.h>
 #include <TargetConditionals.h>
 #include "text_padding_v143.h"   /* who owns which bytes after the code */
+#include "native_screen.h"   /* TOTK_OUTPUT_RES=screen: the main display's native size (shared with Breath of the Wild) */
 #include "prompt_cache_v143.h"
 _Static_assert(PAD_V143_ASPECT_LEN == 4 * ASPECT_STUB && PAD_V143_VERT_LEN == 2 * ASPECT_VSTUB, "1.4.3 padding: aspect stub sizes");
 #if !TARGET_OS_IPHONE
@@ -1610,6 +1611,16 @@ static int vr_big_start(unsigned *w,unsigned *h){
     fprintf(stderr,"[totk] VR: this app has no headset-shaped 4K / 6K heap overlay (build_app.py VR_BIG_SIZES); the usual sizes\n");
     return 0;
 }
+/* TOTK_OUTPUT_RES=screen (the owner's port of Breath of the Wild's, 2026-11-11): the game starts at the largest 16:9 size of the
+   main display's native mode (3456x1944 on a 3456x2234 panel). That size is the Resolution row's native size; with MetalFX
+   the row's canvas stays 2K. The swapchain is that size when its HeapDef overlay exists, else the smallest bigger one the
+   app carries (the usual native 4K one), so a stock app needs no extra overlay. 0: not "screen". */
+static unsigned output_screen_w,output_screen_h;
+static int overlay_carried(unsigned w,unsigned h){
+    const char *dir=getenv("TOTK_ROMFS_PATCHES_OUT");char path[4096];
+    snprintf(path,sizeof path,"%s/%ux%u-scene-%ux%u/manifest.tsv",dir?dir:"extracted/v143/romfs-patches-out",w,h,w,h);
+    return access(path,R_OK)==0;
+}
 int runtime_output_res(unsigned *w,unsigned *h){
     static int decided,on;static unsigned cw,ch;
     if(!decided){
@@ -1640,9 +1651,19 @@ int runtime_output_res(unsigned *w,unsigned *h){
                 FILE *f=fopen(path,"r");if(f){fclose(f);on=1;cw=sizes[i][0];ch=sizes[i][1];}
             }
             output_full_at_start=0;
+        }else if(!strcmp(e,"screen")){
+            unsigned pw,ph,k;native_screen_pixels(&pw,&ph);k=(pw/16<ph/9?pw/16:ph/9)&~7u;if(k>320)k=320;   /* 5120x2880 at most, a multiple of 8 */
+            if(k<=120){fprintf(stderr,"[totk] native size from the screen: main display %ux%u has no 16:9 size above 1920x1080; the game's own size\n",pw,ph);on=0;}
+            else{
+                static const unsigned bigger[][2]={{3840,2160},{5120,2880}};
+                output_screen_w=cw=16*k;output_screen_h=ch=9*k;on=1;output_full_at_start=1;
+                for(unsigned i=0;!overlay_carried(cw,ch)&&i<sizeof bigger/sizeof *bigger;i++)
+                    if(bigger[i][0]>=output_screen_w&&overlay_carried(bigger[i][0],bigger[i][1])){cw=bigger[i][0];ch=bigger[i][1];}
+                fprintf(stderr,"[totk] native size from the screen: main display %ux%u (native mode) -> %ux%u, swapchain %ux%u\n",pw,ph,output_screen_w,output_screen_h,cw,ch);
+            }
         }else{
             char tail;
-            if(sscanf(e,"%ux%u%c",&cw,&ch,&tail)!=2||cw<640||ch<360||cw>7680||ch>4320)runtime_fail("TOTK_OUTPUT_RES must be auto, 0 or widthxheight");
+            if(sscanf(e,"%ux%u%c",&cw,&ch,&tail)!=2||cw<640||ch<360||cw>7680||ch>4320)runtime_fail("TOTK_OUTPUT_RES must be auto, screen, 0 or widthxheight");
             on=1;output_full_at_start=1;
         }
         decided=1;
@@ -1746,7 +1767,7 @@ static void patch_output_res(Module *m){
     for(unsigned i=0;i<3;i++)memcpy(m->base+guards[i].off,words+i,4);
  #endif
     uint8_t *page=m->base+data;output_w=w;output_h=h;
-    atomic_store((_Atomic uint64_t *)(void *)(page+32),output_full_at_start?pack_size(w,h):pack_size(1920,1080));
+    atomic_store((_Atomic uint64_t *)(void *)(page+32),output_full_at_start?pack_size(output_screen_w?output_screen_w:w,output_screen_w?output_screen_h:h):pack_size(1920,1080));
     atomic_store((_Atomic uint64_t *)(void *)(page+40),0);
     if(vr_active()&&!getenv("TOTK_EXPORT_IOS")){
         extern void vr_resolution(int *,int *);int eye_w=0,eye_h=0;vr_resolution(&eye_w,&eye_h);
@@ -1903,6 +1924,10 @@ int runtime_output_native(int mode,unsigned *w,unsigned *h){
     if(mode==OUTPUT_MODE_NATIVE_5K){if(output_w<5120||output_h<2880)return 0;*w=5120;*h=2880;return 1;}
     if(mode==OUTPUT_MODE_NATIVE_4K){if(output_w<3840||output_h<2160)return 0;*w=3840;*h=2160;return 1;}   /* a native 4K app */
     if(mode!=OUTPUT_MODE_NATIVE&&mode!=OUTPUT_MODE_NATIVE_METALFX)return 0;
+    if(output_screen_w){   /* TOTK_OUTPUT_RES=screen: native is the screen's size, native + MetalFX the 2K canvas (a screen below 2560 wide: its own) */
+        if(mode==OUTPUT_MODE_NATIVE||output_screen_w<2560){*w=output_screen_w;*h=output_screen_h;}else{*w=2560;*h=1440;}
+        return 1;
+    }
     if(output_w>2560){*w=2560;*h=1440;return 1;}   /* a 4K app's 2K stays 2560x1440 */
     *w=output_w;*h=output_h;return 1;
 }

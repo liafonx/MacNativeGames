@@ -717,25 +717,7 @@ static int native_k_parse(const char *e) {   /* -1 = not a size this mode takes 
     if (sscanf(e, "%ux%u%c", &w, &h, &end) != 2 || w % 128 || w / 16 * 9 != h || w / 16 <= 120 || w / 16 > NATIVE_K_MAX) return -1;
     return (int)(w / 16);
 }
-#if TARGET_OS_IPHONE
-static void native_screen_pixels(unsigned *w, unsigned *h) { *w = *h = 0; }   /* the phone never asks: output_parse stops first */
-#else
-#include <CoreGraphics/CoreGraphics.h>
-static void native_screen_pixels(unsigned *w, unsigned *h) {   /* the main display's native mode, else its current mode */
-    CGDirectDisplayID d = CGMainDisplayID(); *w = *h = 0;
-    const void *key[] = {kCGDisplayShowDuplicateLowResolutionModes}, *val[] = {kCFBooleanTrue};
-    CFDictionaryRef opt = CFDictionaryCreate(NULL, key, val, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    CFArrayRef modes = CGDisplayCopyAllDisplayModes(d, opt);
-    for (CFIndex i = 0; modes && i < CFArrayGetCount(modes); i++) {
-        CGDisplayModeRef mode = (CGDisplayModeRef)CFArrayGetValueAtIndex(modes, i);
-        unsigned mw = (unsigned)CGDisplayModeGetPixelWidth(mode), mh = (unsigned)CGDisplayModeGetPixelHeight(mode);
-        if (CGDisplayModeGetIOFlags(mode) & 0x02000000u && (uint64_t)mw * mh > (uint64_t)*w * *h) { *w = mw; *h = mh; }   /* kDisplayModeNativeFlag */
-    }
-    if (modes) CFRelease(modes);
-    if (opt) CFRelease(opt);
-    if (!*w) { CGDisplayModeRef cur = CGDisplayCopyDisplayMode(d); if (cur) { *w = (unsigned)CGDisplayModeGetPixelWidth(cur); *h = (unsigned)CGDisplayModeGetPixelHeight(cur); CGDisplayModeRelease(cur); } }
-}
-#endif
+#include "native_screen.h"
 static unsigned native_round_up(double mib, unsigned step) { return (unsigned)ceil(mib / step) * step; }
 static void native_heaps(int k, unsigned *display_mib, unsigned *gpu_mib, unsigned *extra_mib) {
     double px = 144.0 * k * k, f = (px - 2560.0 * 1440) / (3456.0 * 1944 - 2560.0 * 1440);
