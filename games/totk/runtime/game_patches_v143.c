@@ -543,6 +543,37 @@ static void patch_dof(Module *m){
     fprintf(stderr,"[totk] 1.4.3 depth of field %s (DOF requests at main+0x1ec606c / 0x1ec6180), stub +%#llx\n",dof_off?"off":"on",(unsigned long long)stub);
 #endif
 }
+/* Telescope (scope) camera vertical aim (Mac, 2026-11-12): ExecutePlayerCameraAimingTelescope's calc (main+0x23c08ac,
+   vtable slot 36) scales its horizontal step by the 30 Hz frame ratio but not its vertical one, so at 60 fps the scope's
+   vertical aim ran about 2x its horizontal, with stick and gyro alike. The stick and gyro paths join at main+0x23c0ae0;
+   the vertical step ends in `fdiv s14, s0, s3` at main+0x23c0afc. A stub multiplies s0 by the ratio first, [x20+8]
+   (x20 holds the calc argument from 0x23c08d8 to the epilogue; the same field the Ultrahand vertical aim multiplies in at
+   0x23d3130), then does the original fdiv. s4 is free there (last read at 0x23c0af8; the bl at 0x23c0b14 clobbers it).
+   The stub sits in the patch-area tail at +1072, after DOF (+448..+496) and the 144 words that local patch 0026 reserves
+   (+496..+1072) and before the VR branches at the end of the tail. TOTK_TELESCOPE_REALTIME=0 keeps the shipped step. */
+static void patch_telescope(Module *m){
+#if TARGET_OS_IPHONE
+    (void)m;
+#else
+    if(!live_tuned())return;
+    const char *e=getenv("TOTK_TELESCOPE_REALTIME");
+    if(e&&!strcmp(e,"0")){fprintf(stderr,"[totk] 1.4.3 telescope vertical aim: shipped step (TOTK_TELESCOPE_REALTIME=0)\n");return;}
+    static const Patch sites[]={{0x23c0af8,0x1e23bc83,0},{0x23c0afc,0x1e23180e,0}};   /* fcsel s3,s4,s3,lt / fdiv s14,s0,s3 */
+    uint64_t data=(m->file_size+0x3fff)&~0x3fffULL,stub=((m->file_size+15)&~15ULL)+1072;
+    if(stub+16>((data-64)&~15ULL)-32){fprintf(stderr,"[totk] 1.4.3 telescope vertical aim: skipped, no room in the patch area\n");return;}
+    for(unsigned i=0;i<16;i++)if(m->base[stub+i]){fprintf(stderr,"[totk] 1.4.3 telescope vertical aim: skipped, stub padding not empty\n");return;}
+    for(unsigned i=0;i<2;i++){uint32_t w;memcpy(&w,m->base+sites[i].off,4);
+        if(w!=sites[i].original){fprintf(stderr,"[totk] 1.4.3 telescope vertical aim: skipped, the camera code does not match (main+%#llx)\n",(unsigned long long)sites[i].off);return;}}
+    uint32_t words[4]={
+        0xbd400a84,                       /* ldr s4, [x20, #8]: the 30 Hz frame ratio */
+        0x1e240800,                       /* fmul s0, s0, s4 */
+        sites[1].original,                /* fdiv s14, s0, s3 */
+        branch(stub+12,0x23c0b00)};
+    memcpy(m->base+stub,words,sizeof words);
+    uint32_t j=branch(0x23c0afc,stub);memcpy(m->base+0x23c0afc,&j,4);
+    fprintf(stderr,"[totk] 1.4.3 telescope vertical aim takes the frame ratio (main+0x23c0afc), stub +%#llx\n",(unsigned long long)stub);
+#endif
+}
 #if !TARGET_OS_IPHONE
 void runtime_dof_set(int on){dof_off=!on;if(dof_flag)atomic_store(dof_flag,(uint32_t)dof_off);fprintf(stderr,"[totk] depth of field %s\n",on?"on":"off");}
 int runtime_dof_on(void){return !dof_off;}
@@ -1508,6 +1539,7 @@ void runtime_game_patches(Module *m) {
     patch_fov(m);   /* after aspect_install: Vert+ may hold the same load */
     patch_shadow_res(m);
     patch_dof(m);
+    patch_telescope(m);
     const char *enabled = getenv("TOTK_FPS60");
     if (enabled && !strcmp(enabled, "0")) {
         fprintf(stderr, "[totk] 1.4.3 shipping frame controller (TOTK_FPS60=0)\n");
