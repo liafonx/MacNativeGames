@@ -196,8 +196,9 @@ class V143Checks:
     @staticmethod
     def sites():
         sys.path.insert(0, str(ROOT / 'games/totk/scripts'))
+        import emit_botw_pchtxt_sites
         import patch_sites
-        return patch_sites.sites('v143')
+        return patch_sites.sites('v143', emit_botw_pchtxt_sites.V143_BUILD_ID)
 
     def test_reserved_sites_stop(self):
         sites = self.sites()
@@ -224,6 +225,10 @@ class V143Checks:
         env = {k: v for k, v in os.environ.items() if k != 'TOTK_PCHTXT'}
         run = subprocess.run([str(self.probe)], cwd=self.dir, env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual((run.returncode, run.stdout.strip()), (0, '00' * 16))
+
+    def test_signed_jump_tables_are_reserved(self):
+        # The 1.4.3 signed offset table at 0x2d8626c (patch_nso.py SIGNED_TABLES) is validated by the rewriter: a line on it stops.
+        self.assertTrue(any(s.offset <= 0x2d8626c < s.offset + s.size for s in self.sites()))
 
     def test_reserved_table_matches_patch_sites(self):
         sys.path.insert(0, str(ROOT / 'games/totk/scripts'))
