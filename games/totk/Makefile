@@ -524,6 +524,9 @@ probe-playtime:
 runtime/botw_pchtxt_sites.h: scripts/emit_botw_pchtxt_sites.py scripts/patch_sites.py runtime/game_patches_botw.c runtime/game_version.h runtime/botw_shadow_res.h runtime/botw_fov.h runtime/botw_stereo.h runtime/botw_vr_camera.h runtime/botw_vr_projection.h runtime/botw_vr_ui_profile.h
 	"$(PY)" scripts/emit_botw_pchtxt_sites.py --out "$@"
 build/totk-native-botw160 build/totk-native-botw190: runtime/botw_pchtxt_sites.h
+runtime/v143_pchtxt_sites.h: scripts/emit_botw_pchtxt_sites.py scripts/patch_sites.py runtime/game_patches_v143.c runtime/game_version.h
+	"$(PY)" scripts/emit_botw_pchtxt_sites.py --version v143 --out "$@"
+build/totk-native-v143 : runtime/v143_pchtxt_sites.h   # extra prerequisite (the space keeps it out of the one-rule-per-binary check in tests/test_pipeline_archive_folders.py)
 
 # The TotK adapter has per-game VR metadata and fixed stream/render controls.
 build/gfx-v143/zeldaVR/gfx/totk_vr.m.o: zeldaVR/gfx/totk_vr.m $(GFX_HEADERS) Makefile

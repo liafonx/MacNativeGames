@@ -20,6 +20,7 @@ HEADER = f'@nsobid-{BUILD_ID.hex().upper()}\n@flag print_values\n@flag offset_sh
 
 class PchtxtCases:
     DEFINES = []          # compiler options that select the game's runtime source (tests/pchtxt_probe.c)
+    IMAGE = IMAGE         # the probe's main size (PROBE_SIZE)
     GAME_DIR = 'v0'       # extracted/<this>/exefs/main: where the runtime reads main's build id
 
     @classmethod
@@ -85,7 +86,7 @@ class PchtxtCases:
         self.assertIn('another build of main', out)
 
     def test_bounds(self):
-        for line, ok in ((f'{IMAGE - 1:X} aa', True), (f'{IMAGE:X} aa', False), (f'{IMAGE - 1:X} aabb', False),
+        for line, ok in ((f'{self.IMAGE - 1:X} aa', True), (f'{self.IMAGE:X} aa', False), (f'{self.IMAGE - 1:X} aabb', False),
                          ('FFFFFFFFFFFFFFFF aa', False), ('FFFFFFFFFFFFFFFF aabb', False)):
             code, out = self.run_patch(HEADER + f'@enabled\n{line}\n@stop\n')
             self.assertEqual(code, 0 if ok else 3, (line, out))
@@ -186,6 +187,60 @@ class RuntimePchtxtBotw160(BotwChecks, PchtxtCases, unittest.TestCase):
     GAME_DIR = VERSION = 'botw160'
     RESERVED = 0x2c7ef90
     UPSTREAM = [(0xdddfe4, 4), (0xdde044, 16), (0xdde090, 4)]
+
+
+class V143Checks:
+    """TOTK 1.4.3 passes the reader the sites the app patches or checks itself (game_patches_v143.c, generated header
+    runtime/v143_pchtxt_sites.h), and a line on one stops the start (the build's --mod refuses it as well)."""
+
+    @staticmethod
+    def sites():
+        sys.path.insert(0, str(ROOT / 'games/totk/scripts'))
+        import patch_sites
+        return patch_sites.sites('v143')
+
+    def test_reserved_sites_stop(self):
+        sites = self.sites()
+        self.assertGreater(len(sites), 50)
+        for site in sites:
+            for at in {site.offset, site.offset + site.size - 1}:
+                code, out = self.run_patch(HEADER + f'@enabled\n{at:X} 00\n@stop\n')
+                self.assertEqual(code, 3, (hex(at), out))
+                self.assertIn('touches a site the app patches or checks itself', out)
+
+    def test_a_line_that_reaches_into_a_reserved_site_stops(self):
+        first = self.sites()[0]
+        code, out = self.run_patch(HEADER + f'@enabled\n{first.offset - 1:X} 0000\n@stop\n')
+        self.assertEqual(code, 3, out)
+        self.assertIn('touches a site the app patches or checks itself', out)
+
+    def test_next_to_a_reserved_site_is_applied(self):
+        first, last = self.sites()[0], self.sites()[-1]
+        code, out = self.run_patch(HEADER + f'@enabled\n{last.offset + last.size:X} 00\n{first.offset - 2:X} 0000\n40 aabbccdd\n@stop\n')
+        self.assertEqual(code, 0, out)
+        self.assertTrue(out.splitlines()[-1].startswith('aabbccdd'), out)
+
+    def test_without_the_variable_nothing_changes(self):
+        env = {k: v for k, v in os.environ.items() if k != 'TOTK_PCHTXT'}
+        run = subprocess.run([str(self.probe)], cwd=self.dir, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual((run.returncode, run.stdout.strip()), (0, '00' * 16))
+
+    def test_reserved_table_matches_patch_sites(self):
+        sys.path.insert(0, str(ROOT / 'games/totk/scripts'))
+        import emit_botw_pchtxt_sites
+        header = (ROOT / 'games/totk/runtime/v143_pchtxt_sites.h').read_text()
+        table = re.search(r'g_pchtxt_reserved\[\] = \{(.*?)\n\};', header, re.S).group(1)
+        runtime = {(int(a, 16), int(b, 16)) for a, b in re.findall(r'\{(0x[0-9a-f]+), (0x[0-9a-f]+)\}', table)}
+        self.assertEqual(runtime, {(s.offset, s.size) for s in self.sites()})
+        self.assertEqual(header, emit_botw_pchtxt_sites.render_v143())     # the checked-in header is the generator's output
+
+
+@unittest.skipUnless(sys.platform == 'darwin', 'the runtime builds on macOS only')
+class RuntimePchtxtV143(V143Checks, PchtxtCases, unittest.TestCase):
+    """1.4.3 has its own patch source (game_patches_v143.c): the same reader, the version's reserved list."""
+    DEFINES = ['-DTOTK_GAME_V143=1', '-DPROBE_SIZE=0x4000000']
+    IMAGE = 0x4000000
+    GAME_DIR = 'v143'
 
 
 class MainBuildIdFile(unittest.TestCase):
