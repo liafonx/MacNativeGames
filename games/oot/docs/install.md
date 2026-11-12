@@ -6,7 +6,7 @@ This page only covers turning **your own** dump of The Legend of Zelda: Ocarina 
 
 Ground rules: use only your own console and your own game. Nothing is downloaded for you, and nothing from the game is in this repository. Never edit `games/oot/assets/expected-v131072.json` or the scripts to get past a check: the error message says what is wrong. The app you build contains the game: it is for you only.
 
-Contents: [What you need](#what-you-need) · [Build the app](#build-the-app) · [First start](#first-start) · [Update the app](#update-the-app) · [When the build stops](#when-the-build-stops) · [Where things are](#where-things-are)
+Contents: [What you need](#what-you-need) · [Build the app](#build-the-app) · [First start](#first-start) · [Update the app](#update-the-app) · [Folders](../../../docs/install.md#folders) · [When the build stops](#when-the-build-stops) · [Where things are](#where-things-are)
 
 ## What you need
 
@@ -25,10 +25,12 @@ The build checks the code and the game data against `expected-v131072.json`; ano
 ```sh
 xcode-select --install
 # Homebrew, if missing: see https://brew.sh (it must live in /opt/homebrew)
-brew install dav1d libvpx opus python@3.14
+brew install dav1d ffmpeg libvpx opus python@3.14 llvm
 ```
 
 and the full **Xcode** app with its Metal toolchain (Xcode › Settings › Components › Metal Toolchain, or `xcodebuild -downloadComponent MetalToolchain`): the build compiles the game's shaders with Apple's offline Metal compiler, which the command line tools do not include. The build also installs three Python packages (`lz4`, `capstone`, `zbic`) into its own environment in the work folder.
+
+If the rewrite check can't find `llvm-objcopy`, run the build with `LLVM_BIN="$(brew --prefix llvm)/bin"` in its environment.
 
 **Free disk space** on the volume of the work folder: about 40 GB.
 
@@ -43,6 +45,7 @@ The work folder is `OcarinaOfTime_build` next to the dump. Keep it and the app o
 ```sh
 # from a .nup file
 python3.14 build_app.py "<Ocarina of Time.nup>" --shared-fonts "<…/TOTK_build/totk/extracted/firmware/shared-fonts>" -o "/Applications/Ocarina of Time.app"
+
 
 # from a dump folder (base/ and updates/131072/)
 python3.14 build_app.py "<dump folder>" --shared-fonts "<…/shared-fonts>" -o "/Applications/Ocarina of Time.app"
@@ -77,10 +80,12 @@ Open the app from Finder. The game starts with its title movie and opening, as o
 - **New version of this repository** (after `git pull`): quit the game, then
 
   ```sh
-  python3.14 update_runtime.py "<the app>" --work "<work folder>"
+  "$(plutil -extract MNGBuildPython raw "<the app>/Contents/Info.plist")" update_runtime.py "<the app>"
   ```
 
-  It rebuilds the runtime and the pipeline archive and reuses the shaders, in a few minutes; the work folder defaults to `OcarinaOfTime_build` next to the app. When it says the shaders need the full build, run the `build_app.py` command of [Build the app](#build-the-app) again: the work folder keeps everything else.
+  from the `MacNativeGames` folder: the Python the app was built with (its virtual environment has the build's tools), and the update works in the work folder the app records (`MNGWorkFolder`) and prints which one. Pass `--work` only to move the work folder. An app that records none falls back to `OcarinaOfTime_build` next to it; see [Folders](../../../docs/install.md#folders) for where the work folder belongs and how to move an older install's. Settings → Update in the app runs the same update.
+
+  It rebuilds the runtime from this checkout and then the pipeline archive from the warm-up lists the app carries (render, compute and mesh pipelines), and reuses the shaders, in a few minutes; after a runtime change the archive is filled again (about 3 minutes on an M4). When it says the shaders need the full build, run the `build_app.py` command of [Build the app](#build-the-app) again: the work folder keeps everything else.
 - Your saves and settings are not changed by either.
 
 ## When the build stops
@@ -89,11 +94,14 @@ Read the `ERROR:` line and the log file in `<work folder>/logs/`, fix the cause,
 
 | The message says | Fix |
 |---|---|
-| `unsupported or damaged original ExeFS`, `RomFS is not update 131072: missing … / different …` | Not update v131072, or a damaged dump: dump the game again. The RomFS check goes file by file and names the files; files it does not list are fine (two dumps of 131072 can differ by a few files). |
+| `unsupported or damaged original ExeFS`, `RomFS is not update 131072: missing … / other size …` | Not update v131072, or an incomplete dump: dump the game again. The RomFS check goes file by file and names the files. Retail packages of 131072 differ a little: files the list does not name are fine, and from a `.nup` a listed file of the listed size with other bytes is fine too (the package's own hashes are checked; the build log names them). |
+| `RomFS is not update 131072 as listed: different …` | Only from a dumped folder, which has no hashes of its own: those files may be another retail package's or damaged, and the build cannot tell. Build from the game's `.nup` instead. |
 | `… compute pipeline(s) could not be built on this Mac (…)` | The Metal compiler of this Mac failed on the shaders it names (seen on Apple M5 with macOS 26.6.2, #2070). Update macOS if an update is offered and build again; if it still fails, open an issue with the shader key and the lines of `logs/compute-pipelines.log` it names. |
+| `the pipeline archive was built from another pso_….tsv than the App carries`, `… planned N listed render/mesh pipelines, the App's lists name M`, `the pipeline archive holds none of the … listed mesh pipelines` | The archive and the app's warm-up lists do not match, so the app is not installed. Run the same command again; if it repeats, open an issue with the line and `logs/compute-pipelines.log`. |
 | `use the complete original update 131072 in the dump/NUP`, `leave out --update, --dlc and --mod` | Give only the `.nup` or the dump folder; it holds its update. |
 | `pass --shared-fonts with the six verified firmware fonts` | Add `--shared-fonts` (see [What you need](#what-you-need)). |
 | `no Metal compiler (Xcode -> Settings -> Components: Metal Toolchain)` | Install the full Xcode and its Metal toolchain. |
+| `the work folder … records, …, cannot be found, nor the folder it was in` | The work folder the app remembers is on a disk that is not connected, or was moved. Connect the disk and run the same command again, or add `--work "<a folder of your choice>"` ([Folders](../../../docs/install.md#folders)). A deleted work folder is made again by itself. |
 | `… must remain outside the source checkout` | Put `--work` and `-o` outside the `MacNativeGames` folder. |
 | `unfinished App staging directory exists; left untouched` | A build stopped while writing the app: delete the `.Ocarina of Time.app.ready` folder next to the app, then build again. |
 | `this title currently uses its original rendering options` | Leave out `--native-4k`, `--native-5k` and `--vr`. |

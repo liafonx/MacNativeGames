@@ -295,6 +295,20 @@ class OtherGamesTests(unittest.TestCase):
         self.assertIn('1 naming bind states the file does not give', line)
         self.assertIn(named[65:77], lists['totk'].answers)
 
+    def test_another_games_pipeline_naming_a_bind_state_the_file_does_not_give_is_not_merged(self):
+        # 2026-11-11, #2020 / PR #2092: two such rows reached Pokopia's list (only the seeded games were checked), and
+        # packaging stopped in resolve with a KeyError
+        keys = {g: set() for g in collect_shader_issues.GAMES}; keys['wonder'] = {self.KEY_W}
+        deps = '{"tex":{"0":"cube"}}'
+        named = f'{self.KEY_W}-{suffix(answers_for(json.loads(deps)))}_b'
+        def key(vs, fs):
+            return (vs.encode().ljust(80, b'\0') + fs.encode().ljust(80, b'\0') + b'\x07' * 40).hex()
+        body = (f'```\nV\t{self.KEY_W}\t{deps}\nR\t{key(named, named)}\n'
+                f'R\t{key(self.KEY_W + "-" + "9" * 12 + "_b", named)}\n```')
+        lists, line, per_game = self.merge(self.issue('Shader list (Super Mario Bros. Wonder): 3 rows', body), keys)
+        self.assertEqual(len(lists['wonder'].warm), 1)
+        self.assertIn('1 naming bind states the file does not give', line)
+
     def test_another_game_s_reply_names_its_own_list(self):
         reply = reply_text({'wonder': (40, 12)}, 'wonder')
         self.assertIn("12 of them new to Super Mario Bros. Wonder's own shader list (`games/wonder/assets/shader_list.tsv`)", reply)
@@ -429,7 +443,9 @@ class ShaderInboxScheduleTests(unittest.TestCase):
     """Every game's copy of the upload (user 2026-11-10): the question has no row threshold, one upload at each start,
     then one an hour."""
 
-    def test_every_copy_asks_without_rows_and_uploads_hourly(self):
+    def test_every_copy_asks_without_rows_and_uploads_at_start_then_on_a_timer(self):
+        # The three Zelda games (games/totk: TotK and BotW; games/oot) send every half hour (user 2026-11-11: "开机和半小时间隔"),
+        # the other games every hour.
         copies = sorted(TOTK.parent.glob('*/third_party/d2r_gfx/gfx/nvn/totk_contrib_upload.h'))
         self.assertGreaterEqual(len(copies), 7)
         for copy in copies:
@@ -437,7 +453,9 @@ class ShaderInboxScheduleTests(unittest.TestCase):
             ask = text[text.index('static inline NSUInteger totk_inbox_should_ask'):]
             ask = ask[:ask.index('\n}\n')]
             self.assertNotIn('totk_contrib_due', ask, f'{copy}: the question waits for rows')
-            self.assertIn('#define TOTK_INBOX_EVERY (60 * 60)', text, f'{copy}: not hourly')
+            zelda = copy.relative_to(TOTK.parent).parts[0] in ('totk', 'oot')
+            every = '(30 * 60)' if zelda else '(60 * 60)'
+            self.assertIn(f'#define TOTK_INBOX_EVERY {every}', text, f'{copy}: not every {"half hour" if zelda else "hour"}')
             self.assertIn('#define TOTK_INBOX_FIRST 20', text, f'{copy}: no upload at the start')
 
 

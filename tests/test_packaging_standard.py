@@ -24,7 +24,9 @@ def seed_identity_ignores_runtime(text):
 STANDARDS = {
     'shader data in its own signed bundle': lambda t: 'ShaderData-' in t,
     'pipeline archive built while packaging': lambda t: 'pipeline-archive' in t or 'mac_pipelines' in t,
-    'title does not wait for the warm-up': lambda t: 'TOTK_WARM_BEFORE_TITLE' in t,
+    # every game comes to the title once the warm-up is done, archive complete or not (user 2026-11-11: "所有塞尔达 都是 预热玩
+    # 进标题！", "所有游戏都是"); the Mac shortcut that skipped the wait with a complete archive (2026-10-29) is gone
+    'title after the warm-up': lambda t: 'TOTK_WARM_BEFORE_TITLE' in t and '标题不等预热读完' not in t,
     'no program runs inside a new app': lambda t: re.search(r"run_outside_bundle|work/'build/oot-native'", t) is not None,
     'seed and library digests are reused': lambda t: 'seed_digests' in t or 'record_verified' in t,
     'repackaging keeps the .app folder': lambda t: 'install_app(' in t and re.search(r'(partial|temporary)\.rename\(out\)', t) is None,
@@ -33,6 +35,10 @@ STANDARDS = {
     # the runtime's warm-up, its contribution filter and the launcher's prune read pso_title.tsv / pso_manifest.tsv beside the
     # shader map (build/): Ocarina of Time's were only in the seed, so every pipeline it drew was contributed (2026-11-10)
     'warm-up lists beside the shader map': lambda t: "'build/pso_manifest.tsv'" in t,
+    # the pipeline archive is built from those same build/ lists: Ocarina of Time's fast update built it from the seed's
+    # older list, 2,957 of the App's 7,516 render pipelines, and 4,559 were compiled at the first start (2026-11-11)
+    'pipeline archive built from the App\'s lists': lambda t: (
+        'check_archive_lists(' in t or "lists = [p for p in (build / 'pso_title.tsv', build / 'pso_manifest.tsv'" in t),
 }
 
 GFX = 'games/{}/third_party/d2r_gfx/gfx/nvn/nvn_mtl.m'
@@ -41,18 +47,18 @@ GFX = 'games/{}/third_party/d2r_gfx/gfx/nvn/nvn_mtl.m'
 PATHS = {
     'totk': (['build_app.py', 'update_runtime.py', 'games/totk/scripts/prepare_shader_seed.py', GFX.format('totk')], {}),
     'switch 2 dumps (Bananza, Pokopia)': (
-        ['build_app.py', 'update_runtime.py', 'games/totk/scripts/prepare_ns2_seed.py', GFX.format('totk')],
-        {'a runtime change keeps the translations': 'games/totk/scripts/prepare_ns2_seed.py still hashes the runtime binary; to do, as games/oot does'}),
+        ['build_app.py', 'update_runtime.py', 'games/totk/scripts/prepare_ns2_seed.py', GFX.format('totk')], {}),
     'oot': (['games/oot/build.py', 'update_runtime.py', 'games/oot/scripts/prepare_ns2_seed.py', GFX.format('oot')], {}),
     'dread': (['games/dread/build.py'], {
         'shader data in its own signed bundle': 'not done for this game yet',
         'pipeline archive built while packaging': 'not done for this game yet',
-        'title does not wait for the warm-up': 'not done for this game yet',
+        'title after the warm-up': 'not done for this game yet',
         'no program runs inside a new app': 'not done for this game yet',
         'seed and library digests are reused': 'not done for this game yet',
         'repackaging keeps the .app folder': 'not done for this game yet',
         'a runtime change can update quickly': 'not done for this game yet',
         'warm-up lists beside the shader map': 'not done for this game yet',
+        'pipeline archive built from the App\'s lists': 'no pipeline archive for this game yet',
     }),
 }
 

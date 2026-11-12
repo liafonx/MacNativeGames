@@ -41,6 +41,7 @@
 #include <stdatomic.h>
 #include "dmsh_chain.h"
 #include "totk_shader_rt.h"
+#include "nvn_compiler_retry.h"   /* #2070: an add the compiler service dropped is tried again */
 
 #ifndef PAR_BATCH_MAC
 #define PAR_BATCH_MAC 8
@@ -54,6 +55,12 @@ static NSMutableDictionary<NSString *, id<MTLBinaryArchive>> *g_par_open; // ope
 static int g_par_on, g_par_valid;                                        // valid: files of this OS / GPU / chain exist
 static _Atomic uint64_t g_par_written, g_par_write_failed, g_par_files, g_par_add_ns, g_par_flush_ns;
 static _Atomic int par_filling;                                          // the background fill (warm_fill_archive)
+/* Packaging (TOTK_PAR_RECHECK=1, mtl_pipeline_archive_tool): every listed pipeline is made against the archive, a key it has
+   included, so one the runtime now describes otherwise is found missing and written again (par_stale); the files whose
+   keys all moved go (par_prune_superseded). The archive is kept from one package to the next instead of thrown away
+   whenever the runtime changed (user 2026-11-11: "如何让 快速更新 不要这么容易失效"). */
+static int g_par_recheck;
+static _Atomic uint64_t g_par_stale;                                      // keys whose file missed their pipeline (par_stale)
 static __thread int par_write_in_place;                                  // the fill's and the start-up warm-up's thread: they write at once
 
 /* Pipelines per file (see the top): TOTK_PIPELINE_ARCHIVE_BATCH=<1-256>, 8 on the Mac. iOS keeps one per file: it opens a
@@ -312,8 +319,15 @@ static void par_write(id<MTLDevice> dev, NSString *key, id desc) {
         b->archive = [dev newBinaryArchiveWithDescriptor:[MTLBinaryArchiveDescriptor new] error:&e];
         td[k_par_batch] = b;   // also without an archive: par_flush_thread ends the batch
     }
-    BOOL ok = b->archive && ([desc isKindOfClass:MTLRenderPipelineDescriptor.class] ? [b->archive addRenderPipelineFunctionsWithDescriptor:desc error:&e]
-                                                                                  : [b->archive addComputePipelineFunctionsWithDescriptor:desc error:&e]);
+    // a mesh pipeline too (OOT 2026-11-11: its 124 listed mesh pipelines were compiled at every start, none archived)
+    /* Adding compiles through the compiler service: when it went away (another thread's shader crashed it, #2070), the
+       add is tried again once it is back, instead of losing the batch (nvn_compiler_retry.h). */
+    id<MTLBinaryArchive> archive = b->archive;
+    BOOL ok = archive && compiler_retry(&e, 100, ^BOOL(NSError **err) {
+        return [desc isKindOfClass:MTLRenderPipelineDescriptor.class] ? [archive addRenderPipelineFunctionsWithDescriptor:desc error:err]
+             : [desc isKindOfClass:MTLMeshRenderPipelineDescriptor.class] ? [archive addMeshRenderPipelineFunctionsWithDescriptor:desc error:err]
+                                                                        : [archive addComputePipelineFunctionsWithDescriptor:desc error:err];
+    });
     atomic_fetch_add(&g_par_add_ns, bp_now() - t0);
     if (ok) [b->keys addObject:key];
     else {
@@ -321,6 +335,18 @@ static void par_write(id<MTLDevice> dev, NSString *key, id desc) {
         if (atomic_fetch_add(&g_par_write_failed, 1) < 4) MLOG("【红】管线存档：加不进去（%s）", e ? e.localizedDescription.UTF8String : "建不了存档");
     }
     if (b->keys.count >= (NSUInteger)par_batch_size() || !b->archive) par_flush_thread();
+}
+/* A key whose file does not hold its pipeline (Metal checks the functions and state: the runtime that wrote the file
+   described the pipeline otherwise): forgotten, so the pipeline compiled now is written into a new file, which then holds
+   the key (par_load_dir takes a key's newest file). Before 2026-11-11 par_write kept the first, so such a pipeline was
+   compiled at every start, and packaging threw the whole archive away whenever the runtime changed. */
+static void par_stale(NSString *key) {
+    if (!key) return;
+    pthread_mutex_lock(&g_par_mu);
+    if ([g_par_have containsObject:key] && ![g_par_pending containsObject:key]) {
+        [g_par_have removeObject:key]; [g_par_where removeObjectForKey:key]; atomic_fetch_add(&g_par_stale, 1);
+    }
+    pthread_mutex_unlock(&g_par_mu);
 }
 // Called after a pipeline the archive did not have was compiled. The warm-up writes it at once; one compiled in play is in
 // pso_user.tsv, so the next start's warm-up builds it and writes it then.
