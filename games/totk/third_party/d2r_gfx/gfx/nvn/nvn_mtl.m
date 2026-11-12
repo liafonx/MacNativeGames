@@ -9391,10 +9391,11 @@ void mtl_prog_prefetch(const prog_t *p) {
         if (note) totk_rt_note_set(@(key));
     }
     if (!prefetch_on() || !p || !p->nstage) return;
-    static NSMutableSet<NSString *> *seen; static dispatch_queue_t q; static dispatch_semaphore_t slots; static os_unfair_lock lk = OS_UNFAIR_LOCK_INIT;
+    static NSMutableSet<NSString *> *seen; static dispatch_queue_t q, lanes[4]; static _Atomic unsigned lane_next; static dispatch_semaphore_t slots; static os_unfair_lock lk = OS_UNFAIR_LOCK_INIT;
     static dispatch_once_t once; dispatch_once(&once, ^{
         seen = [NSMutableSet set];
         q = dispatch_queue_create("totk.shader-prefetch", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_CONCURRENT, QOS_CLASS_USER_INITIATED, 0));
+        for (int k = 0; k < 4; k++) lanes[k] = dispatch_queue_create("totk.shader-prefetch.lane", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
         slots = dispatch_semaphore_create(4);   // the system compiler service runs requests side by side; 4 leaves cores to the game
         MLOG("[prefetch] 着色器预编已开（TOTK_SHADER_PREFETCH=%d）：游戏设着色器时，后台编翻译缓存里已有的变体%s，最多 4 个同时编", prefetch_mode(),
              prefetch_mode() > 1 ? "，缓存里没有的先在后台翻译" : "");
@@ -9418,7 +9419,12 @@ void mtl_prog_prefetch(const prog_t *p) {
             totk_rt_variant(shader, stage, control, (const uint8_t *)(uintptr_t)p->sd[i].data, none, rt_local(control, stage), 1);
             atomic_fetch_add(&g_pf_translate, 1);
         }
-        dispatch_async(q, ^{ @autoreleasepool {
+        /* TOTK (M2 2026-11-12): mode 1 runs on 4 serial lanes, so at most 4 GCD workers serve it and the slots never block. On
+           the concurrent queue each block took a worker and parked it in dispatch_semaphore_wait: with a cold Metal cache (a
+           new app path, thousands of programs set at the title) all 64 workers of the process parked there, the
+           predicted-library block that shader_get waits for (plib_take) never got a thread, and the title hung. Mode 2 waits
+           for its translations outside the slots and keeps the concurrent queue. */
+        dispatch_async(prefetch_mode() > 1 ? q : lanes[atomic_fetch_add_explicit(&lane_next, 1, memory_order_relaxed) % 4], ^{ @autoreleasepool {
             if (prefetch_mode() > 1)   // a translation queued above: its library once it is done (background; at most 60 s)
                 for (int w = 0; w < 3000 && !totk_rt_known_variants(shader).count && totk_rt_pending_of(shader); w++) usleep(20000);
             for (NSString *v in totk_rt_known_variants(shader)) {
