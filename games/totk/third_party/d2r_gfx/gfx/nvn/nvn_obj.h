@@ -341,8 +341,18 @@ int totk_wb_fence_on(void);
 /* TOTK_WB_FENCE=0 waits for all submitted GPU work, as before. Otherwise a write-back waits only for the submissions that
    rendered the listed textures (the game waits for its own sync before invalidating), then for uploads to finish. */
 #define BOTW_WB_IS_STAGED(e) 0
+#ifdef TOTK_GAME_V143
+/* TOTK 1.4.3 (TOTK_WB_BATCH, default 1; nvn_mtl.m wb_up_wait): the uploads to wait for are those of the listed textures' own
+   batches. Every upload command buffer starts with a full queue barrier, so "all uploads" was the whole GPU backlog (about
+   4.8 ms a frame at 3456x1944). TOTK_WB_BATCH=0 polls until no upload is pending, as before. */
+#define TOTK_PKG_UPB uint64_t up_batch;   /* the upload batch that last wrote the texture (NvPkg) */
+#define WB_WAIT_GPU(list, nl) { uint64_t need_ = 0; for (int i_ = 0; i_ < (nl); i_++) if ((list)[i_]->fence > need_) need_ = (list)[i_]->fence; \
+    if (totk_wb_fence_on()) { if (need_) mtl_wait(need_, UINT64_MAX); wb_up_wait((list), (nl)); } else mtl_finish_gpu(); }
+#else
+#define TOTK_PKG_UPB
 #define WB_WAIT_GPU(list, nl) { uint64_t need_ = 0; for (int i_ = 0; i_ < (nl); i_++) if ((list)[i_]->fence > need_) need_ = (list)[i_]->fence; \
     if (totk_wb_fence_on()) { if (need_) mtl_wait(need_, UINT64_MAX); while (atomic_load(&g_up_pending)) usleep(1000); } else mtl_finish_gpu(); }
+#endif
 #define BOTW_WB_FROM_STAGE(e, ok, layers)
 #define BOTW_TINY_NOTE(t, o)
 #define BOTW_TINY_COMMIT()
@@ -351,7 +361,7 @@ int totk_wb_fence_on(void);
 #define UNCAPPED_INTERVAL_FROM_ENV(e) e && atoi(e)
 #define BOTW_ASHOT_POLL(t, cur)
 #define BOTW_REUP_TRACKED(pk, t)
-#define BOTW_PKG_FIELDS
+#define BOTW_PKG_FIELDS TOTK_PKG_UPB
 #define BOTW_TP_UPLOADED(pk, t)
 #define BOTW_TP_BASE(rp, b)
 #define BOTW_TP_VIEW(rp, r, b)
@@ -448,6 +458,9 @@ void mtl_pkg_stats(uint64_t *uploads, uint64_t *reuploads);
 uint64_t mtl_pkg_miss(void);
 uint64_t mtl_upload_ns_take(void);   // 取走并清零：上次以来提交线程上预排布贴图上传耗时   // DM_NVN_DIRTYCHECK 诊断：漏检次数   // 预排布贴图：首传次数、因池内容变化而重传次数 | Take and zero: time spent uploading packaged textures on the submit thread since last time   // DM_NVN_DIRTYCHECK diagnostic: number of missed detections   // Packaged textures: number of first uploads, number of re-uploads due to pool content changes
 uint64_t mtl_upload_gpu_ns_take(void);   // 取走并清零：上传命令缓冲的显卡执行耗时（GPUEndTime − GPUStartTime 累加） | Take and zero: GPU execution time of upload command buffers (sum of GPUEndTime − GPUStartTime)
+#ifndef GAME_BOTW
+uint64_t mtl_upload_own_gpu_ns_take(void);   // Take and zero: GPU time of upload command buffers outside the render chunks' spans (@upload_own_gpu_ms)
+#endif
 void mtl_create_stats(uint64_t *lib, uint64_t *pso);   // 累计：提交线程上同步载入的着色器库数、同步新建的渲染 + 计算管线数（预热领用的不算） | Cumulative: number of shader libraries loaded synchronously on the submit thread, number of render + compute pipelines created synchronously (those taken from warm-up do not count)
 // CPU 读贴图：level / layer0 起，按 row / img 字节步长写进 dst
 // CPU texture read: starting at level / layer0, written into dst with row / img byte strides

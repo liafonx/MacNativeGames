@@ -2488,6 +2488,28 @@ void mtl_set_frame(uint64_t f) {
     g_hdr_frame_peak=totk_hdr_uniform_snapshot(&g_hdr_frame_uniform,front_hdr_headroom?front_hdr_headroom():1,hdr);
     atomic_store(&g_cur_frame,f);if(g_ub_n)ub_frame(f);
 }
+#ifndef GAME_BOTW
+/* @upload_own_gpu_ms (hle_nvn.c): the GPU time of the upload command buffers outside the spans of the render chunks. An upload
+   command buffer's own GPU span (g_upload_gpu_ns, @upload_gpu_ms) also counts the time it waits behind the render work (its first
+   command is a full queue barrier). Spans are noted as their feedback arrives, recent ones kept in two small rings: whichever
+   of an upload and a render span completes second subtracts its overlap with the other kind. Seconds, as GPUStartTime. */
+typedef struct { double a, b; } gpu_span;
+static gpu_span g_span_up[32], g_span_rd[32]; static unsigned g_span_nup, g_span_nrd; static os_unfair_lock g_span_lk = OS_UNFAIR_LOCK_INIT;
+static _Atomic int64_t g_upload_own_ns;
+static void span_note(int upload, double a, double b) {
+    if (b <= a) return;
+    gpu_span *mine = upload ? g_span_up : g_span_rd, *other = upload ? g_span_rd : g_span_up; unsigned *nm = upload ? &g_span_nup : &g_span_nrd, no = upload ? g_span_nrd : g_span_nup;
+    double ov = 0;
+    os_unfair_lock_lock(&g_span_lk);
+    for (unsigned i = 0; i < MIN(no, 32u); i++) { double lo = MAX(a, other[i].a), hi = MIN(b, other[i].b); if (hi > lo) ov += hi - lo; }
+    mine[(*nm)++ % 32] = (gpu_span){a, b};
+    os_unfair_lock_unlock(&g_span_lk);
+    atomic_fetch_add(&g_upload_own_ns, (int64_t)((upload ? b - a : 0) * 1e9) - (int64_t)(ov * 1e9));
+}
+#define SPAN_NOTE(upload, a, b) span_note((upload), (a), (b));
+#else
+#define SPAN_NOTE(upload, a, b)
+#endif
 // GPU 计时登记：提交前 gpu_tag_begin(帧)，完成时 gpu_tag_done(帧, GPU 起, GPU 止)（CACurrentMediaTime 基准秒）。
 // 旧队列命令缓冲走 gpu_tag_f；Metal 4 主提交在 mtl_sub_commit 的 feedback 里回填（换 Metal 4 时调用点全丢，「计时」行的 GPU 一栏成了空）
 // GPU timing registration: gpu_tag_begin(frame) before commit, gpu_tag_done(frame, GPU start, GPU end) on completion (seconds on the CACurrentMediaTime base).
@@ -2579,7 +2601,7 @@ static void mtl_sub_split(void) {
     uint64_t gpu_f = atomic_load(&g_cur_frame), fence_next = g_fence + 1; gpu_tag_begin(gpu_f);
     TotkCommitOptions *o = [TotkCommitOptions new];
     [o addFeedbackHandler:^(id<MTL4CommitFeedback> f) {
-        gpu_tag_done(gpu_f, f.GPUStartTime, f.GPUEndTime);
+        gpu_tag_done(gpu_f, f.GPUStartTime, f.GPUEndTime); SPAN_NOTE(0, f.GPUStartTime, f.GPUEndTime)
         if (f.error) { atomic_store(&g_last_commit_error, 1); static int n; if (n++ < 8) MLOG("【红】分段命令缓冲错误 fence=%llu：%s", (unsigned long long)fence_next, f.error.description.UTF8String); }
     }];
     if (totk_tl_on()) { uint64_t tlid = totk_tl_commit_id(); totk_tl(TL_COMMIT, tlid, 0);
@@ -2633,7 +2655,7 @@ uint64_t mtl_sub_commit(void) {
     uint64_t gpu_f = atomic_load(&g_cur_frame); gpu_tag_begin(gpu_f);
     NSString *cctx = @(cctx_snap());
     [o addFeedbackHandler:^(id<MTL4CommitFeedback> cb) {
-        gpu_tag_done(gpu_f, cb.GPUStartTime, cb.GPUEndTime);
+        gpu_tag_done(gpu_f, cb.GPUStartTime, cb.GPUEndTime); SPAN_NOTE(0, cb.GPUStartTime, cb.GPUEndTime)
         if (cb.error) { atomic_store(&g_last_commit_error, 1); static int n, nv; int victim = [cb.error.description containsString:@"InnocentVictim"]; if (victim ? nv++ < 1 : n++ < 8) MLOG("【红】命令缓冲错误详情 fence=%llu：%s | GPU %.3f→%.3f", (unsigned long long)fence, cb.error.description.UTF8String, cb.GPUStartTime, cb.GPUEndTime); if (!victim) MLOG("【红】出错那次提交的现场 fence=%llu：%s", (unsigned long long)fence, cctx.UTF8String); MLOG("【红】命令缓冲执行出错：%s", cb.error.localizedDescription.UTF8String); }
         int nq = 0, nzero = 0;   // TOTK_OCCL_AUTODUMP: occlusion queries of this submission and how many reported 0
         for (int i = 0; i < n; i++) {
@@ -3027,6 +3049,11 @@ static nvn_hmap g_wb = {.klen = 8};   // serial -> wb_ent * (g_smu): rendered si
 static _Atomic int g_wb_on = 1;
 static _Atomic int g_wb_fence_small = -1;   // -1: from TOTK_WB_FENCE_SMALL; "flag wb_fence_small 0|1" switches it while the game runs
 static int wb_fence_small_on(void);
+#ifdef TOTK_GAME_V143
+static _Atomic int g_wb_batch = -1;   // -1: from TOTK_WB_BATCH (default 1); "flag wb_batch 0|1" switches it while the game runs
+static void wb_up_wait(wb_ent **list, int nl);
+static void up_wait_batch(uint64_t id);
+#endif
 static void wb_drop_all(void);
 static void wb_write_list(wb_ent **list, int nl, int force);
 /* TOTK: fill the driver segment c0 for vertex and compute shaders (thread-group counts, uniform / storage address tables,
@@ -3201,6 +3228,9 @@ void dm_gfx_set_flag(const char *name, int v) {
     if (!strcmp(name, "deferred")) { extern void nvn_set_deferred_binds(int on); nvn_set_deferred_binds(v); return; }
     if (!strcmp(name, "framewait")) { extern void nvn_set_framewait(int on); nvn_set_framewait(v); return; }
     if (!strcmp(name, "sync_lag")) { extern void nvn_set_sync_lag(int on); nvn_set_sync_lag(v); return; }
+#ifdef TOTK_GAME_V143
+    if (!strcmp(name, "wb_batch")) { atomic_store(&g_wb_batch, v != 0); MLOG("[flag] wb_batch = %d", v != 0); return; }
+#endif
 #ifdef GAME_BOTW
     if (!strcmp(name, "wb_staged_nowait")) { extern void botw_wb_set_staged_skip(int on); botw_wb_set_staged_skip(v); return; }
 #endif
@@ -3284,6 +3314,35 @@ static void wb_target_end(void *tok) {
     nvn_dirty_gpu_write_end(tok);
     pthread_mutex_unlock(&g_mu);
 }
+#ifdef TOTK_GAME_V143
+/* TOTK 1.4.3: the write-back waited for every upload batch in flight (polling), and wb_tex_back's q_cb for them again. Every
+   upload command buffer starts with a full queue barrier, so that was the whole GPU backlog, behind the frame's work, with
+   the replay lock held and the game's thread blocked (3456x1944: the GPU idled about 4.8 ms of 25.5 ms a frame). The
+   read-back blit needs only the batch that wrote its texture (NvPkg up_batch, set in pkg_upload): a later upload never
+   writes a texture that was rendered, because a re-upload creates (or recycles one no submission reads) another texture
+   and the record then names that texture's batch. TOTK_WB_BATCH=0 (runtime "flag wb_batch 0") waits for all, as before. */
+static int wb_batch_on(void) {
+    int v = atomic_load(&g_wb_batch);
+    if (v < 0) { const char *e = getenv("TOTK_WB_BATCH"); v = !(e && !atoi(e)); atomic_store(&g_wb_batch, v); }
+    if (v) { static int said; if (!said) { said = 1; MLOG("[nvn] write-back waits for its own upload batch (TOTK_WB_BATCH=0: wait for all)"); } }
+    return v;
+}
+static uint64_t g_wb_cur_batch;   // the batch of the texture wb_tex_back reads (set by wb_write_list_body, replay thread)
+static uint64_t wb_up_batch_of(id o) { return [o isKindOfClass:[NvPkg class]] ? ((NvPkg *)o)->up_batch : 0; }
+/* Wait (condition variable) for the upload batches of the listed textures; on the replay's own thread only (the open batch is
+   flushed there). Off, or elsewhere: poll until no upload is pending, as before. */
+static void wb_up_wait(wb_ent **list, int nl) {
+    if (!wb_batch_on() || !on_sub_thread()) { while (atomic_load(&g_up_pending)) usleep(1000); return; }
+    for (int i = 0; i < nl; i++) up_wait_batch(wb_up_batch_of((__bridge id)list[i]->obj));
+    if (totk_tl_on()) totk_tl(TL_WB_STEP, 2, 0);
+}
+/* q_cb for wb_tex_back: flush the open batch, then wait only for the texture's own batch. */
+static id<MTLCommandBuffer> wb_q_cb(uint64_t batch) {
+    if (!wb_batch_on() || !on_sub_thread()) return q_cb();
+    up_flush(); up_wait_batch(batch);
+    return [g_q commandBuffer];
+}
+#endif
 /* Every level and layer of a texture is read back with one command buffer and one wait: one blit per level and layer
    waited for the GPU each time, 24 round trips (about 3.7 ms on the game's thread) for the 64x64 cubemap with four
    levels that Breath of the Wild reads back every 10 frames (1.6.0, Kakariko, 2026-10-28). */
@@ -3301,7 +3360,11 @@ static int wb_tex_back(const tex_t *t, id<MTLTexture> mt, unsigned layers) {   /
     @autoreleasepool {
     id<MTLBuffer> buf = total ? [g_dev newBufferWithLength:total options:MTLResourceStorageModeShared] : nil;
     if (!buf) return 0;
+#ifdef TOTK_GAME_V143
+    id<MTLCommandBuffer> cb = wb_q_cb(g_wb_cur_batch); id<MTLBlitCommandEncoder> b = enc_b_begin(cb);
+#else
     id<MTLCommandBuffer> cb = q_cb(); id<MTLBlitCommandEncoder> b = enc_b_begin(cb);
+#endif
     size_t off = 0;
     for (unsigned l = 0; l < t->d.levels; l++) for (unsigned y = 0; y < layers; y++) {
         uint32_t lw = MAX(t->d.width >> l, 1u), lh = MAX(t->d.height >> l, 1u);
@@ -3487,6 +3550,9 @@ static void wb_write_list_body(wb_ent **list, int nl, int force) {
         }
         if (!mt || bc_unpack(t->d.format, &upf, &ubpp) || t->d.target == 2 || t->d.samples > 1) { if (++g_wb_skip_fmt <= 8) MLOG("【红】GPU 写回内存：不支持的贴图 ser=%llu 格式 %#x 目标 %d", (unsigned long long)t->serial, t->d.format, t->d.target); wb_ent_free(e); continue; }
         unsigned layers = t->L.layers ? t->L.layers : 1; int ok = 1; BOTW_WB_FROM_STAGE(e, ok, layers)
+#ifdef TOTK_GAME_V143
+        g_wb_cur_batch = wb_up_batch_of(o);
+#endif
         if (ok == 1 && layers) ok = wb_tex_back(t, mt, layers);   // layers 0: written back from the stage
         if (ok == WB_POOL_GONE) { wb_ent_free(e); continue; }   // counted and logged by wb_target_lock
         if (ok) { BOTW_WB_LANDED(t) uint64_t d = ++g_wb_done; if (d <= 8 || d % 500 == 0) MLOG("[writeback] ser=%llu %ux%u nvnfmt=%#x lv%u：GPU 渲染结果写回内存（累计 %llu 张 / %llu MB，CPU 已改写而跳过 %llu 张）", (unsigned long long)t->serial, t->d.width, t->d.height, t->d.format, t->d.levels, (unsigned long long)d, (unsigned long long)(g_wb_bytes >> 20), (unsigned long long)g_wb_skip_cpu); }
@@ -3880,6 +3946,12 @@ static _Atomic int g_up_alloc_busy[3];
 static pthread_mutex_t g_up_slot_mu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_up_slot_cv = PTHREAD_COND_INITIALIZER;
 static _Atomic uint64_t g_up_slot_waits, g_up_slot_wait_ns;
 static unsigned g_up_seq;
+#ifdef TOTK_GAME_V143
+/* Upload batch ids (TOTK_WB_BATCH): up_begin gives each batch the next id and records it in its allocator slot. A batch is in
+   flight while its slot is busy and still holds its id; the completion handler clears the slot and signals g_up_slot_cv, and
+   a slot taken again by a later batch means the earlier one completed. g_up_cur_id: the batch begun last (open while g_up_cb). */
+static uint64_t g_up_ctr, g_up_cur_id, g_up_slot_id[3];
+#endif
 #define UP_BLOCK_SIZE (32u * 1024u * 1024u)
 typedef struct {
     __unsafe_unretained id<MTLBuffer> src;
@@ -4065,6 +4137,7 @@ static void up_flush(void) {
         }
         double d = f.GPUEndTime - f.GPUStartTime;
         if (d > 0) atomic_fetch_add(&g_upload_gpu_ns, (uint64_t)(d * 1e9));
+        SPAN_NOTE(1, f.GPUStartTime, f.GPUEndTime)
         for (id obj in staging) res_remove(obj);
         [staging removeAllObjects];
         for (int i = 0; i < UP_POOL; i++) if (pool_mask >> i & 1) atomic_store(&g_up_pool_busy[i], 0);
@@ -4094,6 +4167,9 @@ static void up_begin(void) {
         pthread_mutex_unlock(&g_up_slot_mu); atomic_fetch_add(&g_up_slot_waits, 1); atomic_fetch_add(&g_up_slot_wait_ns, bp_now() - w0);
     }
     atomic_store(&g_up_alloc_busy[slot], 1);
+#ifdef TOTK_GAME_V143
+    g_up_slot_id[slot] = g_up_cur_id = ++g_up_ctr;
+#endif
     [g_up_alloc4[slot] reset];
     g_up_cb = [g_dev newCommandBuffer];
     [g_up_cb beginCommandBufferWithAllocator:g_up_alloc4[slot]];
@@ -4103,6 +4179,21 @@ static void up_begin(void) {
     if (!g_up_texs) g_up_texs = [NSMutableArray array];
     if (!g_up_keep) g_up_keep = [NSMutableArray array];
 }
+#ifdef TOTK_GAME_V143
+/* Wait for batch id to complete (submit thread; 0: none). An open batch is committed first. Lost wakeups: the handler clears
+   the slot and broadcasts under g_up_slot_mu, and the check below runs under it. Takes no other lock. */
+static void up_wait_batch(uint64_t id) {
+    if (!id) return;
+    if (g_up_cb && g_up_cur_id == id) up_flush();
+    pthread_mutex_lock(&g_up_slot_mu);
+    for (;;) {
+        int busy = 0; for (int s = 0; s < 3; s++) busy |= g_up_slot_id[s] == id && atomic_load(&g_up_alloc_busy[s]);
+        if (!busy) break;
+        pthread_cond_wait(&g_up_slot_cv, &g_up_slot_mu);
+    }
+    pthread_mutex_unlock(&g_up_slot_mu);
+}
+#endif
 static void up_reserve(size_t n) {
     if (g_up_batch_bytes && n > g_up_batch_limit - MIN(g_up_batch_bytes, g_up_batch_limit)) {
         up_flush(); up_begin();
@@ -4264,12 +4355,18 @@ static id<MTLTexture> pkg_upload(const tex_t *t, uint64_t *stamp, reup_key *key,
         uint64_t k = ++g_pkg_upload_unreadable;
         if (k <= 4 || k % 1000 == 0) MLOG("【红】贴图的内存已不可读，不上传（ser=%llu %ux%u 格式 %#x 存储 %p+%llu，第 %llu 次）", (unsigned long long)t->serial, t->d.width, t->d.height, t->d.format, (const void *)t->mem, (unsigned long long)t->L.size, (unsigned long long)k);
     } else r = pkg_upload_(t, stamp, key, pk);
+#ifdef TOTK_GAME_V143
+    if (r && pk) pk->up_batch = g_up_cur_id;   // the batch begun last holds this texture's blits (a CPU-path texture too)
+#endif
     clock_gettime(CLOCK_MONOTONIC, &b); uint64_t d_ = (uint64_t)((b.tv_sec - a.tv_sec) * 1000000000ll + b.tv_nsec - a.tv_nsec);
     atomic_fetch_add(&g_upload_ns, d_); g_up_total_ns += d_;
     return r;
 }
 uint64_t mtl_upload_ns_take(void) { return atomic_exchange(&g_upload_ns, 0); }
 uint64_t mtl_upload_gpu_ns_take(void) { return atomic_exchange(&g_upload_gpu_ns, 0); }
+#ifndef GAME_BOTW
+uint64_t mtl_upload_own_gpu_ns_take(void) { int64_t v = atomic_exchange(&g_upload_own_ns, 0); return v > 0 ? (uint64_t)v : 0; }
+#endif
 void mtl_create_stats(uint64_t *lib, uint64_t *pso) { *lib = g_bp_lib_n; *pso = g_bp_pso_n; }
 void mtl_create_ns(uint64_t *lib_ns, uint64_t *pso_ns) { *lib_ns = atomic_load_explicit(&g_bp_lib_ns, memory_order_relaxed); *pso_ns = atomic_load_explicit(&g_bp_pso_ns, memory_order_relaxed); }   // 同步现建着色器库 / 管线的累计耗时（长帧日志按帧取差） | Cumulative time spent synchronously creating shader libraries / pipelines on the spot (the long-frame log takes the per-frame difference)
 uint64_t mtl_upload_bytes(void) { return g_bp_up_bytes; }   // 贴图上传累计字节 | Cumulative texture upload bytes
