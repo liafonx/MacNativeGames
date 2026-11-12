@@ -1067,6 +1067,30 @@ int mtl_gpu_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off, uint64_
     *off = addr - base; *gpu = pgpu + *off;
     return 1;
 }
+#if !defined(GAME_BOTW) && !TARGET_OS_IPHONE
+/* TOTK (M2, 2026-11-12, the full 4K texture pack on a 16 GB Mac): the GPU deswizzle of a texture upload read the texture's
+   pool through its zero-copy buffer, and that lookup put the whole pool into the residency set (pool_res), which wires
+   every page of it. The texture heaps' pools hold only texture data (the GPU samples the separate Metal textures), so with
+   the pack ~3.8 GiB of them were wired for nothing: 9.5 GB wired in play, the rest of the Mac swapped, 27-34 fps. A texture
+   whose pool is not resident yet is now laid out on the CPU (nvn_deswizzle, the path TOTK_DESWZ_CPU=1 forces) and its pool
+   stays out of the set: 75 fps with the full pack (no pack 73). Pools that buffers made resident keep the GPU path.
+   TOTK_DESWZ_PIN=1 restores the old behaviour. Breath of the Wild keeps its own route; iOS is unchanged (not measured). */
+static _Atomic uint64_t g_tex_nopin;
+static int tex_pool_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off) {   // 1: in a resident pool (buf / off set); -1: in a pool that is not resident; 0: in no pool
+    static int pin = -1;
+    if (pin < 0) { const char *e = getenv("TOTK_DESWZ_PIN"); pin = e && atoi(e); MLOG("TOTK_DESWZ_PIN=%d: textures in pools outside the residency set are laid out on the %s", pin, pin ? "GPU, which pins their pool (old)" : "CPU; the pool stays out"); }
+    if (pin) return mtl_addr(addr, len, buf, off);
+    pthread_mutex_lock(&g_mu);
+    pidx_ent *p = pool_query((uintptr_t)addr, len);
+    int r = !p ? 0 : p->res ? 1 : -1;
+    if (r > 0) { *buf = p->buf; *off = addr - p->base; }
+    pthread_mutex_unlock(&g_mu);
+    if (r < 0) { uint64_t n = atomic_fetch_add_explicit(&g_tex_nopin, 1, memory_order_relaxed) + 1; if (n == 1 || n % 5000 == 0) MLOG("[tex-nopin] %llu texture copies from pools outside the residency set took the CPU path", (unsigned long long)n); }
+    return r;
+}
+#else
+static int tex_pool_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off) { return mtl_addr(addr, len, buf, off); }
+#endif
 
 // ---------- 提交 ----------
 // ---------- Submission ----------
@@ -4377,8 +4401,9 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, reup_key *key
     if (tca) g_bp_up_bytes += atotal - total;
     size_t xtotal = 0;   // output of the BC2/3/4/5/7 transcoder
     if (tck) for (unsigned l = drop; l < d.mipmapLevelCount + drop; l++) { uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u); xtotal += (size_t)((w + 3) / 4) * tco * ((h + 3) / 4) * layers; }
-    int use_gpu = (!unp || gdec) && (!tca || gtca) && g_nvn_deswz_gpu && !nvn_tex_is_linear(&t->d) && mtl_addr((uint64_t)t->mem, t->L.size, &mb, &mo);   // TOTK: linear textures take the CPU row copy
-    if (g_nvn_deswz_gpu && !use_gpu && !unp) RED_ONCE(40, "预排布贴图存储不在内存池里，回退 CPU");
+    int pooled = (!unp || gdec) && (!tca || gtca) && g_nvn_deswz_gpu && !nvn_tex_is_linear(&t->d) ? tex_pool_addr((uint64_t)t->mem, t->L.size, &mb, &mo) : 0;   // TOTK: linear textures take the CPU row copy; -1: the pool is not resident (tex_pool_addr)
+    int use_gpu = pooled > 0;
+    if (g_nvn_deswz_gpu && !use_gpu && !unp && !pooled) RED_ONCE(40, "预排布贴图存储不在内存池里，回退 CPU");
     if (use_gpu) {
         // GPU 执行时读内存池，比 CPU 上传时刻快照更接近 Switch 真机；脏页戳仍在编码前取，之后写入仍会触发重传。
         // The GPU reads the memory pool at execution time, which is closer to a real Switch than a snapshot at CPU upload time; the dirty-page stamp is still taken before encoding, and later writes still trigger a re-upload.
@@ -15945,7 +15970,7 @@ static int texels_gpu_region(const tex_t *t,unsigned level,unsigned layer0,const
     uintptr_t cp=(uintptr_t)cpu,pool=(uintptr_t)t->mem;
     if(cpu_span>UINTPTR_MAX-cp||t->L.size>UINTPTR_MAX-pool)return 0;
     if(cp<pool+t->L.size&&pool<cp+cpu_span)return 0; /* Preserve CPU overlap/order behavior through the old path. */
-    void *mb;uint64_t mo;if(!mtl_addr((uint64_t)t->mem,t->L.size,&mb,&mo))return 0;
+    void *mb;uint64_t mo;if(tex_pool_addr((uint64_t)t->mem,t->L.size,&mb,&mo)<=0)return 0; /* TOTK: a pool outside the residency set stays out (tex_pool_addr) */
     id<MTLBuffer> linear=[g_dev newBufferWithLength:total options:MTLResourceStorageModeShared];
     if(!linear){atomic_fetch_add(&g_texels_gpu_failures,1);return 0;}
     if(!to_linear)for(int z=0;z<nz;z++)for(size_t j=0;j<hb;j++)
