@@ -56,18 +56,18 @@ static void voice_reset(ServerVoice *v) {
     v->index = 0; v->offset = 0; v->fraction = 0; v->played = 0; v->consumed = 0; v->loops_done = 0;
     memset(&v->adpcm, 0, sizeof v->adpcm); v->adpcm.buffer = -1;
     memset(v->biquad_state, 0, sizeof v->biquad_state);
-#ifdef GAME_BOTW
+#ifdef AUDIO_RAMP
     v->ramp_ready = 0; v->was_started = 0; memset(v->last, 0, sizeof v->last);   /* a new voice starts at its volume, with no depop */
 #endif
 }
 static void update_voice(AudioRenderer *r, const AudrenVoiceIn *in) {
     need(in->id < (uint32_t)r->param.voice_count, "voice id out of range");
     ServerVoice *v = &r->voices[in->id];
-#ifdef GAME_BOTW
+#ifdef AUDIO_RAMP
     int tail = (in->is_new || !in->in_use) && audio_mixer_voice_release(r, v);   /* v->in still holds the old mix: a voice stopped in this request fades out instead of being cut */
 #endif
     if (in->is_new || !in->in_use) voice_reset(v);
-#ifdef GAME_BOTW
+#ifdef AUDIO_RAMP
     if (tail) v->fade_in = 1;   /* until the next frame, a new voice in this slot ramps up over the old tail, so the two do not add to a step (kept through later resets) */
 #endif
     for (int i = 0; i < 2; i++) if (!in->biquads[i].enable)
@@ -403,13 +403,13 @@ static int near(float a, float b) { return fabsf(a - b) <= 1e-4f; }
  * update gain on the next request, and release only the specified slot. */
 static int probe_positional_voice_tables(unsigned revision) {
     AudrenParameter p={.sample_rate=48000,.sample_count=240,.mix_buffer_count=2,.voice_count=3,.sink_count=1,.revision=REV(revision)};
-#ifdef GAME_BOTW
+#ifdef AUDIO_RAMP
     /* The tables, not the smoothing: Breath of the Wild ramps volume steps and fades a stopped voice (probe_ramp and
        probe_ramp_edge check that), so this renderer's mixer is opened without ramps and the expected samples stay exact. */
     char *ramp_was=getenv("TOTK_AUDIO_RAMP");ramp_was=ramp_was?strdup(ramp_was):NULL;setenv("TOTK_AUDIO_RAMP","0",1);
 #endif
     AudioRenderer *r=renderer_new(&p);audio_mixer_open(r);
-#ifdef GAME_BOTW
+#ifdef AUDIO_RAMP
     if(ramp_was){setenv("TOTK_AUDIO_RAMP",ramp_was,1);free(ramp_was);}else unsetenv("TOTK_AUDIO_RAMP");
 #endif
     float pcm[2][720];for(unsigned i=0;i<720;i++){pcm[0][i]=0.25f;pcm[1][i]=0.125f;}
@@ -484,7 +484,7 @@ static int probe_rev15(void){
     free(input);audio_mixer_close(r);free(r->voices);free(r->pools);free(r->mixes);free(r->sinks);free(r->effects);free(r->channels);free(r);
     return checked;
 }
-#ifdef GAME_BOTW
+#ifdef AUDIO_RAMP
 /* Volume ramps and depop (audio_mixer.c voice_ramp_mix): a loud constant voice whose volume drops from 1 to 0.25 between
    two frames, then stops. Neither may step the output: each sample stays within the ramp's per-sample change of the one
    before, and after the stop the output decays from the last sample instead of jumping to 0. TOTK_AUDIO_RAMP=0 must fail. */
@@ -564,7 +564,7 @@ void runtime_audio_probe(void) {
     AudrenParameter p = {48000, 240, 8, 1, 4, 1, 2, 0, 0, 0, 0, 0, 1, 2, 0, REV(11)};
     AudioRenderer *r = renderer_new(&p); audio_mixer_open(r);
     int checked = probe_rev15() + probe_positional_voice_tables(15) + probe_positional_voice_tables(16);
-#ifdef GAME_BOTW
+#ifdef AUDIO_RAMP
     checked += probe_ramp();
     for (int kind = EDGE_RELEASE; kind <= EDGE_REUSE_TWICE; kind++) checked += probe_ramp_edge(kind);
 #endif
