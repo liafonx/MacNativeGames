@@ -30,9 +30,15 @@ RODATA = bytes((index * 11 + 5) & 0xff for index in range(RODATA_SIZE))
 DATA = bytes((index * 13 + 9) & 0xff for index in range(DATA_SIZE))
 
 
-def nso_bytes(*, compress=False, digests=True):
+V143_TEXT_SIZE = 0x80000      # holds 1.4.3's first reserved site (0x7ad1c); the other modules are smaller than every site
+
+
+def nso_bytes(*, compress=False, digests=True, v143_size=False):
     """A synthetic NSO module: three segments, a 20-byte build ID, optional LZ4 segments and header digests."""
-    segments = [(TEXT, 0), (RODATA, RODATA_ADDRESS), (DATA, DATA_ADDRESS)]
+    if v143_size:
+        segments = [(TEXT * (V143_TEXT_SIZE // TEXT_SIZE), 0), (RODATA, V143_TEXT_SIZE), (DATA, V143_TEXT_SIZE + 0x1000)]
+    else:
+        segments = [(TEXT, 0), (RODATA, RODATA_ADDRESS), (DATA, DATA_ADDRESS)]
     stored, csz = [], []
     for data, _ in segments:
         payload = lz4.block.compress(data, store_size=False) if compress else data
@@ -473,6 +479,23 @@ class Case(unittest.TestCase):
         self.assertEqual(report['version'], 'botw190')
         self.assertEqual(report['reserved_sites'], len(patch_sites.sites('botw190', BUILD_ID.hex())))
         self.assertEqual(image_of(self.output.read_bytes())[0x40:0x44], b'\xaa\xbb\xcc\xdd')
+
+    def test_v143_takes_a_harmless_patch_and_refuses_a_reserved_site(self):
+        # TOTK 1.4.3 (docs/mods.md): its reserved list is game_patches_v143.c's (the list TOTK_PCHTXT passes the runtime,
+        # tests/test_runtime_pchtxt.py). The module is synthetic and padded to hold the first reserved site.
+        self.retail(v143_size=True)
+        self.patch(pchtxt([(0x40, b'\xaa\xbb\xcc\xdd')]))
+        report = self.apply(version='v143')
+        self.assertEqual(report['version'], 'v143')
+        self.assertEqual(report['reserved_sites'], len(patch_sites.sites('v143', BUILD_ID.hex())))
+        self.assertEqual(image_of(self.output.read_bytes())[0x40:0x44], b'\xaa\xbb\xcc\xdd')
+        site = patch_sites.sites('v143')[0]
+        self.assertIn('game_patches_v143.c', site.label)
+        self.output.unlink()
+        self.patch(pchtxt([(site.offset, b'\x00' * site.size)]))
+        with self.assertRaisesRegex(mod_exefs.ModError, rf'overlaps a site.*game_patches_v143\.c.*{site.offset:#x}'):
+            self.apply(version='v143')
+        self.assertFalse(self.output.exists())
 
     def test_botw190_refuses_a_site_the_runtime_checks(self):
         # 0x151d484 is the first word of the real-time frame step (game_patches_botw.c patch_realtime): the synthetic

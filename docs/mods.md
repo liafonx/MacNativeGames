@@ -138,6 +138,8 @@ It is read the way `--mod` reads it, and its `@nsobid` must match main's build I
 `extracted/<version>/exefs/main.build-id`. The rewriter doesn't see these bytes, so a patch that makes system calls,
 uses the thread-pointer or counter registers, or uses x18 still needs a build with `--mod`. A line on a site the app
 patches itself stops the start.
+On 1.4.3 those sites are the ones `--mod` refuses (`games/totk/scripts/patch_sites.py`, generated into
+`runtime/v143_pchtxt_sites.h`).
 
 **Breath of the Wild 1.9.0 and 1.6.0.** The same `--mod` flag and the same patch formats work for both Breath of the Wild
 builds (give the game files as for any build of that version: the base NSP and `--update`, or the card image for 1.6.0).
@@ -677,6 +679,7 @@ open --env TOTK_PCHTXT="/path/to/mods.pchtxt" "/path/to/Tears of the Kingdom.app
 读法与 `--mod` 相同，`@nsobid` 必须与 main 的构建 ID 一致；构建好的 App 把它存放在 `extracted/<版本>/exefs/main.build-id`。
 改写器看不到这些字节，所以含系统调用、使用线程指针或计数器寄存器、或使用 x18 的补丁仍需在构建时用 `--mod`。补丁行落在 App
 自己修改的位置时启动会停止。
+1.4.3 上这些位置就是 `--mod` 拒绝的位置（`games/totk/scripts/patch_sites.py`，生成到 `runtime/v143_pchtxt_sites.h`）。
 
 **旷野之息 1.9.0 和 1.6.0。** 同样的 `--mod` 参数和同样的补丁格式适用于旷野之息的两个版本（游戏文件按该版本的常规构建给出：基础 NSP 加 `--update`，1.6.0 也可以给卡带镜像）。
 补丁打在核对过的该版本 main 上，`@nsobid-` 一行必须是这个 main 的（解出的 `main` 偏移 0x40 起的 20 字节）。补丁落在这个游戏里 App 自己打补丁或检查的位置上会被拒绝：
