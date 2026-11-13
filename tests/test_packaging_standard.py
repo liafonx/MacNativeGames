@@ -84,11 +84,79 @@ class PackagingStandard(unittest.TestCase):
                     else:
                         self.assertTrue(met, f'{name} does not meet this standard; meet it, or list it in the gaps with the reason')
 
+    def test_every_switch_2_game_is_planned_for_the_express_update(self):
+        # "a runtime change can update quickly" passed for Bananza and Pokopia by its word in update_runtime.py (Tears of the
+        # Kingdom's place_runtime) while update_runtime.plan answered "only the normal update" for both (user 2026-11-12:
+        # "为什么要完整打包？"); asked of the plan itself, for each game, with its checks passing
+        import plistlib
+        import sys
+        import tempfile
+        from unittest import mock
+        sys.path.insert(0, str(ROOT))
+        import build_app
+        import update_runtime
+        for g in build_app.NS2.values():
+            version = g['version']
+            with self.subTest(game=version), tempfile.TemporaryDirectory() as tmp, \
+                    mock.patch.object(update_runtime, 'check_game_data'), mock.patch.object(update_runtime, 'check_rewriter'), \
+                    mock.patch.object(update_runtime, 'check_seed_chain', return_value=False):
+                work = Path(tmp) / 'work'
+                work.mkdir()
+                app = Path(tmp) / f'{build_app.APPS[version][0]}.app'
+                (app / f'Contents/Resources/totk/rewritten/{version}').mkdir(parents=True)
+                (app / 'Contents/Info.plist').write_bytes(plistlib.dumps(
+                    {'CFBundleExecutable': build_app.APPS[version][2], 'MNGWorkFolder': str(work)}))
+                data = app / f'Contents/Resources/totk/build/game-data/{version}'
+                data.mkdir(parents=True)
+                for name in build_app.game_data_files(version):
+                    (data / name).write_text('x')
+                self.assertEqual(update_runtime.plan(app)['kind'], 'express')
+
     def test_gaps_name_real_standards_and_reasons(self):
         for name, (_, gaps) in PATHS.items():
             for standard, why in gaps.items():
                 self.assertIn(standard, STANDARDS, name)
                 self.assertTrue(why.strip(), name)
+
+
+class DevicePipelineArchive(unittest.TestCase):
+    """Every game's iOS device pipeline archive is merged into a few files (user 2026-11-13: "统一 都做 … 保证 以后都这样"):
+    one file per pipeline used up the iPad's vnodes, as a pipeline made from an archive keeps its file mapped (Ocarina of
+    Time, 19,750 files: jetsam vnode-limit with 7,098 mapped regions; Breath of the Wild's iPhone build had 15,770 files).
+    nxnative bundles one archive per GPU. Every copy of the tool is the same file, so a fix reaches every game."""
+    COPIES = sorted((ROOT / 'games').glob('*/ios/tools/device_pipelines.py'))
+
+    def test_every_copy_merges(self):
+        self.assertTrue(self.COPIES, 'no device_pipelines.py found')
+        for path in self.COPIES:
+            with self.subTest(path=str(path.relative_to(ROOT))):
+                text = path.read_text()
+                groups = re.search(r'^GROUPS = (\d+)', text, re.M)
+                self.assertIsNotNone(groups, 'GROUPS is set')
+                self.assertGreater(int(groups.group(1)), 0, 'merged by default, never one file per pipeline')
+                self.assertIn('def plan_groups(', text)
+
+    def test_every_copy_is_the_same_file(self):
+        texts = {path.read_bytes() for path in self.COPIES}
+        self.assertEqual(len(texts), 1, 'copies of device_pipelines.py differ: '
+                         + ', '.join(str(p.relative_to(ROOT)) for p in self.COPIES))
+
+
+class IosMacPipelineCache(unittest.TestCase):
+    """Every iOS build that makes the device's pipelines on the Mac keeps that cache when the runtime changes and has the
+    run check it (device_pipelines.mac_cache, TOTK_PAR_RECHECK), as the Mac build does (build_app.mac_pipelines). User
+    2026-11-13: "根治，写测试 以后保证这样": the OOT iPad build threw both caches away for a runtime change, 240 s + 228 s
+    of pipelines made again from scratch, and every metal-tt group compiled again."""
+    BUILDS = [p for p in sorted((ROOT / 'games').glob('*/ios/tools/build_ipa.py')) if "'pipeline-archive'" in p.read_text()]
+
+    def test_every_build_checks_instead_of_throwing_away(self):
+        self.assertTrue(self.BUILDS, 'no iOS build makes pipelines on the Mac')
+        for path in self.BUILDS:
+            with self.subTest(path=str(path.relative_to(ROOT))):
+                text = path.read_text()
+                self.assertIn('mac_cache(folder,want)', text)
+                self.assertIn('**recheck', text, 'the run gets TOTK_PAR_RECHECK')
+                self.assertNotRegex(text, r'rmtree\(folder\b', 'the cache folder is never thrown away')
 
 
 if __name__ == '__main__':
