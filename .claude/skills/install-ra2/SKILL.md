@@ -18,8 +18,8 @@ You are helping a player turn **their own** Red Alert 2 install into native prog
 
 ```sh
 sw_vers -productVersion; uname -m; xcode-select -p
-brew install cmake ninja llvm sdl3 ffmpeg opencc
-python3 -c 'import PIL' || brew install pillow
+brew install cmake ninja llvm sdl3 ffmpeg opencc uv
+uv run --no-project --with pillow python -I -c "import PIL"
 git log -1 --oneline; df -h .
 ```
 
@@ -40,7 +40,7 @@ steamcmd +@sSteamCmdForcePlatformType windows +force_install_dir "$PWD/game/inst
 
 ```sh
 steamcmd +@sSteamCmdForcePlatformType windows +login <their account> +download_depot 2229850 2229855 +quit
-python3 -I scripts/languages.py game/install "<the depot folder steamcmd printed>"
+uv run --no-project --with pillow python -I scripts/languages.py game/install "<the depot folder steamcmd printed>"
 ```
 
 ## 3. Build for the Mac (about 7 minutes)
@@ -62,7 +62,7 @@ After step 3 (the recompiled code is shared):
 
 ```sh
 IOS_BUILD_DIR="<folder outside the repository>/ios" GENERATED_DIR="<as in step 3>" scripts/ios/build_app.sh
-IOS_BUILD_DIR="<as above>" BUILD_DIR="<as in step 3>" python3 -I scripts/ios/install_device.py --device "<device name>" --game game/install
+IOS_BUILD_DIR="<as above>" BUILD_DIR="<as in step 3>" uv run --no-project --with pillow python -I scripts/ios/install_device.py --device "<device name>" --game game/install
 ```
 
 - The first `build_app.sh` also builds SDL3, glslang, SPIRV-Cross and a decoders-only ffmpeg for iOS (some minutes).
