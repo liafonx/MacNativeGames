@@ -334,6 +334,7 @@ python3.14 games/totk/ios/tools/install_device.py "<文件夹>/TOTK-Vision.app" 
 - 日志：默认关闭。
   - Mac：`defaults write org.macnativegames.totk TOTK_DEBUG_LOG -bool YES`，下次启动起写到 `~/Library/Logs/MacNativeGames/totk.log`。
   - iPhone：在“设置 › TOTK › 記錄日誌”打开，写到 App 的 `Documents/log.txt`。
+- 紫色画面日志（Mac 版旷野之息，默认开启）：`~/Library/Logs/MacNativeGames/botw-events.log`，每次启动的前三段紫色画面各在旁边存一张截图 `botw-purple-*.png`。整个画面变紫时请把它们发给我们。`TOTK_PURPLE_WATCH=0` 关闭。
 
 ## 已知问题
 

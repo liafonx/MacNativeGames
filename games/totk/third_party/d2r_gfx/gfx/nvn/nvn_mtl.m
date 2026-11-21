@@ -12972,13 +12972,55 @@ static void snaptrace(const char *key, int reg, uint64_t addr, uint64_t size, co
    shader key starts with the prefix, one line per frame: the uniform block a graphics cb slot reads, which copy the GPU
    is given (cache / renamed / snapshot / live memory), words 12..15 of those bytes at encode time, and the same words
    of guest memory once this submission has completed. */
+#if defined(GAME_BOTW) && !TARGET_OS_IPHONE
+/* Breath of the Wild purple watch, the event log (2026-11-20, the owner: "it turned purple the whole picture occasionally,
+   like a purple filter added as an extra layer"). TOTK_EVENT_LOG (the launcher: ~/Library/Logs/MacNativeGames/botw-events.log)
+   gets one line per start and the lines of each purple episode; it is appended to across starts (moved to .old past 1 MiB),
+   unlike the debug log, which keeps only this run and the one before. Each line also goes to the debug log ([purple]). */
+static pthread_mutex_t g_pw_log_mu = PTHREAD_MUTEX_INITIALIZER; static FILE *g_pw_log_f; static int g_pw_log_tried;
+static _Atomic uint64_t g_pw_nan_until;   // the purple watch scans uniform blocks for non-finite floats up to this frame (0: off)
+static _Atomic int g_pw_nan_lines;        // lines that scan wrote in this episode
+static void pw_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void pw_log(const char *fmt, ...) {
+    char line[1536]; va_list ap; va_start(ap, fmt); vsnprintf(line, sizeof line, fmt, ap); va_end(ap);
+    MLOG("[purple] %s", line);
+    pthread_mutex_lock(&g_pw_log_mu);
+    if (!g_pw_log_tried) {
+        g_pw_log_tried = 1; const char *p = getenv("TOTK_EVENT_LOG");
+        if (p && *p) { struct stat st; char old[1100];
+            if (!stat(p, &st) && st.st_size > (1 << 20) && snprintf(old, sizeof old, "%s.old", p) < (int)sizeof old) rename(p, old);
+            g_pw_log_f = fopen(p, "a"); }
+    }
+    if (g_pw_log_f) { time_t now = time(NULL); struct tm tm; char ts[32]; localtime_r(&now, &tm); strftime(ts, sizeof ts, "%Y-%m-%d %H:%M:%S", &tm);
+        fprintf(g_pw_log_f, "%s %s\n", ts, line); fflush(g_pw_log_f); }
+    pthread_mutex_unlock(&g_pw_log_mu);
+}
+static int pw_nan_armed(void) { uint64_t u = atomic_load_explicit(&g_pw_nan_until, memory_order_relaxed); return u && u >= atomic_load_explicit(&g_cur_frame, memory_order_relaxed); }
+#endif
+#if defined(GAME_BOTW) && !TARGET_OS_IPHONE
+static const char *watch_fs_prefix(void) { static const char *p; static int init; if (!init) { p = getenv("OOT_WATCH_FS"); init = 1; }
+    if (!p && pw_nan_armed()) return "nan";   // a purple episode just began: three frames of the uniform scan below
+    return p; }
+#else
 static const char *watch_fs_prefix(void) { static const char *p; static int init; if (!init) { p = getenv("OOT_WATCH_FS"); init = 1; } return p; }
+#endif
 static void watch_cb(const char *key, int stage, int reg, uint64_t addr, uint64_t size, uint64_t gpu, id<MTLBuffer> mb, const char *src) {
     const char *w = watch_fs_prefix(); if (!w || !key) return;
     if (!strcmp(w, "nan")) {   // every graphics uniform binding: report blocks whose bound bytes hold non-finite floats
+#if defined(GAME_BOTW) && !TARGET_OS_IPHONE
+        static int lines;
+        const int pw = !getenv("OOT_WATCH_FS");   // armed by the purple watch: its own cap of 40 lines an episode, lines in the event log
+        if (pw ? atomic_load(&g_pw_nan_lines) >= 40 : lines >= 200) return;
+#else
         static int lines; if (lines >= 200) return;
+#endif
         const float *s = (const float *)bound_uniform_bytes(gpu, (size_t)size, mb); if (!s) s = (const float *)(uintptr_t)addr;
         unsigned bad = 0, first = 0; for (uint64_t i = 0; i < size / 4; i++) if (!isfinite(s[i])) { if (!bad) first = (unsigned)i; bad++; }
+#if defined(GAME_BOTW) && !TARGET_OS_IPHONE
+        if (bad && pw) { atomic_fetch_add(&g_pw_nan_lines, 1); uint32_t bits; memcpy(&bits, &s[first], 4);
+            pw_log("  non-finite uniform: F%llu stage%d cb%d shader=%.20s addr=%#llx size=%llu src=%s nonfinite=%u first-word=%u bits=%08x", (unsigned long long)atomic_load(&g_cur_frame), stage, reg, key, (unsigned long long)addr, (unsigned long long)size, src, bad, first, bits);
+            return; }
+#endif
         if (bad) { lines++; MLOG("[watch-nan] F%llu stage%d cb%d shader=%.20s addr=%#llx size=%llu src=%s nonfinite=%u first-word=%u", (unsigned long long)atomic_load(&g_cur_frame), stage, reg, key, (unsigned long long)addr, (unsigned long long)size, src, bad, first); }
         return;
     }
@@ -22248,6 +22290,106 @@ static double present_min_duration(double period) {
     return whole - fmin(0.001, tick / 4);
 }
 #endif
+#if defined(GAME_BOTW) && !TARGET_OS_IPHONE
+/* Breath of the Wild purple watch (TOTK_PURPLE_WATCH, default on; =0 off; =2 also logs the probe colours every 10 s).
+   A frame-wide purple cast comes from one non-finite value in the HDR scene that bloom and the exposure spread over the
+   frame (the fixed cases: stor_compressed 2026-10-15, the storage-buffer snapshot 2026-11-08, the zero-blend guard, the
+   colour snap 2026-11-19). To find the next cause from a player's log, every PW_EVERY-th picture 16 blocks of 6x6 pixels
+   (a 4x4 grid) are copied into a small buffer on the same queue and checked on the completion thread. Nothing waits for
+   the GPU: a slot whose copy has not completed is skipped. A picture is purple when 85% of the samples have red and blue
+   above 50 and green 18 below their mean (the DM_NVN_FLASHCAP rule). Two purple probes in a row (about 1 s) start an
+   episode: its colours, the frame, the settings and the build go to the event log (pw_log), a screenshot is taken (three a
+   start at most; the one frame of it waits for the GPU) and the uniform blocks of the next three frames are scanned for
+   non-finite floats (watch_cb). Two clear probes end it. A single purple probe is logged as brief (20 a start at most).
+   Expected false alarms: scenes that are purple by design (Blood Moon, Calamity Ganon's malice). DM_TEST_PURPLE=<probe>:<n>
+   (test only) treats n probes from that one on as purple. */
+#define PW_RING 3
+#define PW_EVERY 30
+#define PW_GRID 4
+#define PW_BLOCK 6
+static id<MTL4CommandAllocator> g_pw_alloc[PW_RING]; static id<MTL4CommandBuffer> g_pw_cb[PW_RING]; static id<MTLBuffer> g_pw_buf[PW_RING];
+static _Atomic int g_pw_busy[PW_RING];
+static pthread_mutex_t g_pw_mu = PTHREAD_MUTEX_INITIALIZER;
+static int pw_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("TOTK_PURPLE_WATCH"); v = e ? atoi(e) : 1; } return v; }
+static void pw_settings(char *out, size_t n) {
+    const char *names[] = {"TOTK_OUTPUT_RES", "TOTK_MFX_OUTPUT", "TOTK_MFX_UPSCALE", "TOTK_TAA", "TOTK_MFX_TEMPORAL", "TOTK_HDR", "MNG_UI_PACK", "BOTW_FOG", "TOTK_PCHTXT"};
+    size_t o = 0; for (size_t i = 0; i < sizeof names / sizeof *names && o < n; i++) { const char *v = getenv(names[i]); if (v) o += (size_t)snprintf(out + o, n - o, " %s=%s", names[i], v); }
+    const char *m = getenv("TOTK_ROMFS_MODS"); if (o < n) snprintf(out + o, n - o, " mods=%s", m && *m && strcmp(m, "0") ? m : "none");
+}
+static void pw_analyse(const uint8_t *px, int bgra, uint64_t frame, uint64_t probe) {
+    static int state, in_streak, out_streak, shots, brief, episode; static uint64_t start_frame; static double start_t, good[3]; static int good_ok;
+    const int n = PW_GRID * PW_GRID * PW_BLOCK * PW_BLOCK; double s[3] = {0}; int mag = 0;
+    for (int i = 0; i < n; i++) { const uint8_t *q = px + 4 * i; int r = bgra ? q[2] : q[0], g = q[1], b = bgra ? q[0] : q[2];
+        s[0] += r; s[1] += g; s[2] += b; mag += r > 50 && b > 50 && (r + b) / 2 - g > 18; }
+    double m[3] = {s[0] / n, s[1] / n, s[2] / n}, frac = mag / (double)n;
+    static long t0 = -2, tn; if (t0 == -2) { const char *e = getenv("DM_TEST_PURPLE"); t0 = -1; if (e && sscanf(e, "%ld:%ld", &t0, &tn) != 2) t0 = -1; }
+    int test = t0 >= 0 && (long)probe >= t0 && (long)probe < t0 + tn; if (test) { frac = 1; m[0] = 200; m[1] = 60; m[2] = 210; }
+    pthread_mutex_lock(&g_pw_mu);
+    double now = CACurrentMediaTime();
+    if (pw_on() >= 2 && probe % 20 == 0) MLOG("[purple] probe %llu F%llu RGB %.0f,%.0f,%.0f purple share %.2f", (unsigned long long)probe, (unsigned long long)frame, m[0], m[1], m[2], frac);
+    /* 85%: the three real episodes of 2026-11-20 were 94-100%; a magenta Magnesis-lit block in a shrine read 51-60% */
+    int purple = frac >= 0.85, clear = frac < 0.2;
+    if (state == 0) {
+        if (purple && ++in_streak >= 2) {
+            state = 1; out_streak = 0; episode++; start_frame = frame; start_t = now;
+            char set[1024]; pw_settings(set, sizeof set);
+            pw_log("START episode %d%s at frame %llu: RGB %.0f,%.0f,%.0f, purple share %.0f%%; last clear RGB %s%.0f,%.0f,%.0f; build %s;%s",
+                   episode, test ? " (DM_TEST_PURPLE)" : "", (unsigned long long)frame, m[0], m[1], m[2], frac * 100, good_ok ? "" : "(none yet) ", good[0], good[1], good[2],
+                   getenv("TOTK_SOURCE_COMMIT") ? getenv("TOTK_SOURCE_COMMIT") : "?", set);
+            atomic_store(&g_pw_nan_lines, 0); atomic_store(&g_pw_nan_until, atomic_load(&g_cur_frame) + 3);
+            pw_log("  uniform scan for non-finite floats: frames %llu-%llu (lines below when any)", (unsigned long long)atomic_load(&g_cur_frame) + 1, (unsigned long long)atomic_load(&g_cur_frame) + 3);
+            const char *lp = getenv("TOTK_EVENT_LOG");
+            if (lp && *lp && shots < 3) { char dir[1024], path[1200]; time_t tt = time(NULL); struct tm tm; char ts[32]; localtime_r(&tt, &tm); strftime(ts, sizeof ts, "%Y%m%d-%H%M%S", &tm);
+                strlcpy(dir, lp, sizeof dir); char *sl = strrchr(dir, '/'); if (sl) *sl = 0;
+                snprintf(path, sizeof path, "%s/botw-purple-%s-e%d.png", dir, ts, episode);
+                extern void dm_gfx_ashot(const char *path); dm_gfx_ashot(path); shots++; pw_log("  screenshot: %s", path); }
+        } else if (purple) { if (brief < 20) { brief++; pw_log("brief purple probe at frame %llu: RGB %.0f,%.0f,%.0f, purple share %.0f%%", (unsigned long long)frame, m[0], m[1], m[2], frac * 100); } }
+        else { in_streak = 0; if (clear) { memcpy(good, m, sizeof m); good_ok = 1; }
+            /* a baseline for the episode scans: the same uniform scan in clear frames, twice a start (the game has some
+               non-finite uniforms in every frame; only those new in an episode point at its cause) */
+            if (clear && (probe == 80 || probe == 400) && !pw_nan_armed()) { atomic_store(&g_pw_nan_lines, 0); atomic_store(&g_pw_nan_until, atomic_load(&g_cur_frame) + 3);
+                pw_log("baseline uniform scan in clear frames %llu-%llu (probe %llu, RGB %.0f,%.0f,%.0f)", (unsigned long long)atomic_load(&g_cur_frame) + 1, (unsigned long long)atomic_load(&g_cur_frame) + 3, (unsigned long long)probe, m[0], m[1], m[2]); } }
+    } else if (clear && ++out_streak >= 2) {
+        state = 0; in_streak = 0;
+        pw_log("END episode %d at frame %llu: %.1f s, %llu frames; RGB now %.0f,%.0f,%.0f", episode, (unsigned long long)frame, now - start_t, (unsigned long long)(frame - start_frame), m[0], m[1], m[2]);
+    } else if (!clear) out_streak = 0;
+    pthread_mutex_unlock(&g_pw_mu);
+}
+static void purple_watch(id<MTLTexture> src, uint64_t frame) {
+    if (!pw_on() || nogpu() || src.width < 128 || src.height < 128) return;
+    MTLPixelFormat pf = src.pixelFormat;
+    if (pf != MTLPixelFormatBGRA8Unorm && pf != MTLPixelFormatRGBA8Unorm && pf != MTLPixelFormatBGRA8Unorm_sRGB && pf != MTLPixelFormatRGBA8Unorm_sRGB) return;
+    static uint64_t n, probes; static int next, said;
+    if (!said) { said = 1; char set[1024]; pw_settings(set, sizeof set);
+        pw_log("watch on (every %d pictures, %dx%d samples), build %s, picture %lux%lu;%s", PW_EVERY, PW_GRID * PW_BLOCK, PW_GRID * PW_BLOCK,
+               getenv("TOTK_SOURCE_COMMIT") ? getenv("TOTK_SOURCE_COMMIT") : "?", (unsigned long)src.width, (unsigned long)src.height, set); }
+    if (n++ % PW_EVERY) return;
+    int s = next, idle = 0;
+    if (!atomic_compare_exchange_strong(&g_pw_busy[s], &idle, 1)) return;   // its last copy has not completed: skip, never wait
+    next = (next + 1) % PW_RING;
+    if (!g_pw_alloc[s]) {
+        MTL4CommandAllocatorDescriptor *d = [MTL4CommandAllocatorDescriptor new]; d.label = @"BOTW purple watch"; NSError *e = nil;
+        g_pw_alloc[s] = [g_dev newCommandAllocatorWithDescriptor:d error:&e]; g_pw_cb[s] = [g_dev newCommandBuffer];
+        g_pw_buf[s] = [g_dev newBufferWithLength:PW_GRID * PW_GRID * PW_BLOCK * PW_BLOCK * 4 options:MTLResourceStorageModeShared];
+        if (!g_pw_alloc[s] || !g_pw_cb[s] || !g_pw_buf[s]) { MLOG("【红】[purple] watch allocation failed: %s", e.localizedDescription.UTF8String); g_pw_alloc[s] = nil; atomic_store(&g_pw_busy[s], 0); return; }
+        res_add(g_pw_buf[s]); res_commit();   // resident before the command buffer that writes it runs
+    }
+    [g_pw_alloc[s] reset]; [g_pw_cb[s] beginCommandBufferWithAllocator:g_pw_alloc[s]];
+    id<MTL4ComputeCommandEncoder> be = [g_pw_cb[s] computeCommandEncoder];
+    [be barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];   // the picture's own work first
+    const NSUInteger W = src.width, H = src.height, bb = PW_BLOCK * PW_BLOCK * 4;
+    for (int k = 0; k < PW_GRID * PW_GRID; k++) {
+        NSUInteger x = W * (2 * (NSUInteger)(k % PW_GRID) + 1) / (2 * PW_GRID) - PW_BLOCK / 2, y = H * (2 * (NSUInteger)(k / PW_GRID) + 1) / (2 * PW_GRID) - PW_BLOCK / 2;
+        [be copyFromTexture:src sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(x, y, 0) sourceSize:MTLSizeMake(PW_BLOCK, PW_BLOCK, 1)
+                   toBuffer:g_pw_buf[s] destinationOffset:(NSUInteger)k * bb destinationBytesPerRow:PW_BLOCK * 4 destinationBytesPerImage:bb];
+    }
+    m4_end(be); cb_submit_label(g_pw_cb[s], atomic_load(&g_cur_frame), "purple-watch", 0, 0); [g_pw_cb[s] endCommandBuffer];
+    id<MTLBuffer> buf = g_pw_buf[s]; int bgra = pf == MTLPixelFormatBGRA8Unorm || pf == MTLPixelFormatBGRA8Unorm_sRGB, slot = s; uint64_t pr = probes++;
+    TotkCommitOptions *o = [TotkCommitOptions new];
+    [o addFeedbackHandler:^(id<MTL4CommitFeedback> fb) { if (!fb.error) pw_analyse(buf.contents, bgra, frame, pr); atomic_store(&g_pw_busy[slot], 0); }];
+    q4_commit(g_pw_cb[s], o);
+}
+#endif
 static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], __strong id<CAMetalDrawable> supplied, double target_ts, int interp) {
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
     g_present_n++;
@@ -22272,6 +22414,9 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     if(interp<0){id<MTLTexture> linear=hdr_swap_texture(t->serial,frame,&t_hdr_present_white,&t_hdr_present_peak);if(linear){src=linear;hdrFrame=YES;}}
     if (!src) { RED_ONCE(8, "出图贴图建不出 MTLTexture"); return 0; }
     if (interp < 0) anom_present(src, frame);   // TOTK_ANOMALY
+#if defined(GAME_BOTW) && !TARGET_OS_IPHONE
+    if (interp < 0 && !hdrFrame) purple_watch(src, frame);   // BOTW: the purple-frame watch (event log)
+#endif
     /* One-frame temporal fallback (TOTK_FLASH_GUARD=1, off by default): a same-queue readback of the picture's centre
        before the drawable is encoded; on an abrupt colour jump the previous good picture is shown again, at most twice
        in a row. It was a stopgap against the frame-wide flashes; their cause (compressible storage shared across formats,

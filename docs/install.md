@@ -334,6 +334,7 @@ Tears of the Kingdom; for Breath of the Wild replace `TOTK` with `BotW` and `tot
 - Shaders the shared list lacks: `~/Library/Application Support/MacNativeGames/TOTK/shader-list-contribution.txt` (the game asks before it starts whether to send them; see the [shared shader list](shader-list.md))
 - Mods: `~/Library/Application Support/MacNativeGames/TOTK/mods/<v0|v121|v143>`; see [mods.md](mods.md)
 - Log: off by default. `defaults write org.macnativegames.totk TOTK_DEBUG_LOG -bool YES` turns it on from the next start, written to `~/Library/Logs/MacNativeGames/totk.log`. On an iPhone: Settings › TOTK › Debug log, written to the app's `Documents/log.txt`.
+- Purple-picture log (Breath of the Wild on the Mac, on by default): `~/Library/Logs/MacNativeGames/botw-events.log`, with a screenshot `botw-purple-*.png` beside it for each of the first three episodes of a start. Send them in when the whole picture turns purple. `TOTK_PURPLE_WATCH=0` turns the watch off.
 
 ## Known issues
 
