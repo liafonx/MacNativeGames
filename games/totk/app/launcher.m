@@ -436,6 +436,12 @@ int runtime_app_launch(int argc, char **argv, char ***boot) {
         NSString *data = [home stringByAppendingPathComponent:@"Library/Application Support/MacNativeGames/" GAME_FOLDER];   /* game_version.h: TOTK, BotW */
         NSString *logs = [home stringByAppendingPathComponent:@"Library/Logs/MacNativeGames"];
 #ifdef GAME_BOTW
+        /* The purple-frame watch's event log (nvn_mtl.m pw_log), kept across starts and written also without the debug log:
+           one line a start and the lines of each purple episode, its screenshots beside it. */
+        [NSFileManager.defaultManager createDirectoryAtPath:logs withIntermediateDirectories:YES attributes:nil error:nil];
+        setenv("TOTK_EVENT_LOG", [logs stringByAppendingPathComponent:@GAME_LOG "-events.log"].fileSystemRepresentation, 0);
+#endif
+#ifdef GAME_BOTW
         /* The player's settings: <data>/settings.txt, one TOTK_NAME=value, MNG_NAME=value or BOTW_NAME=value per line (# starts a comment), read at
            each launch (e.g. TOTK_BOTW_COOK_COUNT=3, BOTW_FOG=1). Only TOTK_, MNG_ and BOTW_ names; a line here wins over the app's Info.plist environment. */
         { NSString *path = [data stringByAppendingPathComponent:@"settings.txt"];
