@@ -1904,12 +1904,27 @@ static uint64_t g_oot_bar_serial = ~0ull, g_oot_bar_full, g_oot_bar_skip, g_oot_
 static uint32_t g_oot_bar_pending_bits = ~0u, g_oot_bar_begin_bits; static uint64_t g_oot_bar_frag_skip;
 #define OOT_BAR_FRAG_ONLY_BITS ((uint32_t)(NVN_BARRIER_ORDER_FRAGMENTS_BIT | NVN_BARRIER_ORDER_FRAGMENTS_TILED_BIT | NVN_BARRIER_INVALIDATE_TEXTURE_BIT | \
     NVN_BARRIER_INVALIDATE_SHADER_BIT | NVN_BARRIER_INVALIDATE_TEXTURE_DESCRIPTOR_BIT | NVN_BARRIER_INVALIDATE_ZCULL_BIT))
+#ifdef GAME_BOTW
+/* Breath of the Wild: off by default (OOT_BAR_FRAG_SKIP=1 turns it on). With it, the whole picture turned magenta for 1.7-6.6 s
+   every 30-90 s in Korok Forest with the HD texture pack (M2 Air, native 2560x1440, 2026-11-20; the owner saw it in play):
+   red and blue of the HDR scene went non-finite while green stayed, and bloom spread them over the frame. A pass after a
+   fragment-only native barrier read a target before the previous pass had written it (an extra barrier after every pass,
+   OOT_PASS_PIXELS, also hid it). Default: purple in each of 6 runs of 60-150 s (1-3 episodes); off: none in 2 x 150 s;
+   TOTK_DRAW_BARRIERS=0: none in 2 x 150 s. Cost: 51.9 -> 50.5 fps mean, slow frames better (fps p10 43.8 -> 45.1). */
+static int oot_bar_frag_skip_on(void) {
+    static int v = -1;
+    if (v < 0) { const char *e = getenv("OOT_BAR_FRAG_SKIP"); v = e && !strcmp(e, "1");
+        MLOG("OOT_BAR_FRAG_SKIP=%d：Breath of the Wild 默认 0（整幅画面变紫，2026-11-20）：只含 ORDER_FRAGMENTS 的原生屏障之后的渲染通道%s", v, v ? "不设开始屏障" : "也用全量开始屏障"); }
+    return v;
+}
+#else
 static int oot_bar_frag_skip_on(void) {
     static int v = -1;
     if (v < 0) { const char *e = getenv("OOT_BAR_FRAG_SKIP"); v = !(e && !strcmp(e, "0"));
         if (!v) MLOG("OOT_BAR_FRAG_SKIP=0：只含 ORDER_FRAGMENTS 的原生屏障之后的渲染通道也用全量开始屏障"); }
     return v;
 }
+#endif
 static struct { uint32_t bits; uint64_t count; } g_oot_bar_hist[32];
 static unsigned g_oot_bar_hist_n; static uint64_t g_oot_bar_hist_overflow;
 static uint64_t g_oot_bar_prim_splits;   /* game passes ended at a native primitive-order barrier (oot_bar_native) */

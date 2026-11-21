@@ -112,7 +112,12 @@ int mtl_probe_draw_barriers(void) {
             if(g_enc) MDIE("draw-barrier probe: fragment write before a fragment-order barrier was not split");
             uint64_t fs=g_oot_bar_frag_skip;full=g_oot_bar_full;
             oot_bar_probe_draw(pr[0],ps[0],state,tx,0,0,0);
+#ifdef GAME_BOTW   /* BOTW: the skip is off unless OOT_BAR_FRAG_SKIP=1 (the purple picture, 2026-11-20): then the consumer pass takes the full barrier */
+            {int on=oot_bar_frag_skip_on();
+             if(g_oot_bar_frag_skip!=fs+(on?1:0)||g_oot_bar_full!=full+(on?0:1)) MDIE("draw-barrier probe: fragment-only native dependency did not follow OOT_BAR_FRAG_SKIP=%d",on);}
+#else
             if(g_oot_bar_frag_skip!=fs+1||g_oot_bar_full!=full) MDIE("draw-barrier probe: fragment-only native dependency kept the consumer barrier");
+#endif
         } else if(c==8) {
             /* fragment write -> a pass that begins with no consumer barrier -> native ORDER_PRIMITIVES inside it -> vertex
                read: the barrier must end that pass, and the next pass must take the full consumer barrier */
@@ -130,7 +135,12 @@ int mtl_probe_draw_barriers(void) {
             oot_bar_probe_record(NVN_BARRIER_ORDER_FRAGMENTS_BIT|NVN_BARRIER_INVALIDATE_TEXTURE_BIT);rp_end();
             uint64_t fs=g_oot_bar_frag_skip;full=g_oot_bar_full;
             oot_bar_probe_draw(pr[2],ps[2],state,tx,0,0,0);
+#ifdef GAME_BOTW
+            {int on=oot_bar_frag_skip_on();
+             if(g_oot_bar_frag_skip!=fs+(on?1:0)||g_oot_bar_full!=full+(on?0:1)) MDIE("draw-barrier probe: fragment-order barrier without writes did not follow OOT_BAR_FRAG_SKIP=%d",on);}
+#else
             if(g_oot_bar_frag_skip!=fs+1||g_oot_bar_full!=full) MDIE("draw-barrier probe: fragment-order barrier without writes kept the consumer barrier");
+#endif
         }
         rp_end();enc_b_copy_texture_buffer(blit(),tx,0,0,MTLOriginMake(0,0,0),MTLSizeMake(16,16,1),out,0,64,1024);
         mtl_sub_commit();mtl_finish();
