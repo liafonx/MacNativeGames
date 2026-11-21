@@ -979,6 +979,15 @@ void runtime_front_run(void(*callback)(void)){
   if(window.level==NSFloatingWindowLevel){NSRect f=window.frame;[window setFrameOrigin:NSMakePoint(NSMaxX(vis)-f.size.width,NSMaxY(vis)-f.size.height)];}   /* TOTK_WINDOW_FLOAT: top-right corner */
   front_sync_drawable();
   if(assume_focus()){[window orderFrontRegardless];}else{[window makeKeyAndOrderFront:nil];[NSApp activateIgnoringOtherApps:YES];}   /* in front of other apps' windows, keyboard left alone */
+  /* The player's window opens in native full screen at every start (owner 2026-11-20: "I want to open the game window in
+     full screen everytime I open the game"). Control-Command-F still leaves it. A test window stays a window: an agent's
+     slot owner, TOTK_ASSUME_FOCUS, TOTK_WINDOW_FLOAT or TOTK_WINDOW_SIZE. TOTK_START_FULLSCREEN=0 keeps the window too.
+     Async: the window is on screen before the full-screen animation starts. */
+  {const char *e=getenv("TOTK_START_FULLSCREEN"),*size=getenv("TOTK_WINDOW_SIZE");
+   int player=!owner||!*owner||!strcmp(owner,"user");
+   if(player&&!assume_focus()&&window.level!=NSFloatingWindowLevel&&!(size&&*size)&&!(e&&!strcmp(e,"0"))){
+    fprintf(stderr,"[totk] window: opening in full screen (TOTK_START_FULLSCREEN=0: a window)\n");
+    dispatch_async(dispatch_get_main_queue(),^{if(!(window.styleMask&NSWindowStyleMaskFullScreen))[window toggleFullScreen:nil];});}}
   totk_board_start();   /* the leaderboard's rounds (board_upload.h): nothing is sent unless the player turned 我要上榜 on */
 #if defined(TOTK_SCREENSHOT_WINDOW)
   totk_screenshot_shared=totk_shot_queue;totk_shot_start();   /* 截图分享 (shot_upload.h): off unless the player turned it on */

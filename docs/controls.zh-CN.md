@@ -109,6 +109,8 @@ west = y
 
 **超宽屏界面布局（可选，1.4.3）：** 选了宽画面比例时 HUD 和菜单留在中间 16:9。想让 HUD 贴到 21:9 或 32:9 屏幕的四角，可以用你自己的游戏文件按屏幕比例生成布局再启动：`.venv/bin/python scripts/make_romfs_patches.py --version v143 --aspect 3440x1440`（写到 `extracted/v143/romfs-patches-3440x1440`；`--hud center` 让 HUD 留在中间）和 `scripts/make_output_res_overlay.py 3440x1440 --version v143`，然后用 `TOTK_OUTPUT_RES=3440x1440 TOTK_ASPECT=3440x1440 TOTK_UI_SQUEEZE=0 TOTK_ROMFS_PATCHES=extracted/v143/romfs-patches-3440x1440` 启动（在工作目录里）。布局在启动时读取，所以这一局一直是宽屏，不配合面板里的画面比例使用。每个要改的界面面板都按名字查找，写入前核对游戏原版的值。
 
+Mac 上的游戏窗口每次启动都以系统原生全屏打开；Control-Command-F（显示 › 退出全屏幕）可在本次游戏中退出全屏。`TOTK_START_FULLSCREEN=0` 时以窗口启动。测试窗口（代理的 `TOTK_SLOT_OWNER`、`TOTK_ASSUME_FOCUS`、`TOTK_WINDOW_FLOAT` 或 `TOTK_WINDOW_SIZE`）始终以窗口启动。
+
 菜单栏左侧、应用菜单之后以游戏自己的菜单显示实时帧率（“60 FPS”，补帧显示生成帧时为“50+50 FPS”），与窗口里的性能信息显示什么无关；全屏时随菜单栏隐藏。`TOTK_MENUBAR_FPS=0` 不在菜单栏显示；`TOTK_TITLE_FPS=1` 时窗口标题末尾也显示同样的帧率（“… Ver. 1.4.3 — 60 FPS”）。
 
 原生 2K 将游戏合成画布和 UI 改为 2560×1440，3D 场景仍由游戏独立的渲染比例控制，并非强制所有内部通道以 1440p 渲染。手动 MetalFX 在较小窗口中也可使用，输出放大会跟随实际窗口尺寸，包括 4K。
