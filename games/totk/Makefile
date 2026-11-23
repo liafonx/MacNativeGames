@@ -244,7 +244,7 @@ clock-ocr-tool:
 # On-screen FPS counter: glyph pixels, bounds and present-rate measurement (CPU only).
 probe-fps-overlay:
 	@mkdir -p build/tests
-	xcrun clang -std=c11 -O1 -g -Wall -Wextra -Werror -Ithird_party/d2r_gfx/gfx/nvn tests/fps_overlay/probe.c third_party/d2r_gfx/gfx/nvn/fps_overlay.c third_party/d2r_gfx/gfx/nvn/totk_sysload.c -framework IOKit -framework CoreFoundation -framework CoreGraphics -framework CoreText -o build/tests/fps_overlay_probe
+	xcrun clang -std=c11 -O1 -g -Wall -Wextra -Werror -DTOTK_FPS_SCREEN_LABEL=1 -Ithird_party/d2r_gfx/gfx/nvn tests/fps_overlay/probe.c third_party/d2r_gfx/gfx/nvn/fps_overlay.c third_party/d2r_gfx/gfx/nvn/totk_sysload.c -framework IOKit -framework CoreFoundation -framework CoreGraphics -framework CoreText -o build/tests/fps_overlay_probe
 	build/tests/fps_overlay_probe
 # The leaderboard's frame-rate record (fps_board.c): average, median, 1% low, highest, interpolated frames.
 .PHONY: probe-fps-board
