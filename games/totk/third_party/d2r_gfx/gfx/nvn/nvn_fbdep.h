@@ -1,10 +1,11 @@
-/* TOTK 1.4.3: does a fragment function read one of its textures only at positions that depend on another texture read
+/* TOTK (found in 1.4.3): does a fragment function read one of its textures only at positions that depend on another texture read
    (refraction: the screen position plus an offset from a normal map)? Such a draw can sample the colour target it draws
    into anywhere, so the tile read of nvn_fbread.h (the fragment's own pixel) does not serve it; nvn_mtl.m gives it a copy of
    the target instead (csnap_draw). Rauru's ghost in Ukouh Shrine fades in and out with 20 such draws on the HDR scene target.
 
    nvn_fbdep_dependent: 1 when the texture with argument id aid in a SPIRV-Cross fragment source is used only by .sample(
-   calls, at least once, and the arguments of every such call name a temporary that depends on a texture read. A temporary
+   calls, at least once, and the position of every such call (its second argument; a level or a bias does not count) names
+   a temporary that depends on a texture read. A temporary
    _N depends on one when a line "[type] _N[.lanes] = <rhs>;" has a texture read in <rhs>, or <rhs> names a dependent
    temporary (any order of lines; repeated until nothing changes). 0 for every other shape: the caller then keeps the
    path it had. Shared with tests/fbread/probe.m. */
@@ -75,9 +76,10 @@ static inline int nvn_fbdep_dependent(NSString *src, int aid) {
         if (nvn_fbdep_ident((unsigned char)p[ul])) continue;   // its sampler (<name>Smplr), or a longer name
         uses++;
         if (strncmp(p + ul, ".sample(", 8)) { res = 0; break; }   // read / gather / a size query
-        const char *a = p + ul + 8, *b = a; int depth = 1;
-        for (; *b && depth; b++) { if (*b == '(') depth++; else if (*b == ')') depth--; }
-        if (depth || !nvn_fbdep_names(s, a, b, dep, ndep)) res = 0;
+        const char *b = p + ul + 8, *c0 = NULL, *c1 = NULL; int depth = 1;   // [c0, c1): the position, the argument after the sampler
+        for (; *b && depth; b++) { if (*b == '(' || *b == '[') depth++; else if (*b == ')' || *b == ']') depth--;
+            else if (*b == ',' && depth == 1) { if (!c0) c0 = b + 1; else if (!c1) c1 = b; } }
+        if (depth || !c0 || !nvn_fbdep_names(s, c0, c1 ? c1 : b - 1, dep, ndep)) res = 0;
     }
     free(dep); free(as);
     return res && uses > 0;

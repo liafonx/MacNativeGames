@@ -18,6 +18,7 @@ void *runtime_symbol(const char *name);
 void *runtime_override(const char *name);
 void runtime_hle_stack_init(uint64_t tsd_offset);
 void runtime_gpu_path_probe(const char *which);
+int mtl_pipeline_archive_tool(int argc, char **argv);   // Mac only (nvn_mtl.m): the device's pipeline archive for packaging
 void runtime_audio_probe(void);
 void *runtime_hle_wrap(void *fn);
 void runtime_hle_stack_set(uintptr_t top);
@@ -112,6 +113,7 @@ int fps_overlay_hud_mode(void);
 int fps_overlay_full_hud(void);
 int runtime_aspect_toggle(void);   /* runtime/aspect_patch.h: key 4, 16:9 <-> ultrawide (Mac, 1.2.1 / 1.4.3); 0 where unavailable */
 float runtime_aspect_now(void);     /* the ratio in force, 0 = the game's own 16:9 */
+void runtime_aspect_view(double w, double h);   /* the drawable's size (frontend.m / frontend_ios.m): the phone's screen shape */
 int hud_compact(void);   /* gfx/nvn/fps_overlay.c: the overlay lines go to the window's corner panel (TOTK_HUD=corners: in the picture) */
 int hud_snapshot(int line, char *out, size_t n, int *highlight);   /* line 0..2: FPS, shaders, load; 0 = not published */
 
@@ -148,6 +150,13 @@ void runtime_gamepad_read(RuntimeGamepadState *out);
    the background, so a button held at focus loss would otherwise stay pressed for the game. */
 void runtime_gamepad_clear(void);
 void runtime_touch_pad_set(const RuntimeGamepadState *state);   /* on-screen touch controls (iOS) */
+/* The iPhone / iPad app's shell (games/totk/ios/Sources, shared with Tears of the Kingdom) */
+void runtime_audio_output_restart(int recreate);   /* audio_mixer.c: start the outputs again after an audio session interruption (iOS) */
+void runtime_keyboard_capture(int on);   /* iOS only (shared gamepad_core.h): a UIKit text field takes the hardware keyboard; it must not also drive the game */
+void runtime_motion_phone(int on);  /* shared motion_fusion.c: the iPhone's own sensor feeds the six-axis device (1) / stops (0) */
+int runtime_phone_fps(void);                /* iOS: 30 (Animal Crossing plays at 30 FPS there; ios_front.m) */
+void runtime_phone_fps_set(int fps);        /* the touch controls' frame-rate button: nothing to switch (ios_front.m) */
+void runtime_settings_page(int page);   /* the Mac settings panel's page; nothing on the phone */
 /* The settings panel (runtime/settings_panel.h) and runtime/gamepad.m: the controller layout (controller_map.h), the
    controller type (gamepad_layout.h GAMEPAD_TYPE_*), the controller's way to the panel (L3 + R3, or one button), and the
    controller read by the panel while it owns the input. */
@@ -163,17 +172,64 @@ void runtime_gamepad_settings_enable(int enabled);
 int runtime_gamepad_settings_requested(void);
 void runtime_gamepad_text_capture(int on);
 void runtime_gamepad_text_read(RuntimeGamepadState *out);
+int runtime_gamepad_battery_left_percent(void);   /* runtime/gamepad.m: a Joy-Con pair's left one, -1 none or unknown (the corner box) */
+int runtime_gamepad_screenshot_button(void);               /* the button held 3 s for a screenshot (controller_map.h), -1 none */
+void runtime_gamepad_screenshot_button_set(int physical); /* the key bindings; saved in controller-screenshot.txt (none: "none"), the touchpad the default */
+/* The controller's capture button (runtime/gamepad.m, as games/odyssey): the Share button of a controller GameController
+   reports, or bit 5 of a Switch controller's 0x30 HID report (a Pro Controller's square button below the D-pad). The hook is
+   called once per press, on the main queue; the window (frontend.m) sets it to save a picture of the game's next frame
+   (runtime/screenshot.h). */
+void runtime_capture_set_hook(void (*hook)(void));
+void runtime_capture_press(void) __attribute__((weak));   /* gamepad.m (weak: probes that link input.c alone): the capture button pressed once (the input file's "capture") */
+void runtime_gamepad_switch_capture(void *controller, int pressed);   /* Switch 0x30 report: 1 while the button is down (any queue) */
+void runtime_gamepad_switch_left(void *controller, int x, int y);    /* gamepad_feedback.m: a Switch controller's sticks from its HID reports */
+void runtime_gamepad_switch_right(void *controller, int x, int y);
+int runtime_gamepad_background_enabled(void);   /* Mac: saved opt-in (controller-background.txt); default off */
+void runtime_gamepad_background_set(int on);    /* main thread: apply and save */
+void runtime_gamepad_focus(int on);             /* Mac window focus, independent of the guest's focus state */
+int runtime_gamepad_game_input(void);   /* any thread: 1 while the game gets the controllers (no capture, nor its release wait) */
+void runtime_gamepad_hid_battery(int left, int percent);   /* runtime/gamepad.m, any thread: a Switch controller's battery read from its HID reports (left: a paired set's left Joy-Con), -1 none */
+/* DSU (cemuhook) motion and input over UDP, as games/totk (runtime/dsu_client.h, included by gamepad.m; the input page's
+   DSU rows, runtime/dsu_settings_rows.h). Off by default. */
+int runtime_dsu_motion_active(void);     /* fresh DSU six-axis samples currently own motion, not just an open socket */
+typedef struct {
+    int enabled, slot, locked;
+    char endpoint[264];
+} RuntimeDSUSettings;
+typedef struct {
+    int connected, sensor;
+    double acc[3], gyro[3];   /* gyro in degrees/second for the settings display */
+    uint32_t buttons;
+    uint8_t axes[4];
+    char error[160];
+} RuntimeDSUStatus;
+void runtime_dsu_settings(RuntimeDSUSettings *out);   /* main queue; environment overrides saved preferences */
+void runtime_dsu_status(RuntimeDSUStatus *out);       /* main queue; passive snapshot */
+int runtime_dsu_apply(const RuntimeDSUSettings *settings); /* 0 applied and saved, -1 invalid, -2 environment locked */
+void runtime_feedback_motion_source_changed(void);   /* gamepad_feedback.m: switch between DSU and native motion without changing rumble */
 /* Controller rumble and motion (opt-in TOTK_RUMBLE=1 / TOTK_GYRO=1): the game's hid side in runtime/hid_feedback.c, the
    Mac controller's haptics and motion sensors in runtime/gamepad_feedback.m. */
 #define RUNTIME_MOTION_MAX 32
 typedef struct { uint64_t sampling, delta_ns; float acc[3], gyro[3], angle[3], dir[9]; } RuntimeMotionState;   /* G, rev/s, rev, 3 axes */
 int runtime_rumble_enabled(void);
 int runtime_gyro_enabled(void);
-/* The settings panel's rumble switch: in force at once when the game has the vibration devices (it got them at start), else
-   from the next launch; saved in rumble.txt. TOTK_RUMBLE or an agent's test session decide first (locked). */
-int runtime_rumble_locked(void);
-int runtime_rumble_choice(void);
-void runtime_rumble_choose(int on);
+/* The shared settings panel's rumble and gyro switches (shared/runtime/settings_panel.h settings_feedback_row; shared
+   runtime/hid_feedback.c): gyro 0 rumble, 1 motion. In force at once when the game has the device (it got its devices at
+   the start), else from the next launch; saved in rumble.txt / gyro.txt (runtime/feedback_settings.h). TOTK_RUMBLE /
+   TOTK_GYRO or an agent's test session decide first (locked). This panel shows the rumble row only. */
+int runtime_feedback_locked(int gyro);
+int runtime_feedback_present(int gyro);
+int runtime_feedback_choice(int gyro);
+void runtime_feedback_choose(int gyro, int on);
+/* Named by the shared panel's rumble strength and mouse sensitivity rows, which this game does not have (its rumble has no
+   strength setting and its mouse only clicks): declared for the panel's helpers, defined nowhere, so a row that used them
+   would fail to link instead of doing nothing. */
+int runtime_rumble_gain_locked(void);
+float runtime_rumble_gain(void);
+void runtime_rumble_gain_set(float gain);
+int runtime_mouse_sensitivity(void);
+int runtime_mouse_sensitivity_locked(void);
+void runtime_mouse_sensitivity_set(int value);
 void *runtime_hid_feedback_override(const char *name);
 int runtime_hid_feedback_flag(const char *name, int v);   /* "flag rumble|gyro 0|1"; 0 = not one of these names */
 void runtime_hid_feedback_stats(uint64_t *values, uint64_t *motion_reads);

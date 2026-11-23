@@ -25,11 +25,14 @@ class ShaderStartupMemory(unittest.TestCase):
 #include "totk_rt_carry.h"
 #include "totk_rt_translator.h"
 #include <malloc/malloc.h>
+#include <stdatomic.h>
 static NSString *g_dir, *g_seed_dir;
 static NSSet *g_seed_names;
 static seed_image g_seed_img;
+static _Atomic(seed_image_preloaded *) g_seed_pre;   // 2026-11-19: totk_rt_dir starts the variant-index preload once the image opens
 static NSString *g_seed_prefix;
 static BOOL g_seed_all_default;
+static BOOL g_seed_sealed;   // 2026-11-17: totk_rt_dir also notes whether the seed's variants were checked at packaging
 static void (*runtime_boot_status)(const char *, const char *);
 static NSString *root_dir(void) { return @"unused"; }
 static NSString *seed_dir(void) { return @(getenv("TOTK_SHADER_SEED_DIR")); }

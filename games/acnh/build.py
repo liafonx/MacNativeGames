@@ -16,13 +16,13 @@ work folder made from the same inputs:
   7/7 app          package_native_app.py; the app records this work folder (MNGWorkFolder)
 
 The same file is MNG Launcher's update for an installed app (update_runtime.py): blocker(app, work) says why only a full
-build fits, update(app, work) rebuilds the host and the app from the work folder's prepared files, without game files."""
-import argparse
+build fits, update(app, work) rebuilds the host and the app from the work folder's prepared files, without game files.
+What every port's build.py does the same way (the venv, the run inside it, the arguments, the work folder, the update's
+entry) is tools/port_app/adapter.py; this file keeps Animal Crossing's steps and checks."""
 import hashlib
 import json
 import os
 from pathlib import Path
-import plistlib
 import shutil
 import subprocess
 import sys
@@ -31,30 +31,22 @@ GAME = Path(__file__).resolve().parent
 REPO = GAME.parents[1]
 APP_NAME = 'Animal Crossing New Horizons'   # tools/builder_jobs/repo.py GAMES['acnh']
 BUNDLE_ID = 'org.macnativegames.acnh'       # scripts/package_native_app.py
+TITLE_ID = '01006F8002326000'
 FPS_SOURCE_URL = 'https://github.com/tmouh/acnh-60fps'
 STEPS = 7
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
-
-
-def say(message):
-    print(message, flush=True)
+from tools.port_app import adapter  # noqa: E402  MNG Launcher's side every port's build.py shares
+from tools.port_app.adapter import say, stamp  # noqa: E402
 
 
 def stage(number, words):
-    say(f'{number}/{STEPS} {words}')   # tools/builder/progress.py reads the 'i/N' lines as the build's stages
+    adapter.stage(number, STEPS, words)
 
 
 def run(cmd, work, name, env=None, cwd=REPO):
     """One step, its output in <work>/logs/<name>.log (MNG Launcher shows the logs a build starts as its steps)."""
-    log = work / 'logs' / f'{name}.log'
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open('w') as out:
-        result = subprocess.run([str(c) for c in cmd], cwd=cwd, stdout=out, stderr=subprocess.STDOUT,
-                                env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', **(env or {})})
-    if result.returncode:
-        tail = log.read_text(errors='replace').strip().splitlines()[-12:]
-        raise ValueError(f'{name} failed (full output: {log})\n' + '\n'.join(tail))
+    adapter.run_logged(cmd, work, name, env, cwd)
 
 
 def build_env():
@@ -62,28 +54,21 @@ def build_env():
     return {'MACOSX_DEPLOYMENT_TARGET': os.environ.get('MACOSX_DEPLOYMENT_TARGET', '26.0')}
 
 
-def stamp(path):
-    st = Path(path).stat()
-    return [str(Path(path).resolve()), st.st_size, st.st_mtime_ns]
-
-
 def python_for(work):
     """<work>/venv with requirements.txt, made once per work folder."""
-    venv = work / 'venv'
-    python = venv / 'bin/python'
-    marker = venv / '.requirements.sha256'
-    wanted = hashlib.sha256((GAME / 'requirements.txt').read_bytes()).hexdigest()
-    if not python.is_file() or not marker.is_file() or marker.read_text().strip() != wanted:
-        base = shutil.which('python3.14') or sys.executable
-        run([base, '-m', 'venv', venv], work, 'venv')
-        run([python, '-m', 'pip', 'install', '-q', '-r', GAME / 'requirements.txt'], work, 'pip')
-        marker.write_text(wanted + '\n')
-    return python
+    return adapter.python_for(work, requirements=GAME / 'requirements.txt')
 
 
 def hactool_for(work, python):
+    """The pinned hactool: the release's prebuilt one when this source has it (tools/prebuilt.py: build_app.build_hactool,
+    the same commit and hooks as tools/build_hactool.py; user 2026-11-22: a player compiles nothing), else built here."""
     tool = work / 'tools/hactool/hactool'
+    sys.path.insert(0, str(REPO))
+    import tools.prebuilt as prebuilt
+    if prebuilt.keep_placed(REPO, 'hactool', tool):
+        return tool
     if not (tool.is_file() and os.access(tool, os.X_OK)):
+        prebuilt.compiler_needed('hactool')
         run([python, GAME / 'tools/build_hactool.py', '--work', work], work, 'hactool')
     return tool
 
@@ -108,14 +93,22 @@ def prepare_game(work, python, base, update, keys, hactool):
     return prepared
 
 
+def combined_card(work, base, update, dlcs, keys):
+    """(base, update, add-ons) to build from: a combined card image (a merged XCI, "1G+1U+3D") is split into one NSP per
+    title in <work>/card (games/acnh/tools/split_card.py), its update and add-ons used unless given separately."""
+    from games.acnh.tools.split_card import is_combined, split
+    if base.suffix.lower() != '.xci' or not is_combined(base):
+        return base, update, dlcs
+    say('game data: this card image also holds the update or add-ons: splitting it into one package per title '
+        '(about a minute)')
+    found = split(base, keys, work / 'card', int(TITLE_ID, 16))
+    if update is None or update == base:
+        update = found['update']
+    return found['base'], update, (dlcs if dlcs and dlcs != [base] else found['dlc'])
+
+
 def fonts_ready(folder):
-    try:
-        manifest = json.loads((folder / 'manifest.json').read_text())
-        return manifest.get('status') == 'pass' and [f['type'] for f in manifest['fonts']] == list(range(6)) and all(
-            (folder / f'{f["type"]}-{f["name"]}.bfttf').is_file() and 'bfttf_bytes' in f and 'font_bytes' in f
-            for f in manifest['fonts'])
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
+    return adapter.fonts_ready(folder, ('bfttf_bytes', 'font_bytes'))   # build_host.py reads both sizes
 
 
 def copy_fonts(given, fonts):
@@ -233,72 +226,44 @@ def finish_app(work, python, prepared, native, fonts, update_package, keys, out)
     say(f'Built: {out}')
 
 
-def in_venv(work):
-    return Path(sys.prefix).resolve() == (work / 'venv').resolve()
-
-
-def reexec(python, argv, *extra):
-    result = subprocess.run([str(python), str(Path(__file__).resolve()), *extra, *map(str, argv)])
-    if result.returncode:
-        raise ValueError('the build stopped (its ERROR line above says why)')
-
-
-def default_work(out):
-    import build_app
-    return build_app.default_work(out, 'acnh')
-
-
 def checked_work(work, out):
-    if work == REPO or REPO in work.parents or work in REPO.parents or work == out or out in work.parents:
-        raise ValueError('the work folder must be outside the checkout and outside the app')
-    return work
+    return adapter.checked_work(work, out, REPO)
 
 
 def build(argv=None):
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument('game', type=Path, help='the base game 1.0.0 (NSP or XCI)')
-    p.add_argument('-k', '--keys', type=Path, required=True, help='your prod.keys')
-    p.add_argument('--update', type=Path, required=True, help='the 1.2.1, 3.0.1 or 3.0.3 update NSP')
+    p = adapter.parser(__doc__)
+    adapter.add_inputs(p, game_help='the base game 1.0.0 (NSP or XCI)', keys_help='your prod.keys',
+                       update_help='the 1.2.1, 3.0.1 or 3.0.3 update NSP (not needed for a combined card that holds '
+                                   'one)', update_required=False)
     p.add_argument('--dlc', type=Path, action='append', help='a pinned add-on NSP (3.0.1, 3.0.3); repeat for each')
-    fonts = p.add_mutually_exclusive_group()
-    fonts.add_argument('--firmware', type=Path, help='unpacked firmware NCA folder with the system fonts')
-    fonts.add_argument('--shared-fonts', type=Path, help='the shared-fonts folder of an earlier build')
+    adapter.add_fonts(p)
     fps = p.add_mutually_exclusive_group()
     fps.add_argument('--fps-mod', type=Path, help='a local tmouh/acnh-60fps checkout at the pinned commit')
     fps.add_argument('--no-fps-mod', action='store_true', help='original 30 FPS only; nothing is fetched')
-    p.add_argument('--work', type=Path, help='work folder (default: the one the app at -o records, else MacNativeGames-work/acnh)')
-    p.add_argument('-o', '--out', '--output', dest='out', type=Path, help=f'the app to write (default: {APP_NAME}.app next to the game file)')
+    adapter.add_output(p, APP_NAME, 'acnh')
     args = p.parse_args(argv)
 
-    base, keys, update = (path.expanduser().resolve() for path in (args.game, args.keys, args.update))
-    for path in (base, keys, update):
-        if not path.is_file():
-            raise ValueError(f'no such file: {path}')
-    out = (args.out.expanduser() if args.out else base.parent / f'{APP_NAME}.app').resolve()
-    if out.suffix != '.app':
-        raise ValueError(f'the output must end in .app: {out}')
-    work, why = (args.work.expanduser().resolve(), 'given with --work') if args.work else default_work(out)
-    work = checked_work(work, out)
-    say(f'work folder {work} ({why})')
-    work.mkdir(parents=True, exist_ok=True)
+    base, keys, update = adapter.inputs(args)
+    out, work = adapter.output_and_work(args, base, APP_NAME, 'acnh', checked_work)
 
     stage(1, 'Preparing the build tools')
     python = python_for(work)
-    if not in_venv(work):   # the port's tools need the venv's packages (cryptography, lz4, capstone)
-        raw = list(sys.argv[1:] if argv is None else argv)
-        return reexec(python, [*raw, '--work', str(work), '-o', str(out)])
+    if adapter.rerun_in_venv(__file__, python, work, argv, out):   # the port's tools need the venv's packages (cryptography, lz4, capstone)
+        return None
     hactool = hactool_for(work, python)
     stage(2, 'Reading and verifying the game data')
+    card, dlcs = base, [d.expanduser().resolve() for d in args.dlc or []]
+    base, update, dlcs = combined_card(work, base, update, dlcs, keys)
+    if update is None:
+        raise ValueError('give the 1.2.1, 3.0.1 or 3.0.3 update with --update')
     prepared = prepare_game(work, python, base, update, keys, hactool)
     version = json.loads((prepared / 'preparation.json').read_text())['inputs']['update']['cnmt_version_raw']
     stage(3, 'Preparing the system fonts')
-    fonts = prepare_fonts(work, python, keys, base,
-                          args.firmware.expanduser().resolve() if args.firmware else None,
-                          args.shared_fonts.expanduser().resolve() if args.shared_fonts else None)
+    fonts = prepare_fonts(work, python, keys, card, adapter.given(args.firmware), adapter.given(args.shared_fonts))
     stage(4, 'Preparing the add-ons')
-    dlc = prepare_dlc(work, python, keys, [d.expanduser().resolve() for d in args.dlc or []], version)
+    dlc = prepare_dlc(work, python, keys, dlcs, version)
     stage(5, 'Preparing the frame-rate options')
-    fps = None if args.no_fps_mod else fps_source(work, version, args.fps_mod.expanduser().resolve() if args.fps_mod else None)
+    fps = None if args.no_fps_mod else fps_source(work, version, adapter.given(args.fps_mod))
     stage(6, 'Building the native host and the shaders')
     native = build_host(work, python, prepared, fonts, fps, dlc)
     finish_app(work, python, prepared, native, fonts, update, keys, out)
@@ -308,7 +273,9 @@ def build(argv=None):
 # --- MNG Launcher's update (update_runtime.py) -----------------------------------------------------------------------
 
 def app_version(app):
-    info = plistlib.loads((Path(app) / 'Contents/Info.plist').read_bytes())
+    info = adapter.app_info(app)
+    if info is None:
+        raise ValueError('the app has no readable Info.plist')
     if info.get('CFBundleIdentifier') != BUNDLE_ID:
         raise ValueError('not an Animal Crossing app of this repository')
     return info.get('CFBundleShortVersionString')
@@ -333,37 +300,23 @@ def blocker(app, work):
         return f'the work folder holds {expected["display_version"]}, the app is {shown}: a full build is required'
     if not fonts_ready(work / 'fonts'):
         return 'the work folder has no system fonts: a full build is required'
-    if not (work / 'venv/bin/python').is_file():
-        return 'the work folder has no build Python: a full build is required'
-    return ''
+    return adapter.first_missing([(work / 'venv/bin/python', 'build Python')])
 
 
 def update(app, work):
-    app, work = Path(app).resolve(), Path(work).resolve()
-    checked_work(work, app)
-    problem = blocker(app, work)
-    if problem:
-        raise ValueError(problem)
-    python = python_for(work)
-    if not in_venv(work):
-        return reexec(python, [app, work], '--update-app')
+    ready = adapter.update_in_venv(__file__, app, work, blocker=blocker, python=python_for, check=checked_work)
+    if not ready:
+        return None
+    app, work, python = ready
     prepared, fonts = work / 'prepared', work / 'fonts'
     stage(6, 'Building the native host and the shaders')
     native = build_host(work, python, prepared, fonts, keep_inputs=True)
     finish_app(work, python, prepared, native, fonts, None, None, app)
+    return None
 
 
 def main(argv=None):
-    argv = list(sys.argv[1:] if argv is None else argv)
-    try:
-        if argv[:1] == ['--update-app']:   # update() in the work folder's Python
-            update(Path(argv[1]), Path(argv[2]))
-        else:
-            build(argv)
-    except ValueError as error:
-        print(f'ERROR: {error}', file=sys.stderr, flush=True)
-        return 1
-    return 0
+    return adapter.main(build, update, argv)
 
 
 if __name__ == '__main__':

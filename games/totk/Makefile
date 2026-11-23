@@ -6,7 +6,7 @@ NATIVE_OPT ?= -O2
 # in a cache folder of theirs, never in the one shared by programs without an id, also when a binary runs outside the app
 # (the build's pipeline-archive mode). Only that folder is cleaned (totk_pipeline_archive_folders.h).
 GAME_INFO := -Wl,-sectcreate,__TEXT,__info_plist,runtime/game_info.plist
-GFX_FLAGS := -std=gnu11 -Wno-error -Wno-unused-function -Wno-unused-parameter -fobjc-arc -Ithird_party/d2r_gfx/gfx/nvn/include -Iruntime
+GFX_FLAGS := -std=gnu11 -Wno-error -Wno-unused-function -Wno-unused-parameter -fobjc-arc -DTOTK_FPS_SCREEN_LABEL=1 -Ithird_party/d2r_gfx/gfx/nvn/include -Iruntime
 
 # opus and libvpx: build_app.py passes these (codec_libraries); a make by hand asks the repository's tools/deps, which
 # makes them once per Mac from pinned sources (no Homebrew).

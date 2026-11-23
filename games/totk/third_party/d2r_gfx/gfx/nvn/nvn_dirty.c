@@ -6,6 +6,16 @@
 // before use, check the write generation of the covered pages and re-upload if newer than at upload time. NVN semantics: a texture descriptor points to pool memory, and the GPU reads the current content every time
 // (measured: the game writes streamed assets into texture storage that is still being sampled, without re-registering).
 // Signal handler constraint: the page-fault path uses only atomic operations and mprotect, no allocation, no locks.
+/* NVN_DIRTY_SPLIT: a pool that shares host pages with live tracking ranges gets ranges for its other pages (see the
+   BOTW notes below) instead of none. Without it such a pool is untracked and every texture in it is uploaded again at
+   every submission: Breath of the Wild (a 256x32 texture, then 130 MB a frame after the Hero's Path playback) and Age of
+   Calamity and Persona 5 Royal (a 32 MB pool on the same last page), whose 1.5 GB material pool starts on the last page of its first pool (2026-11-22: 440 re-uploads, 220 MB a
+   frame in the battle after the first one's ending movie; the stale copies piled up past 4.5 GB of GPU memory). */
+#if defined(GAME_BOTW) || defined(GAME_AOCX) || defined(GAME_P5R)
+#define NVN_DIRTY_SPLIT 1
+#else
+#define NVN_DIRTY_SPLIT 0
+#endif
 #include "nvn_dirty.h"
 #include "../../host/dm.h"
 #include <stdatomic.h>
@@ -40,7 +50,7 @@ static const char *const g_busy_site_name[BUSY_SITE_N] = {
 // 跟踪区间 = 各内存池（MemoryPoolInitialize 登记）。池销毁后复用 live=0 的槽，信号处理里无锁扫描。
 // Tracked ranges = the memory pools (registered by MemoryPoolInitialize). After a pool is destroyed its live=0 slot is reused; the signal handler scans without locks.
 #define MAX_RANGE 16384 // 原为 256：内存池多于它时超出的池不跟踪，里面的贴图每次取用都当成脏的重传（暗黑实测峰值见内存读数行的「内存池」；塞尔达约 300 个，踩过）。扫描只到已用的槽数，容量大不增加开销 | was 256: with more memory pools than that the excess pools are untracked and their textures are treated as dirty and re-uploaded on every use (for Diablo's measured peak see "memory pools" in the memory readout line; Zelda has about 300 and hit this). The scan only covers slots in use, so a larger capacity costs nothing. TOTK (2026-10-17): 4096 was full in the user's own games and most long test games (about 3,900 live pools in the world, more when moving between regions); now 16384
-typedef struct { uintptr_t base, end; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; _Atomic uint64_t latest; _Atomic uint64_t *blk; _Atomic uint64_t *rd; uint16_t *rm; uint8_t *rk; _Atomic uint8_t *nr; } range_t;   // rd (OOT): per page, the fence of the latest GPU submission that reads it (nvn_dirty_read_mark)   // latest (TOTK): highest page generation in the range; blk: the same per block of BLK_PAGES pages
+typedef struct { uintptr_t base, end; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; _Atomic uint64_t latest; _Atomic uint64_t *blk; _Atomic uint64_t *rd; uint16_t *rm; uint8_t *rk; _Atomic uint8_t *nr; _Atomic uint64_t birth; } range_t;   // birth: which registration of a range this is (nvn_dirty_span_epoch)   // rd (OOT): per page, the fence of the latest GPU submission that reads it (nvn_dirty_read_mark)   // latest (TOTK): highest page generation in the range; blk: the same per block of BLK_PAGES pages
 /* TOTK_DIRTY_FAST (default on; =0 off), 2026-10-23. Two lookups the replay makes for every CPU-mirrored texture at its
    check in each submission (tex_mtl: about 2.5% of the translate thread in the Korok Forest profile):
    - nvn_dirty_since walked every page of the texture whenever anything else in its pool had been written since the stamp
@@ -55,7 +65,7 @@ enum { BLK_SHIFT = 6, BLK_PAGES = 1 << BLK_SHIFT, FIND_HASH = 1024 };
 static int g_dirty_fast = 1;   // set once, before the first range exists (nvn_dirty_add_range)
 static _Atomic uint64_t g_blk_skips, g_find_hash_hits, g_find_scans;
 static inline size_t blk_count(size_t np) { return (np + BLK_PAGES - 1) >> BLK_SHIFT; }
-#if defined(GAME_BOTW)
+#if NVN_DIRTY_SPLIT
 /* BOTW: a pool that shares host pages with live ranges gets ranges for its other pages (the gaps), so ranges never share
    a page and the fault handler still finds at most one range per page. Before, such a pool got no range: its textures
    counted as untracked and were uploaded again at every submission (one 256x32 texture, 1 MB a frame). A texture across a
@@ -69,6 +79,7 @@ static _Atomic uint8_t g_rdying[MAX_RANGE];
 static _Atomic uint64_t g_ov_inside, g_ov_split, g_ov_same, g_ov_many, g_rm_none;
 #endif
 static range_t g_r[MAX_RANGE];
+static _Atomic uint64_t g_births;   // registrations of ranges so far (range_t.birth)
 static _Atomic int g_nr;
 static uintptr_t g_pg, g_shift;
 static _Atomic uint64_t g_now = 1;
@@ -267,7 +278,7 @@ static void prep_write(void *addr, size_t len) { prep_write_ex(addr, len, 1); }
    a CPU write. Protected pages are taken to BUSY (a guest write meanwhile waits in the fault handler, then faults again
    and is recorded as usual), made writable, and protected again by nvn_dirty_gpu_write_end with their generation kept.
    Pages already unprotected are left as they are. Returns a token for nvn_dirty_gpu_write_end (NULL: nothing tracked). */
-#if !defined(GAME_BOTW)
+#if !NVN_DIRTY_SPLIT
 typedef struct { range_t *r; uintptr_t p0, p1; uint8_t *was; } gpu_write_tok;
 void *nvn_dirty_gpu_write_begin(void *addr, size_t len) {
     if (!len) return NULL;
@@ -289,7 +300,7 @@ void nvn_dirty_gpu_write_end(void *tok) {
 }
 #endif
 
-#if !defined(GAME_BOTW)
+#if !NVN_DIRTY_SPLIT
 void nvn_dirty_add_range(const void *mem, size_t size) {
     static int inited;
     if (!inited) { inited = 1; g_pg = (uintptr_t)getpagesize(); g_shift = __builtin_ctzl(g_pg); mach_timebase_info(&g_tb); dirty_fast_init(); dm_fault_hook_register(on_fault); dm_guest_write_prep_register(prep_write); g_drec_on = DREC_ALWAYS || getenv("DM_NVN_TILELOG") != NULL; }
@@ -336,6 +347,7 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
         memset((void *)state, 0, np); memset((void *)gen, 0, np * sizeof *gen); memset((void *)blk, 0, blk_count(np) * sizeof *blk); memset((void *)rd, 0, np * sizeof *rd); memset(rm, 0, np * sizeof *rm); memset(rk, 0, np); memset((void *)nr, 0, np);
     }
     r->base = base; r->end = end; r->state = state; r->gen = gen; r->blk = blk; r->rd = rd; r->rm = rm; r->rk = rk; r->nr = nr; atomic_store(&r->latest, 0);
+    atomic_store(&r->birth, atomic_fetch_add(&g_births, 1) + 1);   // its page generations start over: a new registration (before it goes live)
     if (slot == n) atomic_store(&g_nr, n + 1);
     atomic_store_explicit(&r->live, 1, memory_order_release);
     pthread_mutex_unlock(&g_slot_mu);
@@ -350,6 +362,9 @@ void nvn_dirty_remove_range(const void *mem) {
 }
 int nvn_dirty_tracked(const void *addr, size_t len) {
     range_t *r = find((uintptr_t)addr); return r && (uintptr_t)addr + len <= r->end;
+}
+uint64_t nvn_dirty_span_epoch(const void *addr, size_t len) {
+    range_t *r = find((uintptr_t)addr); return len && r && (uintptr_t)addr + len <= r->end ? atomic_load(&r->birth) : 0;
 }
 // 设只读：先把页标成 BUSY，mprotect 落地后才标 PROT（次序与不变式见文件头的状态说明）
 // Set read-only: mark the page BUSY first, and mark it PROT only after mprotect has landed (for the order and the invariant see the state notes at the top of the file)
@@ -420,7 +435,7 @@ int nvn_dirty_read_wait_events(nvn_rd_event *out, int max) {
     int k = 0; for (; d < n && k < max; d++) out[k++] = g_rde[d % 4096];
     g_rde_drained = d; return k;
 }
-#if !defined(GAME_BOTW)
+#if !NVN_DIRTY_SPLIT
 /* OOT (2026-11-08): the byte ranges of [addr, addr+len) on pages written after stamp, for an incremental rescan.
    Calls fn(lo, hi) for each run of such pages, clipped to the range. Returns 0 when the range is not tracked (the
    caller rescans everything), 1 otherwise. Same generations as nvn_dirty_since. */
@@ -453,7 +468,7 @@ int nvn_dirty_since(const void *addr, size_t len, uint64_t stamp) {
     return pages_since(r, p, q, stamp);   // 上传前最后一次写的代号 ≤ 戳；之后的写必 > 戳 | The generation of the last write before upload is <= the stamp; any later write must be > the stamp
 }
 #endif
-#if defined(GAME_BOTW)
+#if NVN_DIRTY_SPLIT
 /* BOTW versions of the functions above: a pool's pages can lie in several ranges (its own gaps and the neighbours' shared
    pages, see g_rmem), so the lookups walk range by range; a page in no live range makes the span untracked. */
 static void range_put(int slot, int n, uintptr_t base, uintptr_t end, const void *mem) {   // under g_slot_mu
@@ -470,6 +485,7 @@ static void range_put(int slot, int n, uintptr_t base, uintptr_t end, const void
         memset((void *)state, 0, np); memset((void *)gen, 0, np * sizeof *gen); memset((void *)blk, 0, blk_count(np) * sizeof *blk); memset((void *)rd, 0, np * sizeof *rd); memset(rm, 0, np * sizeof *rm); memset(rk, 0, np); memset((void *)nr, 0, np);
     }
     r->base = base; r->end = end; r->state = state; r->gen = gen; r->blk = blk; r->rd = rd; r->rm = rm; r->rk = rk; r->nr = nr; atomic_store(&r->latest, 0);
+    atomic_store(&r->birth, atomic_fetch_add(&g_births, 1) + 1);   // its page generations start over: a new registration (before it goes live)
     g_rmem[slot] = (uintptr_t)mem; atomic_store(&g_rdying[slot], 0);
     if (slot == n) atomic_store(&g_nr, n + 1);
     atomic_store_explicit(&r->live, 1, memory_order_release);
@@ -538,6 +554,12 @@ int nvn_dirty_tracked(const void *addr, size_t len) {
     uintptr_t a = (uintptr_t)addr, e = a + len;
     do { range_t *r = find(a); if (!r) return 0; a = r->end; } while (a < e);
     return 1;
+}
+uint64_t nvn_dirty_span_epoch(const void *addr, size_t len) {   // the newest registration among the ranges holding the span: births only grow
+    uintptr_t a = (uintptr_t)addr, e = a + len; uint64_t newest = 0;
+    if (!len) return 0;
+    do { range_t *r = find(a); if (!r) return 0; uint64_t b = atomic_load(&r->birth); if (b > newest) newest = b; a = r->end; } while (a < e);
+    return newest;
 }
 /* Set read-only the pages of [a, e) in range r (as nvn_dirty_protect above). A run is set read-only only if the range is not
    being removed: the remover sets g_rdying before it unprotects, so either this sees the flag or the remover meets the
@@ -615,6 +637,6 @@ void nvn_dirty_mp_stats(uint64_t *calls, uint64_t *pages, uint64_t *ns) {
     static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
     *calls = atomic_load(&g_mp_calls); *pages = atomic_load(&g_mp_pages); *ns = atomic_load(&g_mp_ticks) * tb.numer / tb.denom;
 }
-#if defined(GAME_BOTW)
+#if NVN_DIRTY_SPLIT
 int nvn_dirty_runs_since(const void *addr, size_t len, uint64_t stamp, void (*fn)(void *ctx, uintptr_t lo, uintptr_t hi), void *ctx) { (void)addr; (void)len; (void)stamp; (void)fn; (void)ctx; return 0; }   // pools span ranges there: rescan all
 #endif

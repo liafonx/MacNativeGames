@@ -12,6 +12,8 @@ import sys
 import time
 
 GAME=Path(__file__).resolve().parent
+if str(GAME.parents[1]) not in sys.path:sys.path.append(str(GAME.parents[1]))   # the repository root, after this folder
+from tools.port_app.make_path import make_path  # noqa: E402  every port's make WORK= (issue #2284)   # first here (#2045)
 VERSION='oot'
 TITLE='0400486024DEC000'
 
@@ -45,6 +47,67 @@ def sha(path):
         while data:=f.read(8<<20):h.update(data)
     return h.hexdigest()
 
+# make judges by file times only. A work folder whose objects are newer than the sources it is given (built by a newer
+# checkout, then updated from an older one, such as a Launcher's bundled code) kept its old program: 2026-11-19 the
+# nxport copy's v29 runtime stayed ("make: Nothing to be done") while an update from fab08820 re-made the seed as v28,
+# and all 29,124 pipelines failed with "Startup shader seed identity is invalid". So the runtime is built anew (make -B)
+# whenever the content of its sources differs from the last build's, whatever their times.
+RUNTIME_SOURCE_SUFFIXES=frozenset(('.c','.h','.m','.mm','.S','.inc','.plist','.metal'))
+RUNTIME_SOURCE_SKIP=frozenset(('tests','ios','assets','prebuilt','docs','scripts','__pycache__'))   # top-level folders make never reads
+RUNTIME_STAMP='runtime-source.sha256'   # in the work folder's build/, beside the program
+
+def runtime_source_digest(root=None):
+    """One digest of every file the runtime's make can read under root (sources, headers, Makefile), by path and content;
+    symbolic links followed (third_party, zeldaVR), each real folder once."""
+    root=Path(root or GAME);h=hashlib.sha256();seen=set()
+    for top,dirs,files in os.walk(root,followlinks=True):
+        real=os.path.realpath(top)
+        if real in seen:dirs[:]=[];continue
+        seen.add(real)
+        rel=Path(top).relative_to(root)
+        dirs[:]=sorted(d for d in dirs if not (rel==Path('.') and d in RUNTIME_SOURCE_SKIP))
+        for name in sorted(files):
+            if name=='Makefile' or Path(name).suffix in RUNTIME_SOURCE_SUFFIXES:
+                h.update(f'{rel/name}\0{sha(Path(top)/name)}\n'.encode())
+    return h.hexdigest()
+
+def prebuilt_runtime(work):
+    """The release's prebuilt runtime and pool sources reader in work/build (tools/prebuilt.py, made from this very
+    source; user 2026-11-22: "时之笛的运行时改成发布时编好"), or False: a checkout, which compiles them."""
+    sys.path.insert(0,str(GAME.parents[1]))
+    import tools.prebuilt as prebuilt
+    return all(prebuilt.keep_placed(GAME.parents[1],name,work/'build'/made) for name,made in prebuilt.OOT_PROGRAMS.items())
+
+def build_runtime(work,log,jobs,env):
+    """make the runtime into work/build; with -B when the sources' content is not the last build's (above). The
+    release's prebuilt programs when the source has them: nothing is compiled."""
+    stamp=work/'build'/RUNTIME_STAMP
+    digest=runtime_source_digest()
+    if prebuilt_runtime(work):
+        stamp.parent.mkdir(parents=True,exist_ok=True);stamp.write_text(digest+'\n')
+        return
+    import tools.prebuilt as prebuilt
+    prebuilt.compiler_needed('the Ocarina of Time runtime')
+    old=stamp.read_text().strip() if stamp.is_file() else ''
+    cmd=['make','-C',str(GAME),'WORK='+str(make_path(work,'oot')),'-j'+str(jobs)]
+    if old!=digest:
+        cmd.append('-B')
+        print('runtime: built anew, '+('its sources differ from the last build' if old else 'no record of the sources it was built from'),flush=True)
+    with Path(log).open('w') as f:subprocess.run(cmd,cwd=work,stdout=f,stderr=subprocess.STDOUT,check=True,env=env)
+    stamp.parent.mkdir(parents=True,exist_ok=True);stamp.write_text(digest+'\n')
+
+def binary_chain(program):
+    """The translation chain a runtime program was built with: its MNG_SHADER_CHAIN= mark (nvn_mtl.m), None without one."""
+    m=re.search(rb'MNG_SHADER_CHAIN=([\x21-\x7e]+)',Path(program).read_bytes())
+    return m[1].decode() if m else None
+
+def check_runtime_chain(program,chain):
+    """Refuse a runtime of another chain than the seed's before anything is built from them: its pipelines all fail."""
+    have=binary_chain(program)
+    if have!=chain:
+        raise ValueError(f'the runtime {program} is of translation chain {have}, the shader seed of {chain}: '
+                         'build the runtime from the same sources as the seed (update again; the runtime is rebuilt when its sources differ)')
+
 def _script(name):
     """games/oot/scripts/<name>.py by its path (games/totk/scripts may hold a module of the same name)."""
     import importlib.util
@@ -58,20 +121,6 @@ def imported_romfs(tree):
     names it. Not a pinned image: two retail dumps of update 131072 pack to different images (#2009, #2011)."""
     index=json.loads((Path(tree)/'extracted/oot/romfs/index.json').read_text())
     return dict(sha256=index['romfs_sha256'],size=index['romfs_size'])
-
-def make_path(work):
-    """The work folder as make can name it (#2045): make splits target and prerequisite names at spaces, and the default
-    work folder sits next to the dump, named after the game. A path with spaces gets a fixed alias in the temporary
-    folder, a link to it; the build's files still land in the work folder."""
-    work=Path(work)
-    if ' ' not in str(work):return work
-    import tempfile
-    alias=Path(tempfile.gettempdir())/('oot-work-'+hashlib.sha256(str(work.resolve()).encode()).hexdigest()[:12])
-    if ' ' in str(alias):raise ValueError(f'the temporary folder {alias.parent} has a space too: set TMPDIR to a folder without one')
-    if alias.is_symlink() and alias.resolve()==work.resolve():return alias
-    if alias.is_symlink() or alias.exists():alias.unlink()
-    alias.symlink_to(work.resolve(),target_is_directory=True)
-    return alias
 
 def clone_file(source, destination):
     """APFS copy-on-write keeps the verified game image independent without duplicating disk blocks."""
@@ -270,21 +319,64 @@ def c1_list(tree,mode='full'):
     print(f'   c1 list: {rows} shaders proven'+(' (seed unchanged, kept)' if kept else ''),flush=True)
     return out
 
+def pool_list(work,tree,mode='full'):
+    """build/pool_sources<suffix>.tsv: the pool proof (nvn_pool_sources.m) of every seed shader with a pooled read, made
+    once here by the runtime's own code (tools/pool_sources_list.m, built with the runtime) instead of at every load
+    (2026-11-18, user: "a"): one 200 KB shader took 40-70 ms, 99.6 s over the 40,659 translations, at every start's
+    warm-up and at the first load in play. Made again only when the seed manifest or nvn_pool_sources.m changes (the
+    first line names both). Every row is decoded again before the list is written (--verify)."""
+    seed,_,suffix=shader_dirs(tree,mode)
+    out=tree/f'build/pool_sources{suffix}.tsv'
+    seed_sha,scan_sha=sha(seed/'seed-manifest.json'),sha(GAME/'third_party/d2r_gfx/gfx/nvn/nvn_pool_sources.m')
+    if out.is_file():
+        with out.open() as f:
+            if f.readline().rstrip('\n')==f'# nvn pool sources v1 seed={seed_sha} scan={scan_sha}':
+                print('   pool sources: seed and proof unchanged, kept',flush=True);return out
+    tool=work/'build/pool-sources-list'
+    if not tool.is_file():raise ValueError(f'{tool} is missing: the runtime build makes it (make -C games/oot)')
+    subprocess.run([str(tool),str(seed),str(out),seed_sha,scan_sha,'--verify'],check=True)
+    return out
+
+# The bundle's shaders as image parts (shader-seed.img.NNN, shader-libs.img.NNN beside the two folders, at most
+# IMAGE_PART bytes each; ios/tools/seed_image.py, read in place by totk_seed_image.h), not 128,674 seed files and 64,699
+# libraries (2026-11-17, user: "继续做吧"): from the USB drive the App is on, a library first used in play cost an
+# open() of 100 ms or more inside the replay (mtl4-2: 111 ms in lib_from_file), and the first camera turn into a new area
+# stalled on batches of them. The folders keep only the other files (the manifests, the lists). IMAGE_LAYOUT is part of
+# the bundle's stamp, so a bundle made before is made again once.
+IMAGE_LAYOUT=1
+IMAGE_PART=1<<30
+
+def write_shader_images(seed,libraries,resources):
+    """The seed's and the libraries' shader files into image parts in resources; the rest of the seed copied as files.
+    Returns (seed files, libraries) in the images."""
+    tools=str(GAME/'ios/tools')
+    if tools not in sys.path:sys.path.insert(0,tools)
+    from seed_image import image_names,write_parts
+    (resources/'shader-seed').mkdir(parents=True,exist_ok=True);(resources/'shader-libs').mkdir(parents=True,exist_ok=True)
+    every=[p.name for p in seed.iterdir() if p.is_file()]
+    imaged=image_names(every)
+    for name in sorted(set(every)-set(imaged)):clone_file(seed/name,resources/'shader-seed'/name)
+    write_parts(seed,imaged,resources/'shader-seed',IMAGE_PART)
+    manifest=json.loads((libraries/'libraries-manifest.json').read_text())
+    libs=image_names(manifest['files'])
+    if len(libs)!=len(manifest['files']):raise ValueError('a library name the image does not take: '+str(sorted(set(manifest['files'])-set(libs))[:3]))
+    write_parts(libraries,libs,resources/'shader-libs',IMAGE_PART)
+    clone_file(libraries/'libraries-manifest.json',resources/'shader-libs/libraries-manifest.json')
+    return len(imaged),len(libs)
+
 def shader_bundle(tree,record,mode='full'):
     """Seal the large immutable seed once, using the repository's nested-bundle layout."""
     seed,libraries,suffix=shader_dirs(tree,mode)
     shared=build_helpers();bundle=tree/f'build/shader-bundles/ShaderData-oot{suffix}.bundle'
     stamp=bundle.with_name(bundle.name+'.json')
-    want={k:record[k]for k in ('seed_manifest_sha256','libraries_manifest_sha256')}
+    want={**{k:record[k]for k in ('seed_manifest_sha256','libraries_manifest_sha256')},'layout':IMAGE_LAYOUT}
     if (bundle/'Contents/_CodeSignature/CodeResources').is_file() and stamp.exists() and json.loads(stamp.read_text())==want:
         return bundle
     temporary=bundle.with_name(bundle.name+'.partial-'+str(os.getpid()))
     if temporary.exists():raise ValueError('unfinished shader bundle: '+str(temporary))
     resources=temporary/'Contents/Resources'
-    shared.copy_tree(seed,resources/'shader-seed')
-    manifest=json.loads((libraries/'libraries-manifest.json').read_text())
-    for name in manifest['files']:clone_file(libraries/name,resources/'shader-libs'/name)
-    clone_file(libraries/'libraries-manifest.json',resources/'shader-libs/libraries-manifest.json')
+    t0=time.time();nseed,nlibs=write_shader_images(seed,libraries,resources)
+    print(f'   shader data: {nseed} seed files and {nlibs} libraries written as image parts ({time.time()-t0:.0f} s)',flush=True)
     (temporary/'Contents/Info.plist').write_bytes(plistlib.dumps(dict(
         CFBundleIdentifier='org.macnativegames.oot.shaders.oot',CFBundleName='Startup shaders',
         CFBundlePackageType='BNDL',CFBundleShortVersionString='131072',CFBundleVersion='1')))
@@ -341,6 +433,7 @@ def compute_pipeline_archive(work, tree, lists, mode='full'):
     folder=tree/'build/compute-pipelines';folder.mkdir(parents=True,exist_ok=True)
     plan=folder/'compute.tsv';plan.write_text('\n'.join(rows)+'\n')
     chain=json.loads((seed/'seed-manifest.json').read_text())['chain']
+    check_runtime_chain(work/'build/oot-native',chain)
     cache=pipeline_cache(folder,suffix)   # a title build's own: its pruning never reaches the full build's files
     # Kept from one package to the next, also when the runtime changed: with TOTK_PAR_RECHECK=1 the tool makes every listed
     # pipeline against the archive (Metal compares the functions and state), so one this runtime describes otherwise is
@@ -390,7 +483,7 @@ def compute_pipeline_archive(work, tree, lists, mode='full'):
     def file_digest(p):
         st=p.stat();ident=(st.st_size,st.st_mtime_ns)
         old=known.get(p.name)
-        return (old[0] if p.suffix=='.metalarchive' and old and old[1]==ident else sha(p)),ident
+        return (old[0] if p.suffix in ('.metalarchive','.mtl4a') and old and old[1]==ident else sha(p)),ident
     import concurrent.futures
     names=sorted(p for p in target.iterdir() if p.is_file() and p.name!='compute-manifest.json')
     with concurrent.futures.ThreadPoolExecutor(16) as pool:
@@ -405,6 +498,8 @@ RENDER_ROWS=('R\t','B\t','T\t')   # the warm rows that are render pipelines (sha
 MESH_ROWS=('M\t',)                 # mesh pipelines: archived since 2026-11-11 (nvn_mesh_tasks.inc mtk_archive_key)
 MESH_KEY='m'                       # their archive keys ('m' + 40 hex; render keys are hex, compute keys 'c' + hex)
 WARM_LISTS=('pso_title.tsv','pso_manifest.tsv')
+MICROPHONE_USAGE=('With the microphone switched on in the settings panel, you can play the ocarina into it '
+                  '(the game\'s Ocarina Mic Input option). Nothing is recorded or sent anywhere.')
 
 def check_archive_libraries(report, libraries):
     """The pipeline archive must be made from the libraries the App carries: Metal takes an archived pipeline only with the
@@ -488,6 +583,8 @@ def package_app(work,tree,out,game_data_mode='app',game_data_folder=None,shared=
     took('warm-up lists resolved')
     c1=c1_list(tree,mode) if shader_record else None
     took('c1 list')
+    pools=pool_list(work,tree,mode) if shader_record else None
+    took('pool sources')
     pipelines=compute_pipeline_archive(work,tree,lists,mode) if shader_record else None
     took('pipeline archive')
     prepared=shader_bundle(tree,shader_record,mode) if shader_record else None
@@ -543,6 +640,7 @@ def package_app(work,tree,out,game_data_mode='app',game_data_folder=None,shared=
     title,manifest=lists   # the archive's lists, beside the shader map, where the runtime and the launcher look (build_app.py resolve_lists)
     clone_file(title,data/'build/pso_title.tsv');clone_file(manifest,data/'build/pso_manifest.tsv')
     if c1:clone_file(c1,data/'build/c1_bounded.tsv')   # beside the shader map, where nvn_mtl.m c1_bounded_load reads it
+    if pools:clone_file(pools,data/'build/pool_sources.tsv')   # beside it too: nvn_mtl.m pool_list_load
     if pipelines:check_archive_lists(data/'build')   # never an App whose archive was built from other lists
     took('App assembled')
     # VideoToolbox is the primary AV1 decoder; the bounded dav1d fallback is linked statically (build_app.codec_libraries
@@ -551,12 +649,16 @@ def package_app(work,tree,out,game_data_mode='app',game_data_folder=None,shared=
     info=dict(CFBundleDevelopmentRegion='en',CFBundleExecutable='OcarinaOfTime',CFBundleIdentifier='org.macnativegames.oot',CFBundleName='Ocarina of Time',CFBundleDisplayName='Ocarina of Time',CFBundlePackageType='APPL',CFBundleShortVersionString='131072',CFBundleVersion='131072',LSMinimumSystemVersion='26.0',NSHighResolutionCapable=True,LSSupportsGameMode=True,GCSupportsControllerUserInteraction=True)
     icon=tree/'build/AppIcon.icns'   # the game's icon (assets/app-icon.json, made by build), as build_app.py puts it in the app
     if icon.is_file():clone_file(icon,res/'AppIcon.icns');info['CFBundleIconFile']='AppIcon'
+    # The microphone, off unless the settings panel's switch is on (runtime/audio_input.h, app/launcher.m microphone_setting):
+    # macOS shows this when it asks; without it the request ends the process
+    info['NSMicrophoneUsageDescription']=MICROPHONE_USAGE
     if game_data_mode=='library':info['MNGGameDataFolder']=str(game_data_folder)
     info['MNGShaders']=mode   # shader_mode: 'title' is a quick build, filled in by MNG Launcher's 补全着色器 (update_shaders)
     info['MNGContributionFolder']=str(contrib_folder())   # app/launcher.m contrib_file: where players find it, as build_app.py sets it
     build_app.record_update_source(info,work)   # Settings > Update (#2055): the checkout, the work folder and the Python, as build_app.py records them
     commit=build_app.source_commit()
     if commit:info['MNGSourceCommit']=commit   # the HUD box and the Update page name the commit the app was built from
+    build_app.record_launcher_version(info)    # the HUD's build line: the Launcher that built the app, before the commit
     (temporary/'Contents/Info.plist').write_bytes(plistlib.dumps(info));(temporary/'Contents/PkgInfo').write_bytes(b'APPL????')
     # build_app.sign_app: the designated requirement is the bundle ID, so macOS keeps the player's "removable volume"
     # permission across updates. A plain ad-hoc signature made it this build's code hash: every update asked again, and an
@@ -571,6 +673,13 @@ def package_app(work,tree,out,game_data_mode='app',game_data_folder=None,shared=
     while app_running(out):time.sleep(5)   # the build may have taken a while: the App is replaced only once it is closed
     build_app.install_app(temporary,out)
     took('installed, its seal checked')
+    # What this build replaced and no later one reads (old translation contexts, moved-aside bundles and libraries,
+    # chain-named pipeline folders): the work folder had grown to 256 GB by 2026-11-17 (work_prune.py; user: "每次 更新完
+    # 要清理 … 不影响极速更新"). Only after the App is in place, so a failed build keeps everything.
+    if str(GAME) not in sys.path:sys.path.insert(0,str(GAME))
+    from work_prune import prune
+    prune(tree,log=lambda line:print('   '+line,flush=True))
+    took('superseded work files removed')
     return out
 
 def missing_compute(rows,index_ids):
@@ -601,44 +710,71 @@ def app_running(app):
         return True
     return False
 
-def update_blocker(work, mode='full'):
+def seed_context_matches(tree,metadata):
+    """The seed (its seed-manifest.json `metadata`) was translated in this repository's translation context: the same chain,
+    depth mode and translator code (prepare_ns2_seed.translation_context, schema 4 since 2026-11-18). A seed from before
+    names its context by the translator's whole file (schema 3): it still matches when a program it names (the work
+    tree's in-game translator, its prebuilt copy or a translation cache's own copy, by whole-file SHA-256) has this
+    repository's translator's code and gives that context. So the Launcher's Developer ID copy and this repository's
+    ad-hoc one are one translator (user 2026-11-18: an express update after the Launcher's build was refused)."""
+    scripts=str(GAME/'scripts')
+    if scripts not in sys.path:sys.path.insert(0,scripts)
+    from prepare_ns2_seed import translation_context,legacy_translation_context,code_sha256
+    repo=GAME/'prebuilt/macos-arm64/totk_xlate';depth=metadata.get('nvn_depth_mode');have=metadata.get('translation_context_sha256')
+    if have==translation_context(repo,depth):return True
+    named=metadata.get('translator_sha256');code=code_sha256(repo)
+    cache=tree/'build/ns2-seed-cache/oot'
+    places=[tree/'build/shader-service/totk_xlate',tree/'prebuilt/macos-arm64/totk_xlate',
+            *(sorted(cache.glob('*/tool/build/shader-service/totk_xlate')) if cache.is_dir() else [])]
+    for program in places:
+        if program.is_file() and sha(program)==named and code_sha256(program)==code and legacy_translation_context(program,depth)==have:
+            return True
+    return False
+
+def update_blocker(work, mode='full', remake=False):
     """Why this work folder cannot take an update without the full build ('' when it can): its last full build's files
     are missing, its shaders are of another translation chain or translator than this repository's (the seed's
     translation_context), or its rewritten modules are not this repository's. update_runtime refuses then, and
     update_runtime.py --plan (MNG Launcher, tools/mng.py) answers "full" instead of an express update that would stop
     (2026-11-13: chain v27 made the Launcher start an express update that refused at once).
     A 'title' App's update makes its few shaders again in a minute or two, so neither an earlier seed nor the same
-    translation chain is needed for it: only the game files and this repository's rewritten modules."""
+    translation chain is needed for it: only the game files and this repository's rewritten modules.
+    remake (the fast update, update_runtime.py --seed; user 2026-11-17: "oot 加上"): every shader is translated again
+    from the work folder's game files, as the full build does, so a changed chain or translator does not stop it either.
+    The seed's cache is a folder per translation context (prepare_ns2_seed.py), so nothing of the old chain is reused."""
     work=Path(work);tree=work/'oot';seed,libraries,_=shader_dirs(tree,'title' if mode=='title' else 'full')
     manifest=seed/'seed-manifest.json'
-    shaders=() if mode=='title' else (manifest,libraries/'libraries-manifest.json')
+    shaders=() if mode=='title' or remake else (manifest,libraries/'libraries-manifest.json')
     for needed in (*shaders,tree/'extracted/oot/romfs/index.json',tree/'rewritten/oot'):
         if not needed.exists():return f'{needed} is missing: run the full build once with this work folder'
-    if mode!='title':
+    if mode!='title' and not remake:
         scripts=str(GAME/'scripts')
         if scripts not in sys.path:sys.path.insert(0,scripts)
-        from prepare_ns2_seed import translation_context
         try:metadata=json.loads(manifest.read_text())
         except ValueError:return f'{manifest} is not readable: run the full build'
-        if metadata.get('translation_context_sha256')!=translation_context(GAME/'prebuilt/macos-arm64/totk_xlate',metadata.get('nvn_depth_mode')):
+        if not seed_context_matches(tree,metadata):
             return 'the translation chain or the translator changed, or the seed is older than the request checks (2026-11-11): the shaders need the full build'
     expected=json.loads((GAME/'assets/expected-v131072.json').read_text())
     for name,want in expected['rewritten_sha256'].items():
         if sha(tree/'rewritten/oot'/name)!=want:return 'rewritten module differs from this repository: run the full build: '+name
     return ''
 
-def update_runtime(app,work=None):
+def update_runtime(app,work=None,remake=False,shared=None):
     """Put a new runtime into an App this build made, keeping its shaders: rebuild the runtime and its pipeline archive only.
     The translations and Metal libraries of the last full build are reused; a new translation chain, translator or request
-    code needs the full build. A running game is waited for, not closed."""
+    code needs remake (the fast update: every shader translated again from the work folder, no game files or keys) or the
+    full build. A running game is waited for, not closed. shared: the shared list to bring the App up to (update_runtime.py
+    newest_shader_list: the newest on GitHub; user 2026-11-17 "极速更新也要补新着色器"): its variants the seed lacks are
+    translated and its pipelines made, as update_shaders does; else this repository's copy."""
     app=Path(app).resolve();work=Path(work).expanduser().resolve() if work else build_helpers().recorded_work_folder(app,'OcarinaOfTime_build')[0]   # the app's own record first
     repo=GAME.parents[1]
     if work==repo or repo in work.parents:raise ValueError('game build data must remain outside the source checkout')
     tree=work/'oot'
     mode=shader_mode(app)
     if mode=='none':mode='full'   # an update always carries shaders, as before (an App of OOT_BUNDLE_SHADERS=0 gets them all)
-    blocker=update_blocker(work,mode)
+    blocker=update_blocker(work,mode,remake=remake)
     if blocker:raise ValueError(blocker)
+    if remake and mode!='title':print('fast update: every shader is translated again from the work folder (a new translation chain or translator)',flush=True)
     told=False
     while app_running(app):
         if not told:print('waiting for the game to close',flush=True);told=True
@@ -648,17 +784,16 @@ def update_runtime(app,work=None):
     logs=work/'logs';logs.mkdir(exist_ok=True)
     print('building the runtime',flush=True)
     env=dict(os.environ,DM_RULESET='native',DM_PRIVATE_GATES='0')
-    with (logs/'native-runtime.log').open('w') as f:
-        subprocess.run(['make','-C',GAME,'WORK='+str(make_path(work)),'-j'+str(os.cpu_count() or 4)],cwd=work,stdout=f,stderr=subprocess.STDOUT,check=True,env=env)
+    build_runtime(work,logs/'native-runtime.log',os.cpu_count() or 4,env)
     def run(cmd,name,cwd=tree):
         print(name,flush=True)
         with (logs/(name+'.log')).open('w') as f:subprocess.run([str(x)for x in cmd],cwd=cwd,env=env,stdout=f,stderr=subprocess.STDOUT,check=True)
     install_translator(tree)   # the seed below is this repository's translator's; so must the App's in-game one be
     # The new runtime asks for every translation again: the ones whose request is the same are kept, the others made again
     # (prepare_ns2_seed.py, totk_shader_rt.m seed_verified), and only the libraries whose source changed are compiled.
-    shader_steps(work,tree,logs,run,mode=mode)
+    shader_steps(work,tree,logs,run,shared=shared,mode=mode)
     folder=plistlib.loads((app/'Contents/Info.plist').read_bytes()).get('MNGGameDataFolder')
-    package_app(work,tree,app,'library' if folder else 'app',folder,mode=mode)
+    package_app(work,tree,app,'library' if folder else 'app',folder,shared=shared,mode=mode)
     print(f'updated {app} in {time.monotonic()-start:.0f} s',flush=True)
 
 def update_shaders(app,listfile,work=None):
@@ -673,11 +808,8 @@ def update_shaders(app,listfile,work=None):
     manifest=shader_dirs(tree,shader_mode(app))[0]/'seed-manifest.json'
     for needed in (manifest,tree/'extracted/oot/romfs/index.json',work/'build/oot-native'):
         if not needed.exists():raise ValueError(f'{needed} is missing: the work folder cannot translate shaders (a full build makes it)')
-    scripts=str(GAME/'scripts')
-    if scripts not in sys.path:sys.path.insert(0,scripts)
-    from prepare_ns2_seed import translation_context
     metadata=json.loads(manifest.read_text())
-    if metadata.get('translation_context_sha256')!=translation_context(GAME/'prebuilt/macos-arm64/totk_xlate',metadata.get('nvn_depth_mode')):
+    if not seed_context_matches(tree,metadata):
         raise ValueError('this repository translates for another chain or translator than the App\'s shaders: update the App first')
     told=False
     while app_running(app):
@@ -834,7 +966,8 @@ def build(args, source):
     run([py,'scripts/prepare_shared_fonts.py','--version','oot'],'prepare-shared-fonts')
     install_translator(tree)
     (tree/'build/shader-map.tsv').write_text('# TOTK control-code-sha256-v1\n')
-    run(['make','-C',GAME,'WORK='+str(make_path(work)),'-j2'],'native-runtime',work)
+    print('native-runtime',flush=True)
+    build_runtime(work,logs/'native-runtime.log',2,env)
     icon_spec=GAME/'assets/app-icon.json'   # the dump has no Control data: the pinned official image, as Donkey Kong Bananza
     if icon_spec.is_file():run([py,'scripts/extract_app_icon.py','--source-spec',icon_spec,'--output','build/AppIcon.icns'],'app-icon')
     mode='full' if device else shader_mode()

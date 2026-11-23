@@ -81,7 +81,7 @@ class BotwViewPatches(unittest.TestCase):
                      'runtime_far_scale', 'runtime_far_scale_set', 'runtime_far_scale_locked', 'runtime_far_available',
                      'runtime_dof_set', 'runtime_dof_on', 'runtime_dof_available'):
             self.assertRegex(SOURCE, r'\b' + name + r'\(', name)
-            self.assertRegex((RUNTIME / 'settings_panel.h').read_text(), r'\b' + name + r'\(', name)
+            self.assertRegex((RUNTIME / 'settings_panel.h').read_text() + (RUNTIME / 'settings_game.h').read_text(), r'\b' + name + r'\(', name)   # the shared panel, and the game's part of it
 
     def test_the_stubs_keep_apart_from_the_other_padding_users(self):
         # (offset, length) in the 16-byte aligned padding after the text end, on 1.9.0: the FOV stub, the camera blend, ours

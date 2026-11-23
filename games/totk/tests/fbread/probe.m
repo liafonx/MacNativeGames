@@ -74,8 +74,9 @@ int main(void) { @autoreleasepool {
     check(nvn_fbdep_dependent(decal(@"", @""), 0) == 0, "a decal reads at its own position");
     check(nvn_fbdep_dependent(refract(@"    float4 _7 = spvDescriptorSet0.fp_t_tcb_8.sample(spvDescriptorSet0.fp_t_tcb_8Smplr, _1);\n"), 0) == 0, "one plain sample among dependent ones is not dependent");
     check(nvn_fbdep_dependent(refract(@"    float4 _7 = spvDescriptorSet0.fp_t_tcb_8.read(uint2(_5));\n"), 0) == 0, "a read() use is not dependent");
+    check(nvn_fbdep_dependent(refract(@"    float4 _7 = spvDescriptorSet0.fp_t_tcb_80.sample(spvDescriptorSet0.fp_t_tcb_80Smplr, _1, level(_4));\n"), 2) == 0, "a level that depends on a texture read does not make the position dependent");
     check(nvn_fbdep_dependent(refract(@""), 1) == 0 && nvn_fbdep_dependent(refract(@""), 9) == 0, "a sampler or an unknown id is not dependent");
-    printf("{\"case\":\"dependent-read classifier (nvn_fbdep.h)\",\"checks\":6,\"pass\":true,\"game_data\":false}\n");
+    printf("{\"case\":\"dependent-read classifier (nvn_fbdep.h)\",\"checks\":7,\"pass\":true,\"game_data\":false}\n");
     NSError *e = nil;
     id<MTLLibrary> vlib = [dev newLibraryWithSource:vertex_src options:nil error:&e]; check(vlib != nil, "vertex function");
     MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float width:W height:H mipmapped:NO];
