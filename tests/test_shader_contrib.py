@@ -1,4 +1,5 @@
 """The player's contribution file (totk_shader_contrib.h): written by the runtime, merged by scripts/shader_list.py."""
+import contextlib
 import json
 import re
 import os
@@ -148,6 +149,11 @@ class SwitchTwoSeedTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 with self.assertRaisesRegex(ValueError, 'shader key rule'):
                     key_source(str(self.seed(tmp, 'dkb', rule=rule)))
+            # a seed made before it named every shader as well: its keys place inbox rows whatever app sent them
+            # (held_under_the_rule), so keys of another rule would let that rule's rows into the list
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaisesRegex(ValueError, 'shader key rule'):
+                    key_source(str(self.seed(tmp, 'pkp', identity=False, rule=rule)))
 
     def test_it_must_be_of_the_same_game_files(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -266,7 +272,101 @@ class ShaderInboxTests(unittest.TestCase):
         self.assertEqual(lists['pokopia'].variants, {('1' * 64, '{}')})
         self.assertEqual(done['pokopia'][1], ['1', '2'])
         self.assertIn('1 only from apps of an older shader key rule (marked done, not merged)', done['pokopia'][0])
-        self.assertIn('2 from app builds not in this repository (left in the inbox)', done['pokopia'][0])
+        self.assertIn('2 from app builds not in this repository, of shaders no game here holds (left in the inbox)',
+                      done['pokopia'][0])
+
+    def test_switch_2_rows_go_by_the_shaders_they_name_before_their_apps_build(self):
+        # 2026-11-25: 1,812 Bananza and 157 Pokopia rows stayed in the inbox because their apps' build was no commit of this
+        # repository: "458753" / "655361" (the CFBundleVersion an app without MNGSourceCommit reports), an iPhone's "1", two
+        # forks' commits. 1,571 and 157 of them named only shaders the game's keys hold. A key is the shader's bytes under
+        # the lists' key rule, so a row whose shaders a Switch 2 game of that rule holds is of the rule, whatever app sent
+        # it; the build decides only for a row none of them holds.
+        mine, mine2, theirs, new, new2 = '5' * 64, '6' * 64, '7' * 64, '8' * 64, '9' * 64
+        keys = self.keys(); keys['dkb'] = {mine, mine2}; keys['pokopia'] = {theirs}
+        dkb = self.pending([f'V\t{mine}\t{{}}', '\t'.join(pipeline(mine, mine)), f'V\t{new}\t{{}}',
+                            '\t'.join(pipeline(mine, new)), f'V\t{mine2}\t{{}}', f'V\t{new2}\t{{}}'])
+        for row, builds in zip(dkb, (['458753'], ['458753', '1'], ['1'], ['1'], ['old1'], ['old1'])):
+            row['builds'] = builds
+        pkp = self.pending([f'V\t{theirs}\t{{}}', f'V\t{new}\t{{}}', f'V\t{self.TOTK}\t{{}}'])
+        for row in pkp:
+            row['builds'] = ['655361']
+        rule = {'458753': 'unknown', '655361': 'unknown', '1': 'unknown', 'old1': 'no'}
+        with mock.patch.object(collect_shaders, 'key_rule_commit', lambda: 'k' * 40), \
+                mock.patch.object(collect_shaders, 'build_rule', lambda build, since: rule[build]):
+            lists, _, done = self.merge({'dkb': dkb, 'pokopia': pkp}, keys)
+        self.assertEqual(lists['dkb'].variants, {(mine, '{}'), (mine2, '{}')})
+        self.assertIn(pipeline(mine, mine), lists['dkb'].warm)
+        self.assertNotIn(pipeline(mine, new), lists['dkb'].warm, 'one shader no game holds: not placed by what it names')
+        self.assertEqual(done['dkb'][1], ['1', '2', '5', '6'], 'the rows no game holds from builds no one can place stay')
+        self.assertIn('3 placed by the shaders they name (their app builds are of an older key rule or not in this '
+                      'repository)', done['dkb'][0])
+        self.assertIn('1 only from apps of an older shader key rule (marked done, not merged)', done['dkb'][0])
+        self.assertIn('2 from app builds not in this repository, of shaders no game here holds (left in the inbox)',
+                      done['dkb'][0])
+        self.assertEqual(lists['pokopia'].variants, {(theirs, '{}')},
+                         'a shader no game holds is not a new shader of the game on the word of a build no one can place')
+        self.assertEqual(lists['totk'].variants, set(), 'keys of another rule (a Switch 1 game\'s) do not say the row\'s rule')
+        self.assertEqual(done['pokopia'][1], ['1'])
+
+    def test_only_a_switch_2_game_of_the_lists_rule_places_a_row_by_its_shaders(self):
+        # Ocarina of Time's keys follow another rule (nvn_ctl.h "nvn2-ctl48-zero-30", the one Bananza and Pokopia left),
+        # and its seed records none: a key it holds does not say the row is of the lists' rule
+        mine, theirs = '5' * 64, '7' * 64
+        keys = self.keys(); keys['dkb'] = {mine}; keys['pokopia'] = {theirs}
+        held = lambda *lines: collect_shaders.held_under_the_rule('\n'.join(lines) + '\n', keys)
+        self.assertTrue(held(f'V\t{mine}\t{{}}'))
+        self.assertTrue(held('\t'.join(pipeline(theirs, theirs))), 'the other Switch 2 game holds it: owner() sends it there')
+        self.assertFalse(held(f'V\t{self.OOT}\t{{}}'))
+        self.assertFalse(held(f'V\t{self.TOTK}\t{{}}'))
+        self.assertFalse(held('\t'.join(pipeline(mine, theirs))), 'one game must hold every shader of a pipeline')
+        self.assertFalse(held('\t'.join(pipeline('', ''))), 'a pipeline naming no shader says nothing')
+        self.assertFalse(held(f'V\t{mine}\tnot a bind state'), 'a line the merge cannot read')
+        self.assertFalse(held(f'V\t{mine}\t{{}}', f'V\t{"8" * 64}\t{{}}'), 'every line of the row')
+        self.assertFalse(held(''))
+
+    def test_what_the_current_rules_apps_bring_names_the_shaders_for_the_rest_of_the_round(self):
+        # Pokopia makes shaders at run time, so its keys grow with what current apps send. An older app's pipeline of
+        # such a shader arrived first: it is taken in the same round, not marked done unmerged for good.
+        made, other = '5' * 64, '6' * 64
+        rows = self.pending(['\t'.join(pipeline(made, made)), f'V\t{made}\t{{}}', f'V\t{other}\t{{}}'])
+        for row, builds in zip(rows, (['old1'], ['new1'], ['old1'])):
+            row['builds'] = builds
+        rule = {'new1': 'yes', 'old1': 'no'}
+        with mock.patch.object(collect_shaders, 'key_rule_commit', lambda: 'k' * 40), \
+                mock.patch.object(collect_shaders, 'build_rule', lambda build, since: rule[build]):
+            lists, _, done = self.merge({'pokopia': rows})
+        self.assertEqual(lists['pokopia'].variants, {(made, '{}')})
+        self.assertIn(pipeline(made, made), lists['pokopia'].warm)
+        self.assertEqual(done['pokopia'][1], ['1', '2', '3'], 'the inbox\'s order; the third names nothing: marked done')
+        self.assertIn('1 only from apps of an older shader key rule (marked done, not merged)', done['pokopia'][0])
+
+    def test_a_sender_that_named_its_key_rule_is_placed_by_it_not_by_its_build(self):
+        # Apps since 2026-11-25 name the rule their file was written with; the inbox's export pairs it with the build
+        # (sources: [build, rule]). The build, a guess, places only a sender that named none.
+        new = ['1' * 64, '2' * 64, '3' * 64, '4' * 64, '5' * 64]
+        rows = self.pending([f'V\t{key}\t{{}}' for key in new])
+        rows[0]['sources'] = [['458753', collect_shaders.KEY_RULE]]         # no commit, the current rule: taken
+        rows[1]['sources'] = [['1', 'nvn2-ctl48-zero-30']]                  # an older rule by name: done, never merged
+        rows[2]['sources'] = [['655361', None]]                             # says neither: stays in the inbox
+        rows[3]['sources'] = [['new1', None], ['1', 'nvn2-ctl48-zero-30']]  # one sender of the current rule is enough
+        # a rule this checkout does not know (a fork's, or the next one before the lists move to it) is not an older one:
+        # the row stays in the inbox, it is not marked done for good
+        rows[4]['sources'] = [['fork9', 'nvn2-a-rule-of-later']]
+        self.assertIn('nvn2-ctl48-zero-30', collect_shaders.OLDER_KEY_RULES)
+        self.assertNotIn(collect_shaders.KEY_RULE, collect_shaders.OLDER_KEY_RULES)
+        for row in rows:
+            row['builds'] = [build for build, _ in row['sources']]
+        rule = {'655361': 'unknown', 'new1': 'yes'}   # git is not asked about a build whose app named its rule (KeyError)
+        with mock.patch.object(collect_shaders, 'key_rule_commit', lambda: 'k' * 40), \
+                mock.patch.object(collect_shaders, 'build_rule', lambda build, since: rule[build]):
+            lists, _, done = self.merge({'pokopia': rows})
+        self.assertEqual(lists['pokopia'].variants, {(new[0], '{}'), (new[3], '{}')})
+        self.assertEqual(done['pokopia'][1], ['1', '4', '2'])
+        self.assertIn('1 only from apps of an older shader key rule (marked done, not merged)', done['pokopia'][0])
+        self.assertIn('2 from app builds not in this repository, of shaders no game here holds (left in the inbox)',
+                      done['pokopia'][0])
+        self.assertEqual(collect_shaders.sent_under(rows[0], None), {'yes'}, 'a named rule needs no commit of the rule')
+        self.assertEqual(collect_shaders.sent_under({'builds': ['0123abc']}, None), {'unknown'}, 'an export without sources')
 
     def test_without_the_rules_commit_no_switch_2_row_is_placed(self):
         rows = self.pending([f'V\t{"1" * 64}\t{{}}'])
@@ -527,6 +627,62 @@ class ShaderInboxUploadTests(unittest.TestCase):
         finally:
             server.stdin.close(); server.wait(timeout=30); server.stdout.close()
 
+    def test_the_upload_names_the_key_rule_the_file_was_written_with(self):
+        # 2026-11-25: the inbox had only the app's build to tell a Switch 2 row's key rule by, and 1,812 Bananza rows waited
+        # there because the build was no commit. The file names the rule its rows were written with, the upload sends it,
+        # and the inbox's export pairs it with the build (what the merge reads: collect_shaders.sent_under).
+        with self.bananza() as (run, path, exported):
+            self.assertEqual(run('claim-write').returncode, 0)
+            self.assertIn(f'# Shader key rule: {collect_shaders.KEY_RULE}', path.read_text().splitlines(),
+                          'the rule Bananza and Pokopia name their shaders by is the one the lists and seeds use')
+            self.assertEqual(run('claim-send').stdout.strip(), '1')
+            rows = exported()
+            self.assertEqual([r['sources'] for r in rows], [[['dev', collect_shaders.KEY_RULE]]])
+            self.assertEqual(collect_shaders.sent_under(rows[0], None), {'yes'}, 'placed without asking git about "dev"')
+
+    def test_a_file_from_before_the_rule_line_names_its_rule_once_the_upload_has_emptied_it(self):
+        # Every install had such a file when the line came. Its rows go without a rule (any app may have written them);
+        # once the upload has taken them all, the rows this app writes from then on are of its rule, and say so.
+        old, row = f'V\t{"a" * 64}\t{{}}', ContributionOwnerTests.ROW
+        with self.bananza() as (run, path, exported):
+            path.write_text(f'# header\n# Inbox game: dkb\n{old}\n')
+            self.assertEqual(run('claim-send').stdout.strip(), '1')
+            lines = path.read_text().splitlines()
+            self.assertEqual(lines, ['# header', '# Inbox game: dkb', f'# Shader key rule: {collect_shaders.KEY_RULE}'])
+            self.assertEqual(run('claim-write').returncode, 0)
+            self.assertEqual(run('claim-send').stdout.strip(), '1')
+            self.assertEqual(path.read_text().splitlines(), lines, 'named once, whatever is retired later')
+            self.assertEqual({r['body']: r['sources'] for r in exported()},
+                             {old: [['dev', None]], row: [['dev', collect_shaders.KEY_RULE]]})
+
+    @contextlib.contextmanager
+    def bananza(self):
+        """The inbox on 127.0.0.1 and the upload built as Bananza's (a Switch 2 game: GAME_NS2, id dkb):
+        (run(mode) of owner_probe on the file, the file, exported() = the rows the inbox would export)."""
+        server = subprocess.Popen(['node', str(INBOX / 'test/local-server.js')], cwd=INBOX, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, text=True)
+        try:
+            port = int(server.stdout.readline().split()[1])
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp = Path(tmp)
+                probe = tmp / 'owner-probe'
+                build = subprocess.run(['xcrun', 'clang', '-fobjc-arc', '-Wall', '-Wextra', '-Werror', '-DGAME_NS2=1',
+                                        '-DGAME_INBOX_ID="dkb"', '-DTOTK_GAME_VERSION="v458752"',
+                                        f'-DTOTK_CONTRIB_INBOX="http://127.0.0.1:{port}/v1/contrib"',
+                                        f'-I{TOTK}/third_party/d2r_gfx/gfx/nvn', str(TOTK / 'tests/shader_contrib/owner_probe.m'),
+                                        '-framework', 'Foundation', '-o', str(probe)], capture_output=True, text=True)
+                self.assertEqual(build.returncode, 0, build.stderr[-600:])
+                path = tmp / 'shader-list-contribution.txt'
+                env = {k: v for k, v in os.environ.items() if not k.startswith('TOTK_')}
+
+                def exported():
+                    with urllib.request.urlopen(f'http://127.0.0.1:{port}/admin/rows?game=dkb', timeout=30) as reply:
+                        return json.loads(reply.read())['data']['rows']
+                yield (lambda mode: subprocess.run([str(probe), mode, str(path)], capture_output=True, text=True, env=env,
+                                                   timeout=120), path, exported)
+        finally:
+            server.stdin.close(); server.wait(timeout=30); server.stdout.close()
+
     def test_without_an_answer_the_rows_stay(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -673,6 +829,74 @@ class ContributionOwnerTests(unittest.TestCase):
                 path.write_text(text)
                 own = self.run_probe(game, 'id').stdout.strip()
                 run = self.run_probe(game, 'write', str(path), env={'TOTK_CONTRIB_GAME_ID': own})
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertEqual(path.read_text(), text)
+                self.assertIn('nothing is written', run.stderr)
+
+    # The copies built as a Switch 2 game (GAME_NS2 in GAME_DEFINES): its shader keys follow a named rule (nvn_ctl.h
+    # NVN2_KEY_RULE), and its file says which (user 2026-11-25: "123 做"). A row is written under the app's rule and may be
+    # sent by a later app of another: only the file knows the rule of its rows.
+    RULES = {'oot': 'nvn2-ctl48-zero-30'}
+    RULE_LINE = '# Shader key rule: '
+
+    def test_a_new_file_names_the_rule_of_its_keys_when_the_rule_has_a_name(self):
+        self.assertTrue(set(self.RULES) <= set(self.probes))
+        for game in self.probes:
+            with self.subTest(game=game), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / 'shader-list-contribution.txt'
+                self.assertEqual(self.run_probe(game, 'claim-write', str(path)).returncode, 0)
+                named = [line for line in path.read_text().splitlines() if line.startswith(self.RULE_LINE)]
+                self.assertEqual(named, [self.RULE_LINE + self.RULES[game]] if game in self.RULES else [])
+            if game not in self.RULES:   # nor from the environment it was started in (a Switch 2 game's launcher before it)
+                with self.subTest(game=game, inherited=True), tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / 'shader-list-contribution.txt'
+                    run = self.run_probe(game, 'claim-write', str(path), env={'TOTK_CONTRIB_KEY_RULE': 'nvn2-of-another-game'})
+                    self.assertEqual(run.returncode, 0, run.stderr)
+                    self.assertNotIn(self.RULE_LINE, path.read_text())
+
+    def test_a_file_of_another_key_rule_moves_aside_unsent(self):
+        for game in self.RULES:
+            with self.subTest(game=game), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / 'shader-list-contribution.txt'
+                path.write_text(f'# header\n# Inbox game: {game}\n{self.RULE_LINE}nvn2-an-older-rule\nV\t{"a" * 64}\t{{}}\n')
+                done = Path(tmp) / '.shader-list-contribution.txt.done'; done.write_text(f'V\t{"b" * 64}\t{{}}\n')
+                run = self.run_probe(game, 'claim-write', str(path))
+                self.assertEqual(run.returncode, 0, run.stderr)
+                aside = [p for p in Path(tmp).iterdir() if p.name.startswith('shader-list-contribution.txt.')]
+                self.assertEqual([p.name.rsplit('-', 2)[0] for p in aside], ['shader-list-contribution.txt.rule-nvn2-an-older-rule'])
+                self.assertIn('a' * 64, aside[0].read_text())
+                self.assertTrue((Path(tmp) / f'.{aside[0].name}.done').is_file(), 'its done file names the old rule\'s keys too')
+                lines = path.read_text().splitlines()
+                self.assertIn(self.RULE_LINE + self.RULES[game], lines)
+                self.assertEqual([line for line in lines if not line.startswith('#')], [self.ROW])
+
+    def test_a_file_from_before_the_rule_line_keeps_its_rows_and_takes_the_line_once_it_holds_none(self):
+        for game in self.RULES:
+            with self.subTest(game=game), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / 'shader-list-contribution.txt'
+                old = f'V\t{"a" * 64}\t{{}}'
+                path.write_text(f'# header\n# Inbox game: {game}\n{old}\n')   # rows of a rule nothing names: they go without one
+                self.assertEqual(self.run_probe(game, 'claim-write', str(path)).returncode, 0)
+                lines = path.read_text().splitlines()
+                self.assertEqual([line for line in lines if not line.startswith('#')], [old, self.ROW])
+                self.assertFalse(any(line.startswith(self.RULE_LINE) for line in lines), 'not every row is of this rule')
+                self.assertEqual([p.name for p in Path(tmp).iterdir()], [path.name], 'nothing moved aside')
+                path.write_text(f'# header\n# Inbox game: {game}\n')   # every row sent since: the file is this rule's from now on
+                self.assertEqual(self.run_probe(game, 'claim-write', str(path)).returncode, 0)
+                lines = path.read_text().splitlines()
+                self.assertEqual(lines.count(self.RULE_LINE + self.RULES[game]), 1)
+                self.assertEqual([line for line in lines if not line.startswith('#')], [self.ROW])
+                self.assertEqual(self.run_probe(game, 'claim', str(path)).returncode, 0)
+                self.assertEqual(path.read_text().splitlines().count(self.RULE_LINE + self.RULES[game]), 1, 'named once')
+
+    def test_the_game_writes_nothing_to_a_file_of_another_key_rule(self):
+        for game in self.RULES:
+            with self.subTest(game=game), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / 'shader-list-contribution.txt'
+                text = f'# Inbox game: {game}\n{self.RULE_LINE}nvn2-an-older-rule\n'
+                path.write_text(text)
+                run = self.run_probe(game, 'write', str(path), env={'TOTK_CONTRIB_GAME_ID': game,
+                                                                    'TOTK_CONTRIB_KEY_RULE': self.RULES[game]})
                 self.assertEqual(run.returncode, 0, run.stderr)
                 self.assertEqual(path.read_text(), text)
                 self.assertIn('nothing is written', run.stderr)

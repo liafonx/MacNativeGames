@@ -53,6 +53,10 @@ def stage_of(ctl, code):
 # the shader hash +0x20..+0x27 (2026-11-12): Pokopia writes them again before it sets the shader.
 KEY_ZERO = ((0x08, 0x0c), (0x20, 0x28), (0x30, 0x34))
 KEY_RULE = 'nvn2-ctl48-zero-08-20-30'   # nvn_ctl.h NVN2_KEY_RULE; a seed records it (prepare_ns2_seed.py)
+# The rules these games' keys followed before KEY_RULE (until 2026-11-12: only +0x30 as zero). A key rule that takes a new
+# name leaves its old one here: collect_shaders.py marks an inbox row done unmerged only when its app named one of these;
+# a name that is neither KEY_RULE nor here (a fork's, or the next rule's before the lists move to it) decides nothing.
+OLDER_KEY_RULES = ('nvn2-ctl48-zero-30',)
 # A Switch 2 game's shader list names its shaders by one rule, said in its header (ns2_rekey.py writes it): a list and a
 # seed of other rules name no shader in common, so collect_shaders.py and prepare_ns2_seed.py refuse to mix them.
 KEY_RULE_HEADER = '# Shader key rule: '
@@ -329,6 +333,12 @@ def scan_nintendo(root, path):
     return path, 1, nintendo_shaders(Source(root).open(path)[:], path)
 
 
+def nintendo_files(src):
+    """The files of a RomFS that hold Nintendo's shader resources."""
+    return sorted(f for f in src.files if f.startswith(('Shader/', 'Lib/', 'Effect/', 'Layout/'))
+                  and f.endswith(('.zs', '.bnsh', '_nvn2_shader.bin')))
+
+
 def write_corpus(path, shaders):
     tmp = Path(str(path) + '.partial')
     with open(tmp, 'wb') as f:
@@ -343,6 +353,8 @@ def write_corpus(path, shaders):
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--romfs', type=Path, required=True)
+    p.add_argument('--extra-romfs', type=Path, action='append', default=[],
+                   help="an add-on pack's packed RomFS: its Nintendo shaders too (Bananza's add-on: 648 shaders the game has not)")
     p.add_argument('--modules', type=Path, nargs='+', required=True, help='the game modules as ELF files (extracted/<v>/elf/*.elf)')
     p.add_argument('--out', type=Path, required=True)
     p.add_argument('--jobs', type=int, default=os.cpu_count() or 4)
@@ -357,14 +369,14 @@ def main():
     src = Source(a.romfs)
     rdbs = sorted(f for f in src.files if f.endswith(('.fdata', '.file')))
     link = ('LI_C0_R.IDX', 'LD_C0_R.BIN') if {'LI_C0_R.IDX', 'LD_C0_R.BIN'} <= src.files.keys() else None
-    nintendo = sorted(f for f in src.files if f.startswith(('Shader/', 'Lib/', 'Effect/', 'Layout/'))
-                      and f.endswith(('.zs', '.bnsh', '_nvn2_shader.bin')))
+    nintendo = nintendo_files(src)
     if not rdbs and not link and not nintendo:
         sys.exit(f'[RED] {a.romfs}: no RDB data files and no LINKDATA: not a Koei Tecmo RomFS this script reads')
     shaders, per_source, failed, startup = {}, {}, [], set()
     with concurrent.futures.ProcessPoolExecutor(a.jobs) as ex:
         jobs = [ex.submit(scan_module, m) for m in a.modules] + [ex.submit(scan_rdb, a.romfs, f) for f in rdbs]
         jobs += [ex.submit(scan_nintendo, a.romfs, f) for f in nintendo]
+        jobs += [ex.submit(scan_nintendo, extra, f) for extra in a.extra_romfs for f in nintendo_files(Source(extra))]
         if link:
             jobs.append(ex.submit(scan_linkdata, a.romfs, *link))
         for j in concurrent.futures.as_completed(jobs):

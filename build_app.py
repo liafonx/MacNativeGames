@@ -1048,7 +1048,7 @@ def step_data(tree, game, keys, logs, *, firmware=None, shared_fonts=None, mod=N
         if romfs.exists():
             shutil.rmtree(romfs)
         run([py, 'scripts/extract_romfs.py', '--keys', keys], logs / 'extract_romfs.log', cwd=tree)
-        r = json.loads(index.read_text())
+        r = json.loads((romfs / 'index.json').read_text())
         check('RomFS', r['romfs_sha256'], EXPECTED['romfs']['sha256'])
     fonts = tree / 'extracted/firmware/shared-fonts'
     if not fonts_valid(fonts):
@@ -1564,7 +1564,7 @@ def make_game_data(tree, version, logs, env):
     steps, so no make is needed (tests/test_prebuilt.py checks them against the Makefile for every version)."""
     py = tree / '.venv/bin/python'
     steps = [('prepare_runtime.py',), ('prepare_romfs_backend.py',), ('prepare_shared_fonts.py',)]
-    if 'aoc-config.txt' in game_data_files(version):   # the add-on content volumes, none given or not
+    if 'aoc-config.txt' in game_data_files(version) + game_data_optional(version):   # the add-on content volumes, none given or not
         steps.append(('prepare_romfs_backend.py', '--aoc'))
     for script, *extra in steps:
         log = logs / f'game-data-{script[:-3]}{"".join(extra).replace("--", "-")}.log'
@@ -1762,6 +1762,12 @@ def game_data_files(version):
         (('process.txt',) if ns2_game(version) else ())   # GAME_NS2 reads the NPDM's system resource size (runtime/services.c)
 
 
+def game_data_optional(version):
+    """Game data files an app may lack: Bananza's add-on configuration, which an app packed before 2026-11-23 does not have
+    (runtime/aoc_romfs.c then lists no add-on), so its express update still needs no full rebuild."""
+    return ('aoc-config.txt',) if version == 'dkb' else ()
+
+
 def place_game_data(tree, res, version):
     """build/game-data/<version>: what the runtime reads from the player's files at start instead of having it compiled in
     (module tables, RomFS / add-on content / font sizes and hashes; games/totk/runtime/game_data.h), at the same place in
@@ -1770,7 +1776,7 @@ def place_game_data(tree, res, version):
     missing = [name for name in game_data_files(version) if not (data / name).is_file()]
     if missing:
         raise BuildError(f'{data}: {", ".join(missing)} missing (games/totk/Makefile game-data-{version})')
-    for name in game_data_files(version):
+    for name in game_data_files(version) + tuple(n for n in game_data_optional(version) if (data / n).is_file()):
         clone(data / name, dst / name)
 
 
@@ -2393,13 +2399,14 @@ def default_work(out, game):
     return base / WORK_FOLDERS / game, f'{WORK_FOLDERS}/{game} beside the folder of the app'
 
 
-def recorded_work_folder(app, name):
+def recorded_work_folder(app, name, volumes=Path('/Volumes'), mounted=os.path.ismount):
     """The work folder of an update run without --work, and why: the one the app records (record_update_source), so the
     update reuses the files of the build that made the app. Only an app that records none (built before 31 October 2026)
     falls back to <name> next to the app. A recorded folder that was deleted is made again where it was: an app that
-    carries its game data needs none of its old files, and one that does says so later (game_data). A recorded folder
-    whose parent is gone too (a disk not connected, a volume deleted) is an error naming both ways out, never a new
-    folder next to the app. 2026-11-11: the fallback was the only default, and an update of an app built with --work
+    carries its game data needs none of its old files, and one that does says so later (game_data); so is one deleted
+    together with the folder it was in, while its disk is connected. A recorded folder on a volume that is not mounted
+    (a disk not connected, a volume deleted) is an error naming both ways out, never a new folder next to the app and
+    never a folder made under the volume's name on the system disk. 2026-11-11: the fallback was the only default, and an update of an app built with --work
     made a second 2.2 GB work folder in the folder that holds the apps, which the updated app then recorded."""
     app = Path(app)
     try:
@@ -2412,9 +2419,18 @@ def recorded_work_folder(app, name):
             return Path(recorded).resolve(), 'recorded by the app'
         if Path(recorded).parent.is_dir():
             return Path(recorded), 'recorded by the app; it was deleted, so it is made again there'
-        raise BuildError(f'the work folder {app.name} records, {recorded}, cannot be found, nor the folder it was in (a disk '
-                         f'that is not connected, or a folder moved or deleted): connect that disk and run the same command '
-                         f'again, or pass --work <a folder of your choice> (docs/install.md, Folders); the app then records it')
+        # The folder it was in is gone too. On a disk that is connected that is only a larger deletion, and the folder is
+        # made again where it was (2026-11-25: /Volumes/mac-win/app/build/oot, deleted with build/ while the disk stayed
+        # connected, was taken for a disk that is not connected and the Launcher could not update the game). Only a
+        # path on a volume that is not mounted is the error: making it would put a folder on the system disk under the
+        # volume's name.
+        parts = Path(recorded).parts[:len(Path(volumes).parts) + 1]
+        volume = Path(*parts) if len(parts) > len(Path(volumes).parts) and Path(*parts[:-1]) == Path(volumes) else None
+        if volume is None or mounted(volume):
+            return Path(recorded), 'recorded by the app; it and the folder it was in were deleted, so it is made again there'
+        raise BuildError(f'the work folder {app.name} records, {recorded}, cannot be found, nor the folder it was in: it is on '
+                         f'{volume}, a disk that is not connected: connect that disk and run the same command again, or pass '
+                         f'--work <a folder of your choice> (docs/install.md, Folders); the app then records it')
     return fallback, f'the app records no work folder; using {name} next to the app'
 
 
@@ -2997,6 +3013,69 @@ def ns2_dump_exefs(dump, update=None):
     return (found[-1] if found else dump / 'base') / 'exefs'
 
 
+def ns2_source_title(source):
+    """The application a Switch 2 source holds: a .nup's package table, a dump folder's NPDM; None when it has neither."""
+    if source.is_file():
+        from tools import nup_title
+        return nup_title.read(source)[0]
+    exefs = ns2_dump_exefs(source)
+    return npdm_program_id(exefs / 'main.npdm') if (exefs / 'main.npdm').is_file() else None
+
+
+def ns2_source_args(source):
+    """What import_dump.py needs for this source: the .nup reader, which the work folder (a copy of games/totk) does not hold."""
+    return ['--nup-lib', REPO / 'games/oot/third_party/nup'] if source.is_file() else []
+
+
+def step_aoc_ns2(tree, source, g, logs):
+    """The add-on content of a Switch 2 game, from its .nup or its dump folder's dlc/, into extracted/<version>/aoc/<index>
+    for runtime/aoc_romfs.c. A pack goes in only when it is the one this version pins; any other leaves the build going
+    without it, as a dump folder's dlc/ was ignored before 2026-11-23. A pack the source no longer holds is removed."""
+    v = g['version']
+    pins = VERSIONS[v].get('aoc') or {}
+    if not pins:
+        return
+    py, aoc = tree / '.venv/bin/python', tree / f'extracted/{v}/aoc'
+    title = next(t for t, x in NS2.items() if x['version'] == v)
+    source_args = [*ns2_source_args(source), '--title', title]
+    log = logs / f'addons-{v}.log'
+    run([py, 'scripts/import_dump.py', source, '--list-addons', *source_args], log, cwd=tree)
+    held = (last_json(log) or {}).get('addons', {})
+    staging, keep = aoc.with_name('aoc-import'), set()
+    for index, pack in sorted(held.items()):
+        pin = pins.get(index)
+        if pin is None or pack['title_id'] != pin['title_id']:
+            say(f'2/4 data: add-on content {pack["title_id"]} is not a pack of this version: left out')
+        elif dlc_pack_valid(aoc / index, pin):
+            keep.add(index)
+        elif ns2_import_addon(py, tree, source, source_args, index, pin, aoc, staging, logs / f'addon-{v}-{index}.log'):
+            keep.add(index)
+    stale = [p for p in aoc.iterdir() if p.name not in keep] if aoc.is_dir() else []
+    for p in stale:
+        shutil.rmtree(p) if p.is_dir() else p.unlink()
+    if stale:   # the Makefile only sees packs that appear, so the old mask goes with the pack
+        (tree / 'build/game-data' / v / 'aoc-config.txt').unlink(missing_ok=True)
+
+
+def ns2_import_addon(py, tree, source, source_args, index, pin, aoc, staging, log):
+    """One add-on pack through staging into aoc/<index>; False (and said) when it is not the pinned one."""
+    say(f'2/4 data: importing the add-on content {pin["title_id"]} ({pin["size"] / 2**30:.1f} GB)')
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        run([py, 'scripts/import_dump.py', source, '--addons', staging, '--only', index, *source_args], log, cwd=tree)
+        report = json.loads((staging / index / 'index.json').read_text())
+        if report['romfs_sha256'] != pin['sha256'] or report['romfs_size'] != pin['size']:
+            say(f'2/4 data: add-on content {pin["title_id"]} is not the verified one '
+                f'(SHA-256 {report["romfs_sha256"][:12]}…): the app is built without it')
+            return False
+        shutil.rmtree(aoc / index, ignore_errors=True)
+        aoc.mkdir(parents=True, exist_ok=True)
+        (staging / index).rename(aoc / index)
+        return True
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def step_code_ns2(tree, dump, g, env, logs, app=None):
     """The dump's ExeFS and RomFS into the work folder (import_dump.py), checked against the verified values, and the code
     rewritten for Apple silicon as for Tears of the Kingdom, the result checked against the verified rewrite."""
@@ -3014,11 +3093,11 @@ def step_code_ns2(tree, dump, g, env, logs, app=None):
     if not imported() and not adopt_game_data(
             tree, app, v, romfs, logs, index=lambda image, digest, source: [
                 py, 'scripts/import_dump.py', dump, '--output', tree / f'extracted/{v}', '--update', g['update'],
-                '--adopted-image', source, '--sha256', digest, '--romfs-output', image.parent]):
+                *ns2_source_args(dump), '--adopted-image', source, '--sha256', digest, '--romfs-output', image.parent]):
         say(f'1/4 code: importing the dump (its code and the {expected["romfs"]["size"] / 2**30:.1f} GB of game data; a few minutes)'
             + ('' if romfs_mismatch(romfs, expected) is None else f': {romfs_mismatch(romfs, expected)}'))
-        run([py, 'scripts/import_dump.py', dump, '--output', tree / f'extracted/{v}', '--update', g['update']],
-            logs / f'import_dump-{v}.log', cwd=tree)
+        run([py, 'scripts/import_dump.py', dump, '--output', tree / f'extracted/{v}', '--update', g['update'],
+             *ns2_source_args(dump)], logs / f'import_dump-{v}.log', cwd=tree)
     for n, h in expected['exefs_sha256'].items():
         if not (exefs / n).is_file():
             raise BuildError(f'ExeFS {n} is missing from the dump; not the supported version')
@@ -3101,7 +3180,7 @@ def record_ns2_device_build(tree, out, g, args):
                   source_sha256={str(p.relative_to(tree)): sha256(p) for p in sorted(sources) if p.is_file()},
                   output_sha256={str(p): sha256(p) for p in sorted(set(outputs))})
     icon_spec = g['folder'] / 'assets/app-icon.json'
-    if icon_spec.is_file():
+    if icon_spec.is_file() and (tree / 'build/AppIcon.icns').is_file():
         record['app_icon'] = dict(source=json.loads(icon_spec.read_text()), source_spec_sha256=sha256(icon_spec),
                                   icns_sha256=sha256(tree / 'build/AppIcon.icns'))
     out.with_name(out.stem + '-build-record.json').write_text(json.dumps(record, indent=2) + '\n')
@@ -3140,15 +3219,14 @@ def main_ns2(args, dump):
     device_app = args.platform == 'ios'
     if args.update or args.dlc or args.mod:
         raise BuildError('a Switch 2 dump folder holds its update itself: leave out --update, --dlc and --mod')
-    exefs = ns2_dump_exefs(dump)
-    title = npdm_program_id(exefs / 'main.npdm') if (exefs / 'main.npdm').is_file() else None
+    title = ns2_source_title(dump)
     if title == '0400486024DEC000':
         return build_oot(args, dump)
     g = NS2.get(title or '')
     if not g:
-        raise BuildError(f'{dump}: not a supported Switch 2 dump (title {title or "unknown"} in {exefs}); supported: '
+        raise BuildError(f'{dump}: not a supported Switch 2 dump (title {title or "unknown"}); supported: '
                          + ', '.join(f'{APPS[x["version"]][0]} ({t}, update {x["update"]})' for t, x in NS2.items()))
-    if not (dump / 'updates' / g['update'] / 'exefs').is_dir():
+    if dump.is_dir() and not (dump / 'updates' / g['update'] / 'exefs').is_dir():
         raise BuildError(f'{dump}: needs updates/{g["update"]} ({VERSIONS[g["version"]]["display_version"]}); this dump has '
                          + ', '.join(p.name for p in sorted((dump / 'updates').glob('*'))) if (dump / 'updates').is_dir() else 'no updates/')
     v = g['version']; app_name, bundle_id, executable = APPS[v]
@@ -3165,6 +3243,7 @@ def main_ns2(args, dump):
     say(f'{app_name} {VERSIONS[v]["display_version"]} from {dump}; work folder {work} ({why})')
     ns2_shared_fonts(tree / 'extracted/firmware/shared-fonts', shared_fonts)
     step_code_ns2(tree, dump, g, env, logs, app=out if out.suffix == '.app' else None)
+    step_aoc_ns2(tree, dump, g, logs)
     if v == 'dkb':
         for size in ('2560x1440', '3840x2160'):
             run([py, 'scripts/make_output_res_overlay.py', size, '--version', v],
@@ -3172,8 +3251,11 @@ def main_ns2(args, dump):
     icon_spec = g['folder'] / 'assets/app-icon.json'
     if icon_spec.is_file():
         # the work tree's Python: extract_app_icon imports extract_exefs, which needs cryptography (only in the venv)
-        run([tree / '.venv/bin/python', 'scripts/extract_app_icon.py', '--source-spec', icon_spec, '--output', 'build/AppIcon.icns'],
-            logs / 'app_icon.log', cwd=tree, env=env)
+        try:   # optional, as the icon from control data: a pinned image gone from the store (#2401) only costs the icon
+            run([tree / '.venv/bin/python', 'scripts/extract_app_icon.py', '--source-spec', icon_spec, '--output', 'build/AppIcon.icns'],
+                logs / 'app_icon.log', cwd=tree, env=env)
+        except BuildError as e:
+            say(f'   no app icon, the app gets the default one ({str(e).splitlines()[0]})')
     say('2/4 data and 4/4 binary: building the game binary, its tables and the launcher')
     step_binary(tree, None, None, {**env, 'SHADER_LIST': f'../{g["folder"].name}/assets/shader_list.tsv'}, logs, version=v)
     step_shaders_ns2(tree, g, logs)
@@ -3590,10 +3672,28 @@ def build_oot(args, source):
                            shader_chain=shader_chain), args)
 
 
+def check_nup(source):
+    """The game of a .nup, from its package table (#2333); only Ocarina of Time 2.0.0 and Bananza 3.2.0 are built from one."""
+    from tools import nup_title
+    try:
+        title, versions = nup_title.read(source)
+    except nup_title.READ_ERRORS as e:
+        raise BuildError(f'{source.name}: cannot read this .nup: {e}') from e
+    if not nup_title.builds(title, versions):
+        have = ', '.join(nup_title.version_name(v, title) for v in versions)
+        raise BuildError(f'{source.name}: title {title} version {have}; only Ocarina of Time '
+                         f'{nup_title.version_name(nup_title.OOT_VERSION)} and Donkey Kong Bananza 3.2.0 '
+                         f'(v{nup_title.BANANZA_VERSION}) are built from a .nup')
+    return title
+
+
 def main(argv):
     args = parse_args(argv)
     if args.game.suffix.lower() == '.nup':
-        return build_oot(args, args.game.expanduser().resolve())
+        from tools import nup_title
+        source = args.game.expanduser().resolve()
+        title = check_nup(source)
+        return build_oot(args, source) if title == nup_title.OOT_TITLE else main_ns2(args, source)
     if args.game.expanduser().is_dir():   # a Switch 2 dump folder
         return main_ns2(args, args.game.expanduser().resolve())
     if not args.keys:

@@ -4,7 +4,8 @@
 
 Every download a build script can make must be in the store (offline_pack's lists, read from the code that downloads),
 or be listed below with why a player's build never makes it. The proof that nothing is downloaded is offline_pack.py
-check under storage_guard.py run --offline (the release runs it); these tests keep the lists honest without a network."""
+check, which denies the network itself (tests/test_offline_check_network.py; the release runs it; until 2026-11-25 it ran
+under the retired storage guard's --offline); these tests keep the lists honest without a network."""
 import ast
 import json
 import os
@@ -200,12 +201,21 @@ class Environment(unittest.TestCase):
     def test_pip_and_git_point_at_the_store(self):
         env = offline.environment(self.store, {'PATH': '/usr/bin'})
         self.assertEqual(env['PIP_NO_INDEX'], '1')
-        self.assertEqual(env['PIP_FIND_LINKS'], str(self.store / 'wheels'))
+        self.assertEqual(env['PIP_FIND_LINKS'], (self.store / 'wheels').resolve().as_uri())
         self.assertEqual(env['GIT_CONFIG_COUNT'], '1')
         self.assertEqual(env['GIT_CONFIG_KEY_0'], f'url.{self.store / "git/a-b.git"}.insteadOf')
         self.assertEqual(env['GIT_CONFIG_VALUE_0'], 'https://github.com/a/b.git')
         self.assertNotIn('RestoreSources', env)   # nothing is restored: no SDK, the programs come built
         self.assertEqual(env['MNG_OFFLINE_STORE'], str(self.store))
+
+    def test_a_store_path_with_a_space_is_one_pip_location(self):
+        # pip splits PIP_FIND_LINKS at spaces: "…/Application Support/…/wheels" as a path was two locations, both ignored
+        store = self.store / 'Application Support' / 'offline'
+        store.mkdir(parents=True)
+        shutil.copy(self.store / 'manifest.json', store)
+        links = offline.environment(store, {})['PIP_FIND_LINKS']
+        self.assertEqual(links.split(), [links])
+        self.assertTrue(links.startswith('file:///') and links.endswith('Application%20Support/offline/wheels'), links)
 
     def test_no_store_named_changes_nothing(self):
         with mock.patch.dict(os.environ, {}, clear=False):

@@ -50,7 +50,7 @@ class PhoneScene(unittest.TestCase):
         for slot in (docked, handheld):
             self.assertNotIn(slot, taken)
         self.assertNotEqual(docked, handheld)
-        slots = dict(re.findall(r'enum \{ (\w+_SLOT) = (0x[0-9a-f]+|\d+) \}', self.text))   # a slot named by a constant (ARROW_SLOT, the arrow mod)
+        slots = dict(re.findall(r'enum \{ (\w+_SLOT) = (0x[0-9a-f]+|\d+) \}', self.text))   # a slot named by a constant
         for found in re.findall(r'\(page \+ (\w+)\)', self.text):
             self.assertIn(int(slots.get(found, found), 0), taken | {docked, handheld} | {int(v, 0) for v in slots.values()}, f'a page slot nobody listed: +{found}')
         for name, value in slots.items():

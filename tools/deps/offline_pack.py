@@ -3,7 +3,7 @@ would download, so a player needs no network (user 2026-11-20; most players are 
 
     python3 -m tools.deps.offline_pack build <store>   at a release, online: fills <store> (files/, wheels/, git/,
                                                        sources/, manifest.json); what this Mac already has is reused
-    python3 -m tools.deps.offline_pack check <store>   with the network off (storage_guard.py run --offline): from an
+    python3 -m tools.deps.offline_pack check <store>   with the network off (denied by check itself, NO_NETWORK): from an
                                                        empty deps cache, takes every item from the store and makes it;
                                                        records the manifest it passed for in <store>/.checked.json
 A release (MNG-Launcher make_app.py) carries a store only when `check` passed for its very manifest (checked()), so
@@ -18,10 +18,12 @@ The manifest has no date, so building again with nothing new leaves it (and the 
 Python 3.10 or later (run it with the build's Python 3.14)."""
 import argparse
 import ast
+import errno
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -44,6 +46,30 @@ PLATFORM = 'macosx_14_0_arm64'
 # GPL code the store carries as a program: its source goes beside it (sources/)
 GPL_SOURCES = ('zbic==1.0.1.post1',)
 CHECKED = '.checked.json'   # check's record: the manifest it passed for, with the network off
+# The check denies the network itself (user 2026-11-25 chose this when the storage guard was retired; until then a
+# person had to run it under that guard's --offline, it wrote its record with the network on just the same, and a Mac
+# where the guard refuses every command could not make a release). The rule is the guard's: every outbound connection
+# but this Mac's loopback. macOS's sandbox-exec applies it to check and everything check starts.
+SANDBOX = '/usr/bin/sandbox-exec'
+NO_NETWORK = ('(version 1)\n(allow default)\n(deny network-outbound (remote ip))\n'
+              '(allow network-outbound (remote ip "localhost:*"))')
+INSIDE = 'MNG_OFFLINE_CHECK_NO_NETWORK'   # set for the run under NO_NETWORK; the proof is network_denied(), not this
+PROBE = ('192.0.2.1', 443)   # TEST-NET-1, an address no host has: nothing is contacted when the network is on
+
+
+def network_denied(connect=None):
+    """True when an outbound connection is refused by the system (EPERM, what NO_NETWORK does). An address that cannot be
+    reached, a timeout or a connection that succeeds is not that: no Wi-Fi proves nothing about a build."""
+    connect = connect or (lambda: socket.create_connection(PROBE, timeout=2).close())
+    try:
+        connect()
+    except OSError as error:
+        return isinstance(error, PermissionError) or error.errno == errno.EPERM
+    return False
+
+
+def without_network(argv):
+    return [SANDBOX, '-p', NO_NETWORK, *map(str, argv)]
 
 
 def constant(path, name):
@@ -235,20 +261,62 @@ def digest_of_files(paths):
     return h.hexdigest()
 
 
+CARRIED = REPO / 'tools/deps/carried_built.json'   # the built files every release carries (Launcher 1.1.4's)
+REMAKE_ENV = 'MNG_REMAKE_BUILT'   # =1: make built/ again, to record new files in CARRIED (a pin changed)
+
+
+def carried_built():
+    return json.loads(CARRIED.read_text())['built']
+
+
+def built_problems(folder):
+    """What keeps built/ (folder) from a release: files other than CARRIED's, or a program or library that needs a
+    macOS newer than tools/deps MACOS_MIN (tools/macho_minos.py), or a libvpx without its arm64 code."""
+    from tools.deps import MACOS_MIN
+    sys.path.insert(0, str(REPO / 'tools'))
+    try:
+        import macho_minos
+    finally:
+        sys.path.remove(str(REPO / 'tools'))
+    problems = [f'{m}  {what}' for what, m in macho_minos.too_new([folder], MACOS_MIN)] if folder.is_dir() else []
+    for vpx in folder.glob('libvpx-*/lib/libvpx.a'):
+        members = '\n'.join(what for what, _ in macho_minos.scan(vpx))
+        if 'aarch64_cpudetect' not in members or '_neon' not in members:
+            problems.append(f'{vpx}: no NEON code (configure fell back to generic-gnu)')
+    carried = carried_built()
+    have = {f: offline.tree_files(folder / f) for f in carried if (folder / f).is_dir()}
+    for f, files in carried.items():
+        if have.get(f) != files:
+            problems.append(f'built/{f}: not the files tools/deps/carried_built.json records')
+    problems += [f'built/{p.name}: not in tools/deps/carried_built.json' for p in folder.iterdir()
+                 if p.is_dir() and p.name not in carried] if folder.is_dir() else []
+    return problems
+
+
 def build_built(store, old):
-    """({folder: {file: SHA-256}}, recipe digest): each of built_names() as tools/deps makes it on any Mac (prefix()),
-    copied into built/<its cache folder> with its licences (licences/). Made in an empty deps cache, so this Mac's
-    older builds are never taken; kept from the last store when the recipes (RECIPES) are the same and its files are
-    intact, so building the store again changes nothing (a compile is not byte for byte the same twice)."""
+    """({folder: {file: SHA-256}}, recipe digest): built/ holds exactly the files tools/deps/carried_built.json records
+    (Launcher 1.1.4's), whatever this Mac is; anything else stops the release (user 2026-11-26: "除了 代码 一切不能和
+    1.1.4 保持不变", "哪怕我用这个新机器打包 26依然支持"). Put them back from keep/launcher-release/offline-store or from the
+    launcher-v1.1.4 release's offline.tar. Only MNG_REMAKE_BUILT=1 makes them again (a pin changed): each of
+    built_names() as tools/deps makes it (prefix(), libraries for MACOS_MIN) in an empty deps cache, copied into
+    built/<its cache folder> with its licences, and the build then stops, naming the files to record in CARRIED with why
+    and whether it was necessary."""
     from tools.deps import _folder
     folder = store / 'built'
     folder.mkdir(exist_ok=True)
     recipes = recipe_digest()
     wanted = {_folder(name): name for name in built_names()}
-    kept = old.get('built') or {}
-    if old.get('built_recipes') == recipes and set(kept) == set(wanted) and all(
-            (folder / f).is_dir() and offline.tree_files(folder / f) == files for f, files in kept.items()):
-        say(f'built {", ".join(sorted(kept))}: kept (same recipes {recipes[:12]})')
+    if set(wanted) != set(carried_built()):
+        raise RuntimeError(f'tools/deps/carried_built.json records {sorted(carried_built())}, the store carries built '
+                           f'{sorted(wanted)}: record what changed (why, necessary) first')
+    if os.environ.get(REMAKE_ENV) != '1':
+        problems = built_problems(folder)
+        if problems:
+            raise RuntimeError('the store\'s built/ is not what every release carries:\n  ' + '\n  '.join(problems[:20])
+                               + '\nput Launcher 1.1.4\'s back (keep/launcher-release/offline-store/built, or built/ of '
+                               'the launcher-v1.1.4 release\'s Resources/offline.tar)')
+        kept = carried_built()
+        say(f'built {", ".join(sorted(kept))}: the recorded copies (tools/deps/carried_built.json)')
         return kept, recipes
     out = {}
     with tempfile.TemporaryDirectory() as t:
@@ -277,7 +345,11 @@ def build_built(store, old):
     for stale in folder.iterdir():
         if stale.name not in out:
             shutil.rmtree(stale)
-    return out, recipes
+    problems = [p for p in built_problems(folder) if 'carried_built.json' not in p]
+    raise RuntimeError(f'built/ made again ({REMAKE_ENV}=1)' + (':\n  ' + '\n  '.join(problems) if problems else '')
+                       + '\nto carry these, record them in tools/deps/carried_built.json (built = the store manifest\'s '
+                       '"built" below, a history entry with why / necessary / evidence) and ask the user:\n'
+                       + json.dumps(out, indent=1, sort_keys=True)[:4000])
 
 
 def build(store, python):
@@ -306,6 +378,9 @@ def build(store, python):
 def check(store, python):
     """Every item from the store alone, in an empty deps cache: raises on the first one that is missing."""
     store = store.resolve()
+    if not network_denied():
+        raise RuntimeError('the check proves nothing with the network on: run `python3 -m tools.deps.offline_pack check '
+                           '<store>`, which denies the network itself')
     with tempfile.TemporaryDirectory() as t:
         tmp = Path(t)
         env = offline.environment(store, dict(os.environ, MNG_DEPS_CACHE=str(tmp / 'cache')))
@@ -388,8 +463,12 @@ def main(argv):
     ap.add_argument('store', type=Path)
     ap.add_argument('--python', default=sys.executable, help='a Python 3.14 with pip (default: this one)')
     a = ap.parse_args(argv)
+    store = a.store.expanduser().resolve()
+    if a.action == 'check' and os.environ.get(INSIDE) != '1':   # again, with the network denied
+        return subprocess.call(without_network([sys.executable, '-B', '-m', 'tools.deps.offline_pack', 'check', store,
+                                                '--python', a.python]), env=dict(os.environ, **{INSIDE: '1'}), cwd=REPO)
     try:
-        (build if a.action == 'build' else check)(a.store.expanduser().resolve(), a.python)
+        (build if a.action == 'build' else check)(store, a.python)
     except (RuntimeError, OSError, KeyError, ValueError, subprocess.TimeoutExpired) as e:
         print(f'[offline] FAILED: {e}', file=sys.stderr)
         return 1

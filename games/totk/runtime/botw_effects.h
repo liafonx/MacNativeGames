@@ -7,8 +7,10 @@
    shaders are the patched ones, the grass blades (1.9.0: their own fragment / vertex shader pair; 1.6.0: its own keys), volumetric
    fog (shader keys for this game; fog has no draw of its own and stays fixed), and, on 1.9.0, the sun's
    shadows, which are an Off choice in their row (settings_botw_shadow_row), as on 1.4.3. 1.6.0's shadow row has the sizes only.
-   FXAA and sharpening are 1.4.3's rows and files (graphics-fxaa.txt, graphics-sharpen.txt) acting around this game's
-   FXAA / upscale draw (gfx/nvn/botw_finish.h); while MetalFX replaces that draw the FXAA row says so instead.
+   Anti-aliasing and sharpening are 1.4.3's rows and files (graphics-aa-method.txt, graphics-fxaa-quality.txt,
+   graphics-smaa-quality.txt; an older graphics-fxaa.txt "off" still reads as Off; graphics-sharpen.txt) acting around
+   this game's FXAA / upscale draw (gfx/nvn/botw_finish.h); while MetalFX replaces that draw the anti-aliasing rows say
+   so instead.
    The model detail distance, the render distance and the depth of field are 1.4.3's rows and files too
    (graphics-lod.txt, graphics-far.txt, graphics-dof.txt; game_patches_botw.c, botw_view_patches.h), on both versions
    (the tables differ); a row whose code is not as shipped shows "Not in this version" (runtime_*_available() is false);
@@ -19,6 +21,11 @@ void dm_gfx_fxaa_set(int on); int dm_gfx_fxaa_on(void); void dm_gfx_sharpen_set(
 int dm_gfx_botw_fxaa_replaced(void);   /* gfx/nvn/botw_finish.h */
 #define SETTINGS_LOD_MAX 1e6   /* "Always the finest": a factor no distance in the map reaches (graphics-lod.txt "max") */
 
+static void settings_aa_save(void) {   /* as 1.4.3's (settings_game.h) */
+ settings_save_int("graphics-fxaa-quality.txt",dm_gfx_fxaa_quality(),"FXAA quality");
+ settings_save_int("graphics-smaa-quality.txt",dm_gfx_smaa_quality(),"SMAA quality");
+ settings_save_int("graphics-aa-method.txt",dm_gfx_aa_method(),"anti-aliasing method");
+}
 static void settings_effects_save(void) {
  char line[512]="";size_t n=0;
  for(int i=0;i<dm_gfx_fx_count();i++)if(!dm_gfx_fx_on(i))n+=(size_t)snprintf(line+n,sizeof line-n,"%s%s",n?" ":"",dm_gfx_fx_id(i));
@@ -32,7 +39,14 @@ static void settings_effects_restore(void) {
   for(char *w=strtok(line," \t\r\n");w;w=strtok(NULL," \t\r\n"))
    for(int i=0;i<dm_gfx_fx_count();i++)if(!strcmp(w,dm_gfx_fx_id(i)))dm_gfx_fx_set(i,0);
  char word[16];double pct;
+ /* As 1.4.3 reads them: the older FXAA switch first, then the method, which decides when its file is there. */
  if(runtime_setting_word("graphics-fxaa.txt",word,sizeof word)&&!strncmp(word,"off",3))dm_gfx_fxaa_set(0);
+ int method,sq;
+ if(settings_read_int("graphics-aa-method.txt",&method)&&method>=0&&method<=2){
+  if(settings_read_int("graphics-fxaa-quality.txt",&sq)&&sq>=0&&sq<=1)dm_gfx_fxaa_quality_set(sq);
+  if(settings_read_int("graphics-smaa-quality.txt",&sq)&&sq>=0&&sq<=3)dm_gfx_smaa_quality_set(sq);
+  dm_gfx_aa_method_set(method);
+ }
  if(settings_read_number("graphics-sharpen.txt",0,100,&pct))dm_gfx_sharpen_set((int)pct);   /* as 1.4.3 reads it */
  if(!runtime_lod_scale_locked()){   /* as 1.4.3 reads them; the render distance's file, in percent, is taken from 10 (0.1x) to 150 (1.5x) */
   if(runtime_setting_word("graphics-lod.txt",word,sizeof word)&&!strncmp(word,"max",3))runtime_lod_scale_set(SETTINGS_LOD_MAX);
@@ -41,15 +55,16 @@ static void settings_effects_restore(void) {
  if(!runtime_far_scale_locked()&&settings_read_number("graphics-far.txt",10,150,&pct))runtime_far_scale_set(pct/100);
  if(runtime_setting_word("graphics-dof.txt",word,sizeof word)&&!strncmp(word,"off",3))runtime_dof_set(0);
 }
-/* The page's "Reset to defaults": every switch on, FXAA on, no sharpening, the distances 1x, depth of field on, and
-   their files removed (a distance the environment decides stays). */
+/* The page's "Reset to defaults": every switch on, the game's FXAA (1.4.3's defaults: FXAA Original, SMAA High), no
+   sharpening, the distances 1x, depth of field on, and their files removed (a distance the environment decides stays). */
 static void settings_botw_effects_reset(void) {
  for(int i=0;i<dm_gfx_fx_count();i++)if(!dm_gfx_fx_on(i))dm_gfx_fx_set(i,1);
- dm_gfx_fxaa_set(1);dm_gfx_sharpen_set(0);
+ dm_gfx_fxaa_quality_set(0);dm_gfx_aa_method_set(1);dm_gfx_smaa_quality_set(2);dm_gfx_sharpen_set(0);
  if(runtime_lod_available()&&!runtime_lod_scale_locked()){runtime_lod_scale_set(1);runtime_setting_remove("graphics-lod.txt");}
  if(runtime_far_available()&&!runtime_far_scale_locked()){runtime_far_scale_set(1);runtime_setting_remove("graphics-far.txt");}
  if(runtime_dof_available()){runtime_dof_set(1);runtime_setting_remove("graphics-dof.txt");}
- for(const char *const *f=(const char *const[]){"graphics-effects.txt","graphics-fxaa.txt","graphics-sharpen.txt",NULL};*f;f++)runtime_setting_remove(*f);
+ for(const char *const *f=(const char *const[]){"graphics-effects.txt","graphics-fxaa.txt","graphics-aa-method.txt","graphics-fxaa-quality.txt",
+  "graphics-smaa-quality.txt","graphics-sharpen.txt",NULL};*f;f++)runtime_setting_remove(*f);
 }
 /* The sun shadows' row (settings_botw_shadow_row in settings_panel.h names it): off, the game's sizes or 2048 per cascade.
    The sizes are the next launch's (botw_shadow_res.h); off is the effect switch "shadow" and acts at once (P9, 2026-11-05:
@@ -101,9 +116,22 @@ static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {
  NSString *none=settings_text("这个版本没有","Not in this version");
  NSMutableArray<TOTKSettingRow *> *rows=[NSMutableArray arrayWithObjects:settings_botw_fov_row(),
   settings_botw_distance_row(1),settings_botw_distance_row(0),settings_botw_shadow_row(),nil];
- NSString *fxaa=settings_text("FXAA 抗锯齿","FXAA anti-aliasing");
- [rows addObject:dm_gfx_botw_fxaa_replaced()?settings_fixed(fxaa,settings_text("MetalFX 取代了它","MetalFX replaces it")):
-  settings_row(fxaa,nil,nil,^int{return dm_gfx_fxaa_on();},^(int v){dm_gfx_fxaa_set(v);runtime_setting_save("graphics-fxaa.txt",v?"on":"off","FXAA");})];
+ /* 1.4.3's anti-aliasing rows: the quality row follows the method (settings_aa_rebuild). */
+ NSString *method=settings_text("抗锯齿方式","Anti-aliasing method"),*quality=settings_text("抗锯齿质量","Anti-aliasing quality");
+ if(dm_gfx_botw_fxaa_replaced()){
+  NSString *mfx=settings_text("MetalFX 取代了它","MetalFX replaces it");
+  [rows addObject:settings_fixed(method,mfx)];
+  if(dm_gfx_aa_method())[rows addObject:settings_fixed(quality,mfx)];
+ }else{
+  [rows addObject:settings_row(method,@[settings_text("关","Off"),@"FXAA",@"SMAA"],@[@0,@1,@2],
+   ^int{return dm_gfx_aa_method();},^(int v){dm_gfx_aa_method_set(v);settings_aa_save();})];
+  if(dm_gfx_aa_method()==1)
+   [rows addObject:settings_row(quality,@[settings_text("原版","Original"),@"Quality"],@[@0,@1],
+    ^int{return dm_gfx_fxaa_quality();},^(int v){dm_gfx_fxaa_quality_set(v);settings_aa_save();})];
+  else if(dm_gfx_aa_method()==2)
+   [rows addObject:settings_row(quality,@[@"Low",@"Medium",@"High",@"Ultra"],@[@0,@1,@2,@3],
+    ^int{return dm_gfx_smaa_quality();},^(int v){dm_gfx_smaa_quality_set(v);settings_aa_save();})];
+ }
  [rows addObject:settings_botw_dof_row()];
  [rows addObject:settings_row(settings_text("锐化","Sharpening"),@[settings_text("关（游戏原样）","Off (as the game has it)"),@"25%",@"50%",@"75%",@"100%"],@[@0,@25,@50,@75,@100],
   ^int{return dm_gfx_sharpen();},^(int v){dm_gfx_sharpen_set(v);settings_save_int("graphics-sharpen.txt",v,"sharpening");})];
@@ -113,6 +141,8 @@ static NSArray<TOTKSettingRow *> *settings_effect_rows(void) {
   if(!dm_gfx_fx_available(i)){[rows addObject:settings_fixed(t,none)];continue;}
   [rows addObject:settings_row(t,nil,nil,^int{return dm_gfx_fx_on(i);},^(int v){dm_gfx_fx_set(i,v);settings_effects_save();})];
  }
- if(totk_hdr_available())settings_hdr_rows(rows);   /* HDR / EDR, as on 1.4.3 (gfx/nvn/totk_hdr_compose.h) */
+#ifdef GAME_BOTW190
+ if(totk_hdr_available())settings_hdr_rows(rows);   /* HDR / EDR: the compose f7ee6fe1's HDR twin (totk_hdr_compose.h) */
+#endif
  return rows;
 }

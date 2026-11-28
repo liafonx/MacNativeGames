@@ -32,8 +32,10 @@ C_TESTS = \
 	agent_slot_limit \
 	agent_slot_limit_oot \
 	hdr_auto \
-	gyro_tilt
-C_TEST_EXTRA_users = games/totk/runtime/account.c -Igames/totk/runtime
+	gyro_tilt \
+	dm_save_override
+C_TEST_EXTRA_users = games/totk/runtime/account.c -Igames/totk/runtime -DTEST_EXTERNAL_SAVE=1   # TotK reads DM_SAVE (tests/test_users.py builds it the same way)
+C_TEST_EXTRA_dm_save_override = games/totk/runtime/fs_host.c games/totk/runtime/account.c -Igames/totk/runtime
 C_TEST_SRC_screenshot_botw = tests/test_screenshot.c
 C_TEST_EXTRA_screenshot_botw = -DGAME_BOTW190
 C_TEST_SRC_agent_slot_limit_oot = tests/test_agent_slot_limit.c

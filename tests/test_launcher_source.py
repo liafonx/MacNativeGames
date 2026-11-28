@@ -2,9 +2,12 @@
 and the code its jobs run. Nothing it carries may read what it leaves out, or a player's build would fail where a
 checkout's works."""
 import ast
+import json
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -52,6 +55,38 @@ class LauncherSource(unittest.TestCase):
         self.assertIn('wonder', self.left_out)
         self.assertNotIn('totk', self.left_out)
 
+    def test_oot_shader_packaging_from_carried_source(self):
+        # Use only files selected by the release pathspecs, in a fresh Python process.
+        sources = {'games/oot/build.py', 'games/oot/scripts/romfs_pin.py', 'games/oot/scripts/seed_image.py',
+                   'tools/port_app/__init__.py', 'tools/port_app/make_path.py'}
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for name in sources.intersection(self.files):
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPO / name, target)
+            seed, libraries, output = (root / name for name in ('seed', 'libraries', 'resources'))
+            seed.mkdir()
+            libraries.mkdir()
+            (seed / ('a' * 64 + '.variants')).write_bytes(b'[]')
+            library = 'b' * 64 + '.metallib'
+            (libraries / library).write_bytes(b'MTLB')
+            (libraries / 'libraries-manifest.json').write_text(json.dumps({'files': [library]}))
+            run = subprocess.run(
+                [sys.executable, '-I', '-B', '-c',
+                 'import runpy, sys\n'
+                 'from pathlib import Path\n'
+                 'pack = runpy.run_path(sys.argv[1])["write_shader_images"]\n'
+                 'print(pack(*map(Path, sys.argv[2:])))',
+                 str(root / 'games/oot/build.py'), str(seed), str(libraries), str(output)],
+                cwd=root, capture_output=True, text=True,
+            )
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertEqual(run.stdout.strip(), '(1, 1)')
+            for name in ('shader-seed.img.000', 'shader-libs.img.000'):
+                with (output / name).open('rb') as part:
+                    self.assertEqual(part.read(8), b'TOTKIMG1')
+
     def test_no_carried_link_points_at_what_is_left_out(self):
         listed = subprocess.run(['git', '-C', str(REPO), 'ls-files', '-s', '--', *launcher_source.pathspecs()],
                                 capture_output=True, text=True, check=True).stdout.splitlines()
@@ -72,6 +107,10 @@ class LauncherSource(unittest.TestCase):
         # the top-level tests/ is named only by the root Makefile (make check, the source gate of a checkout); the
         # games' own tests/ folders are kept
         pattern = re.compile(r'games/(%s)\b|\bwindows_games/' % '|'.join(map(re.escape, self.left_out)))
+        # a path joined onto games/ (HERE.parent / 'by3/third_party/d2r'): the folder's name starts the string. 2026-11-27,
+        # #2413: Odyssey's prepare_runtime.py read Bowser's Fury's relr.py this way, which the pattern above did not see,
+        # and every Launcher build of Odyssey stopped at step 5/8 ("No module named 'relr'")
+        joined = re.compile(r'^(%s)/' % '|'.join(map(re.escape, self.left_out)))
         found = []
         for name in self.files:
             path = REPO / name
@@ -83,7 +122,7 @@ class LauncherSource(unittest.TestCase):
                 except (SyntaxError, UnicodeDecodeError):
                     continue
                 for node in ast.walk(tree):
-                    if isinstance(node, ast.Constant) and isinstance(node.value, str) and pattern.search(node.value):
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str) and (pattern.search(node.value) or joined.match(node.value)):
                         if node.value.strip().startswith(('"""', "'''")) or len(node.value) > 200:   # a docstring
                             continue
                         found.append(f'{name}:{node.lineno} {node.value[:80]!r}')

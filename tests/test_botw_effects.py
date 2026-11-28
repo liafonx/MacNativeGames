@@ -97,10 +97,10 @@ class Page(unittest.TestCase):
     def test_rows_in_the_order_of_143(self):
         rows = branch(PAGE, 'settings_effect_rows(void) {', '\n}\n')
         titles = re.findall(r'settings_text\("[^"]*","([^"]+)"\)|(settings_botw_(?:fov|shadow|dof)_row\(\)|settings_botw_distance_row\([01]\))', rows)
-        self.assertEqual([a or b for a, b in titles][1:9],                 # [0] is "Not in this version"
+        self.assertEqual([a or b for a, b in titles][1:12],                # [0] is "Not in this version"
                          ['settings_botw_fov_row()', 'settings_botw_distance_row(1)', 'settings_botw_distance_row(0)',
-                          'settings_botw_shadow_row()', 'FXAA anti-aliasing', 'MetalFX replaces it', 'settings_botw_dof_row()',
-                          'Sharpening'])
+                          'settings_botw_shadow_row()', 'Anti-aliasing method', 'Anti-aliasing quality', 'MetalFX replaces it',
+                          'Off', 'Original', 'settings_botw_dof_row()', 'Sharpening'])   # 1.4.3's anti-aliasing rows in 1.4.3's place
         self.assertIn('if(!strcmp(dm_gfx_fx_id(i),"shadow"))continue;', rows)
         self.assertIn('if(!dm_gfx_fx_available(i)){[rows addObject:settings_fixed(t,none)];continue;}', rows)
 
@@ -137,7 +137,9 @@ class Page(unittest.TestCase):
         self.assertIn('if(!strcmp(w,dm_gfx_fx_id(i)))dm_gfx_fx_set(i,0);', PAGE)
         reset = branch(PAGE, 'static void settings_botw_effects_reset(void) {', '\n}\n')
         self.assertIn('if(!dm_gfx_fx_on(i))dm_gfx_fx_set(i,1);', reset)
-        self.assertIn('(const char *const[]){"graphics-effects.txt","graphics-fxaa.txt","graphics-sharpen.txt",NULL}', reset)
+        for name in ('graphics-effects.txt', 'graphics-fxaa.txt', 'graphics-aa-method.txt', 'graphics-fxaa-quality.txt',
+                     'graphics-smaa-quality.txt', 'graphics-sharpen.txt'):
+            self.assertIn(f'"{name}"', reset)
         self.assertIn('runtime_setting_remove(*f);', reset)
 
     def test_the_shadow_row_offers_off_where_the_switch_acts(self):

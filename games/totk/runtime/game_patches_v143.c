@@ -20,6 +20,7 @@
 #include "pchtxt.h"
 #include "suit_equip_v143.h"   /* local mod: suit auto-equip */
 #include "font_raster_v143.h"   /* local mod 0026: sharp text (fonts rasterized at the start canvas) */
+#include "../third_party/d2r_gfx/gfx/nvn/mfx_target.h"   /* mfx_target_pack: the fixed MetalFX output size */
 _Static_assert(PAD_V143_ASPECT_LEN == 4 * ASPECT_STUB && PAD_V143_VERT_LEN == 2 * ASPECT_VSTUB, "1.4.3 padding: aspect stub sizes");
 #if !TARGET_OS_IPHONE
 #include <mach/mach.h>
@@ -1868,12 +1869,12 @@ uint64_t runtime_output_res_extra_bytes(void){
    unset: nothing is kept, as before). A start with automatic output sizes restores the saved preset, falling back to
    the largest size that fits the swapchain when necessary. An explicit TOTK_OUTPUT_RES=<w>x<h> starts as it says. */
 static _Atomic int picture_4k_to_5k;
-/* The graphics layer learns it as its flag "mfx_5k_output" (nvn_mtl.m), like mfx_output, instead of calling back here:
+/* The graphics layer learns it as its flag "mfx_target" (nvn_mtl.m, 5120x2880 here, 0 = the window), like mfx_output, instead of calling back here:
    nvn_mtl.m is linked into every game's runtime and only Tears of the Kingdom 1.4.3 has this file, so a reference to a
    function of it left 1.2.1, Breath of the Wild and the Switch 2 games with an undefined symbol (after PR #2240). */
 static void picture_4k_to_5k_set(int on) {
     extern void dm_gfx_set_flag(const char *,int);
-    atomic_store(&picture_4k_to_5k,on!=0);dm_gfx_set_flag("mfx_5k_output",on!=0);
+    atomic_store(&picture_4k_to_5k,on!=0);dm_gfx_set_flag("mfx_target",(int)(on?mfx_target_pack(5120,2880):0));
 }
 static int runtime_metalfx_5k_output(void) { return atomic_load(&picture_4k_to_5k); }
 

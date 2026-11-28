@@ -59,6 +59,9 @@ void runtime_core_back(int *away);
 void runtime_spin_wait(unsigned module, uint64_t head);   // threads.c: a pass of a gated spin wait (loader.c runtime_dispatch)
 void runtime_save_probe(void);
 int runtime_fs_save_busy(void);   /* runtime/fs_host.c: the game is writing save data (window close waits) */
+/* This game's fs_host.c mounts an external launcher's DM_SAVE folder as the save (and DM_SAVE_device as the device
+   save); the shared account.c then opens with that launcher's fixed player 1. A port without this line ignores DM_SAVE. */
+#define RUNTIME_EXTERNAL_SAVE 1
 uint8_t *runtime_module_base(const char *name);   /* runtime/loader.c: "main", "subsdk0", "sdk" (probes) */
 uint64_t runtime_module_permission(uint64_t address,uint64_t size,unsigned permission);
 uint64_t runtime_module_lock_permission(uint64_t address,uint64_t size,unsigned mask,unsigned attribute);
@@ -130,7 +133,7 @@ void runtime_audio_hold(int on);   /* audio_mixer.c: silent output while the fir
 void runtime_game_slot_acquire(const char *mode);   /* runtime/game_slot.c: one game at a time */
 void *runtime_front_override(const char *name);
 int runtime_front_focus(void);
-void runtime_front_hdr_toggle(void);   /* Mac key 8: checked TOTK 1.4.3 HDR / EDR only */
+void runtime_front_hdr_toggle(void);   /* Mac key 8: HDR / EDR, TOTK 1.4.3 and BotW 1.9.0 only */
 void runtime_settings_page(int page);   /* tests (input file "settings <page>"): the panel opened on a page, -1 closed (frontend.m; nothing on the phone) */
 void runtime_settings_toggle(void);   /* key 1 (runtime/input.c): the settings panel opens or closes (frontend.m; nothing on the phone) */
 void fps_overlay_set_hud_mode(int mode);   /* gfx/nvn/fps_overlay.h HUD_MODE_*: the panel's overlay choice */

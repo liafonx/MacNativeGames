@@ -88,18 +88,20 @@ class BotwViewPatches(unittest.TestCase):
         fov = (int(re.search(r'#else\s*#define FOV_SITES 1.*?#define FOV_STUB_SKIP (\d+)u', (RUNTIME / 'botw_fov.h').read_text(), re.S)[1]), 4 * 11)   # the 1.9.0 branch of botw_fov.h
         blend = int(re.search(r'patch_blend_first_step\(m, \(\(m->text_end \+ 15\) & ~15ULL\) \+ (\d+)\);\s*/\* after the FOV stub', SOURCE)[1])
         arrow = int(re.search(r'patch_arrow_gravity\(m, page, \(\(m->text_end \+ 15\) & ~15ULL\) \+ (\d+)\);', SOURCE)[1])
+        sound = int(re.search(r'patch_sound_frame\(m, page, \(\(m->text_end \+ 15\) & ~15ULL\) \+ (\d+)\);', SOURCE)[1])
         vr_camera = int(re.search(r'stub=\(\(m->text_end\+15\)&~15ull\)\+(\d+);', (RUNTIME / 'botw_vr_camera.h').read_text())[1])
         vr_camera_bytes = 4 * len(re.search(r'uint32_t code\[\]=\{(.*?)\};', (RUNTIME / 'botw_vr_camera.h').read_text(), re.S)[1].replace('\n', '').split(','))
         cave_at = int(re.search(r'CAVE_AT = (0x[0-9a-f]+)', SOURCE)[1], 0)
         cave_bytes = 4 * int(re.search(r'g_sensor_cave\[(\d+)\]', SOURCE)[1])
         heap = int(re.search(r'\+ (0x[0-9a-f]+) \+ slot\*16', (RUNTIME / 'botw_heap_patch.h').read_text())[1], 0)
         self.assertTrue(cave_at < heap + 12 and cave_at + cave_bytes > heap)   # the caves overlap the 64-bit heap veneers (native 5K or HD heaps only): the one allowed overlap, noted in botw_view_patches.h
-        spans = [fov, (blend, 4 * 6), (arrow, 4 * 6), (cave_at, cave_bytes)]   # + the sensor caves; the VR camera veneer's room is taken by the model detail distance stub (below)
+        spans = [fov, (blend, 4 * 6), (arrow, 4 * 5), (cave_at, cave_bytes)]   # + the sensor caves; the VR camera veneer's room is taken by the model detail distance stub (below)
         for name, words in (('lod', 4), ('disp', 9), ('dof', 6)):
             skip = int(re.search(rf'view_{name}_guard\[\].*?\}};\n', HEADER, re.S) and
                        re.search(rf'static const view_patch view_{name} = \{{[^;]*?\b0x[0-9a-f]+u, (-?\d+), {words},', HEADER)[1])
             if name == 'lod':
                 self.assertTrue(vr_camera <= skip and skip + 4 * words <= vr_camera + vr_camera_bytes)   # in the VR camera veneer's room: the one allowed overlap besides the heap veneers
+                self.assertTrue(skip + 4 * words <= sound and sound + 4 * 5 <= vr_camera + vr_camera_bytes)   # the sound frame's veneer: also in that room, past the LOD stub (written only without the VR camera, game_patches_botw.c)
             else:
                 spans.append((skip, 4 * words))
         spans.sort()
@@ -125,11 +127,9 @@ class BotwViewPatches(unittest.TestCase):
         # the data page: every other slot the BOTW runtime uses sits below +0x50
         used = [int(n, 0) for n in re.findall(r'\bpage \+ (0x[0-9a-f]+|\d+)\)', SOURCE)]
         self.assertTrue(used and max(used) < 0x50, used)   # +8 the pad tick, +16 the output size, +0x20 the aspect
-        # the arrow log's 8 bytes (+0x58) and the view slots (4 bytes each) keep apart, and the FOV's two words sit below both
-        arrow_slot = int(re.search(r'ARROW_SLOT = (0x[0-9a-f]+)', SOURCE)[1], 0)
+        # the view slots (4 bytes each) keep apart, and the FOV's two words sit below them
         slots = sorted(int(re.search(rf'#define VIEW_{n}_SLOT (0x[0-9a-f]+)u', HEADER)[1], 0) for n in ('LOD', 'DISP', 'DOF'))
-        self.assertGreaterEqual(arrow_slot, 0x50)
-        self.assertLessEqual(arrow_slot + 8, slots[0], (arrow_slot, slots))
+        self.assertGreaterEqual(slots[0], 0x50)
         self.assertEqual(len(set(slots)), 3)
 
 

@@ -89,21 +89,6 @@ compare-and-swap loops that retry inside the window. `prepare_runtime.py`, `prep
   (29-30 FPS) gave the same speed, within one 30 fps frame, for the inventory tab animations (R, L), the typed item
   text and the jump poses (X, 100 ms steps). A frame-driven animation would be 4 times slower. At 30 fps the inventory
   opens about 80-120 ms later (about 3 frames), then runs at the same rate.
-- Arrows fall by real time (`patch_arrow_gravity`; Savage Wind Recomp issue #144 found the fault). The fall update
-  main+0x5ee668 adds the gravity (+0x108, which main+0x5ee4ec sets to (0, ArrowGravity, 0)) once per frame with no
-  time step, so arrows turned down twice as fast at 60 fps and landed short. A veneer now multiplies the load at
-  main+0x5ee734 by the frame ratio. In game runs on 2026-11-10 (Sheikah tower top, 3 shots a run, `TOTK_ARROW_LOG=1`),
-  the arrow turned down at 18.7 deg/s at 15, 30 and 60 fps patched and at 36.5 deg/s at 60 fps shipped. Its drop 40 m
-  after the fall began was 9.29 m at 30 fps, 8.96 m at 60 fps patched and 18.9 m at 60 fps shipped. 120 fps was not
-  reached: the scene held 60.
-- Sound timers follow the measured step too (2026-11-10). The sound frame update floored the VFR ratio at 0.5 (one 60
-  fps frame) before it sets the sound clock and the xlink2 rate (main+0x155100c `fcsel` -> `fmov s8, s0`;
-  `TOTK_SLINK_REALTIME=0` keeps the floor). Measured with the 30 s report's sound-clock sum: shipped, 1.20x real time at
-  a steady 72 fps and 2.00x game time with the step pinned at 8.333 ms (120 fps); fixed, 1.00x.
-  `verify_sound_step_patch.py` runs it in Unicorn at 30-240 fps, with the shipped floor as the negative control. Not
-  checked: a field battle by ear and the Cryonis marker.
-  1.6.0 floors the same ratio at 1.0 (main+0x1c59fb0 `fmax` -> `nop`, in `patch_slink_rate`): shipped 4.00x, fixed
-  1.00x game time (pinned 8.333 ms, title screen); `verify_sound_step_patch.py --version botw160`.
 - Moving platforms above 30 fps (`patch_kf_angle`, user report 2026-11-13): on Vah Medoh, Link hopped in place while the
   beast tilted, more the higher the frame rate, and not at 30+30. The bodies the game moves (a Divine Beast's floor,
   lifts, gates) get each physics step the angular velocity toward their target from hkQuaternion::getAngle
@@ -121,12 +106,6 @@ compare-and-swap loops that retry inside the window. `prepare_runtime.py`, `prep
 - While a movie plays (movie player instance main+0x1e565a8), the pacing holds 30 fps. Every movie frame is shown
   (`MOVIE_PACE_DEFAULT` 0 for both BOTW versions, upstream's value). The first tower's movie plays at 31.7 fps, and the
   game goes on after it.
-- Master Kohga's entrance in the Yiga Clan Hideout runs as the event `Electric_Relic` or `Demo347_0`. While it runs,
-  the pacing holds 30 fps and the frame step is exactly 1/30 s. Above 30 fps the entrance froze at one of Kohga's lines.
-  Its `Demo_WaitForASTriggerEvent` can start one update after the animation trigger, and the trigger never comes again.
-  Savage Wind Recomp found this cause (its issue #196). Event map: `ksys::evt::Manager` pointer main+0x1e3a638 (GOT slot main+0x1d66758),
-  active event at +0x1d2b8, its name string at +0x68 (buffer at +0x74). Not run in game. `TOTK_BOTW_EVENT_30=0` turns
-  it off.
 - MetalFX keys 2 and 3: 1.9.0 upscales the 1600x900 picture into the 1920x1080 canvas with its own fragment shader
   (`bd7ffdd4`, nine texel reads). `BOTW_MFXUP_KEY` in `nvn_obj.h` is the upscale key of the version that is built. In
   docked play at 1920x1080 that draw is no upscale, so key 3 upscales the window output only.
@@ -558,6 +537,40 @@ keeps its 1280x720 canvas (main+0x1e43dd0, unchanged). Key 4 (21:9) does not wid
 1920x1080 on this build: the game writes 16:9 back into the camera's aspect field every frame. That is a separate open
 item.
 
+## The sound's clock above 60 fps (2026-11-24)
+
+Once a frame `main+0x1550fcc` hands the sound system the VFR's delta frame (`main+0x59c788`), at least 0.5, in console
+frames. It steps the audio frame (`main+0xf07808`) and is stored at `+0x84` of `[main+0x1e37038]`, the field that 1.6.0's
+`patch_slink_rate` stores (floor 1.0 there). The floor is a 60 fps frame, so above 60 fps it sets every frame and the
+sound's clock runs fast: every sound timer and fade, and the field battle music, which then starts each segment while
+the last one still plays. Cause and cure as found by
+[Savage Wind Recomp](https://github.com/Revivedx/SavageWindRecomp) (MIT, its #145); no code is copied.
+
+`patch_sound_frame` makes the floor 0.5 x the frame-step page's ratio (the frame's length in 30 fps frames), through a
+veneer at text padding `+0x360`: 0.5 at 30 fps as shipped, so slow motion and a stopped game keep the console's half a
+second of sound clock a second, and the frame's own length above. `TOTK_SOUND_FRAME=0` keeps it as shipped. Mac only: it
+returns early under `ios_code()`, so the iOS export does not change. `TOTK_SOUND_FRAME_LOG=1` puts a `brk` on the select
+(`fcsel s8, s1, s0, mi`, `main+0x155100c`) and logs once a second the game's and the sound's seconds against the real
+time, the delta's range, the floor and how many frames it set.
+
+Run on 2026-11-24, M5 Pro, the newest save (slot 2), copies of the profile and cache, standing still for about 50 s after
+the load. Seconds of clock per real second, averaged over the run after its first 3 s:
+
+| Build | Frame lock | Delta per frame | Floor | Frames the floor set | Game | Sound |
+|---|---|---|---|---|---|---|
+| main + log | 30 | 0.96-1.03 | 0.5 | none | x0.988 | x0.988 |
+| main + log | 120 | 0.22-0.35 | 0.5 | all | x0.999 | x1.833 |
+| fix | 120 | 0.22-0.30 | 0.11-0.15 | none | x1.000 | x1.000 |
+| fix, `TOTK_SOUND_FRAME=0` | 120 | 0.22-0.31 | 0.5 | all | x1.000 | x1.900 |
+| fix | 30 | 0.97-1.02 | 0.48-0.51 | none | x1.000 | x1.000 |
+
+The cause was measured, the symptom was not heard: the save has no enemies near, so the battle music did not play. To
+compare by ear, `TOTK_SOUND_FRAME=0` brings the shipped floor back. `games/botw/scripts/verify_sound_frame_patch.py`
+runs the game's select with Unicorn at 30, 60, 120, 144 and 240 fps: patched, the sound's clock runs at x1.0 at every
+rate (shipped: x1.0, x1.0, x2.0, x2.4, x4.0); with the delta at 30%, 10% and 0% of the frame (slow motion, a stopped
+game) it runs at x0.5 at every rate, as shipped at 30 fps; at a ratio of exactly 1.0 its result is the shipped one, bit
+for bit.
+
 ## Audio: volume ramps and depop (2026-10-22)
 
 The mixer applied a new voice volume or channel mix volume as a step at the 5 ms frame edge, and a stopped or paused
@@ -679,32 +692,32 @@ Same slots, same files, same flag meaning. The tables `view_lod160`, `view_far16
 - Tried in the game (plateau-ruin-legs, 2026-11-04): the render distance at 0.1x logs "render distance x0.1 (display distance) at 6 sites from main+0x1562038" and hides the Bokoblin and the chest by the ruin wall that 1x shows, at the same fps. Not tried: the 26 places were not counted again here (only that 0x38a0c loads +0x310), render distance 1.5x, the actor count and heap use at 1.5x. The model detail distance patch was checked by the disassembly, the
   interpreter in `tests/test_botw_view_patches.c` and the game runs above ("max" logs its line, no picture change, no fps cost).
 
-## HDR / EDR (2026-11-04)
+## Arrows above 30 fps (2026-11-24)
 
-TOTK 1.4.3's scene HDR (PR #1129, the RenoDX approach) acts on both BOTW versions, Mac only. The compose draw is the
-game's tone mapping: 1.9.0 `f7ee6fe1`, 1.6.0 `d14b1c38` (the same MSL, `fast::` against `precise::`). Its maths,
-constants and output equal 1.4.3's `0ac9a549`, so its HDR twin calls the same `hdr_scene_map`; only the anchors differ
-(scene in t0, bloom in t1). The frame after it (pass profile of 2026-10-22, docked 1080p):
+Once an arrow falls, each update makes its velocity the last one's direction times its speed (`+0xb4`) plus the gravity
+vector (`+0x104..+0x10c`), in metres per console frame, with no time step. Every update turns it down by the same angle,
+so at 120 fps it turned four times as fast a second and landed short. Cause and cure as found by
+[Savage Wind Recomp](https://github.com/Revivedx/SavageWindRecomp) (MIT, its #144); no code is copied.
 
-| Draw | Target | HDR path |
-|---|---|---|
-| compose | RGB10A2Unorm picture | HDR twin writes its FP16 companion |
-| FXAA / upscale `bd7ffdd4` (or MetalFX, key 3) | RGB10A2Unorm canvas | reads and writes FP16 companions; no clamp in the shader |
-| UI | canvas | blends into the FP16 canvas, at UI white |
-| copy `ecb4242e` | sRGB swapchain | `hdr_capture` keeps the FP16 canvas for the EDR present |
+`patch_arrow_gravity` multiplies the gravity by the frame-step page's ratio (the frame's length in 30 fps frames, 1.0 at
+30 fps), through a veneer at text padding `+0x340`. `TOTK_ARROW_GRAVITY=0` keeps it as shipped. Mac only: it returns
+early under `ios_code()`, so the iOS export does not change. `TOTK_ARROW_LOG=1` puts a `brk` on `main+0x5ee738` and logs
+each update (ratio, gravity, velocity).
 
-Unlike 1.4.3's R11G11B10F targets, RGB10A2Unorm stores alpha: its companions keep alpha and the RGB-only blend
-remap does not apply (`HDR_RGB_ONLY`, `totk_hdr_compose.h`). The files are 1.4.3's: `hdr.txt` (on / off) and
-`hdr-<name>.txt` (`totk_hdr.h`). The effects page shows 1.4.3's two HDR rows on 1.9.0; 1.6.0 gets them with its page.
-`flag hdr 0|1` switches HDR live (game-test runner). Frame interpolation stays SDR, as on 1.4.3. Sharpening (RCAS)
-runs on the HDR canvas values.
+Run on 2026-11-24, M5 Pro, the newest save (slot 2), copies of the profile and cache, three shots held with ZR from the
+same spot. The turn is the pitch's least-squares slope over the first 0.6 s of each arrow:
 
-Cost (M1 Pro, 1.9.0, `TOTK_OUTPUT_RES=screen` 3456x1944, MetalFX keys on, forest campfire save, 2026-11-04): GPU p50
-18.1 ms with HDR off, 23.2 ms on; 38.6 fps off, 31-34 fps on. The compose twin takes 2.3 ms of it (the game's own 0.3 ms).
-It compiles with relaxed maths (`HDR_TWIN_LIBRARY`): with the translations' safe maths it took 7.7 ms.
-1.6.0 (same save, `TOTK_OUTPUT_RES=3456x1944`): GPU p50 17.5 ms off, 22.5 ms on; 49.0 fps off, 37-39 fps on. Its drawable
-readback with HDR on: peak 17.1 SDR-white units, 284,329 of 6,718,464 pixels above white, none nonfinite. The 1.6.0
-graphics objects are built with `GAME_BOTW` only, so the compose key tests `GAME_BOTW190`, as `TAA_COMPOSE` does.
+| Build | Frame lock | Updates a second | Speed (m / console frame) | Gravity per update | Turn (degrees a second, 3 arrows) |
+|---|---|---|---|---|---|
+| main + log | 30 | 31 | 0.999 | -0.01089 | -18.6, -18.8, -18.6 |
+| main + log | 120 | 118-120 | 0.997 | -0.01089 | -72.9, -72.8, -70.8 |
+| fix | 120 | 117-119 | 0.999 | -0.0027 to -0.0033 | -18.5, -18.5, -18.5 |
+| fix, `TOTK_ARROW_GRAVITY=0` | 120 | 113-120 | 0.996 | -0.01089 | -70.6, -72.2, -73.5 |
+
+With the fix, an arrow stayed in the air about 3 s before it hit something; as shipped at 120 fps, about 1.2 s.
+`games/botw/scripts/verify_arrow_gravity_patch.py` runs the game's own update for one second at 30, 60, 120, 144 and
+240 fps: patched, the pitch after a second is -4.29 degrees at every rate; shipped, -4.29, -8.56, -16.9, -20.2 and
+-32.5.
 
 ## Not tested and known issues
 
